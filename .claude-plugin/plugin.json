@@ -1,0 +1,16 @@
+{
+  "name": "agent-skills",
+  "description": "Personal agent skills: babysit (shepherd a PR to green or merged), html-plan (interactive HTML implementation plans) and skill-creator (build and evaluate skills).",
+  "author": {
+    "name": "Evangelos Karavasileiadis",
+    "url": "https://github.com/VaggelisKa"
+  },
+  "repository": "https://github.com/VaggelisKa/agent-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "skills",
+    "github",
+    "pull-requests",
+    "planning"
+  ]
+}

@@ -1,0 +1,22 @@
+agent-skills
+Copyright 2026 Evangelos Karavasileiadis
+
+This repository's own work is licensed under the Apache License, Version 2.0
+(see LICENSE).
+
+It bundles skills from other projects. Each keeps its upstream license and an
+origin note in its own folder:
+
+- skills/html-plan
+  Upstream: https://github.com/anthropics/claude-plugins-community (html-plan)
+  Author: Thariq Shihipar
+  License: Apache-2.0 (skills/html-plan/LICENSE); upstream plugin.json declares MIT
+  Modified: yes, see skills/html-plan/NOTICE.md
+
+- skills/skill-creator
+  Upstream: https://github.com/anthropics/skills (skills/skill-creator)
+  License: Apache-2.0 (skills/skill-creator/LICENSE.txt)
+  Modified: no, see skills/skill-creator/NOTICE.md
+
+- skills/babysit
+  Original work in this repository (Apache-2.0).

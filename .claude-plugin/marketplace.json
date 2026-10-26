@@ -1,0 +1,14 @@
+{
+  "name": "vaggeliska",
+  "description": "Evangelos Karavasileiadis's personal agent skills.",
+  "owner": {
+    "name": "Evangelos Karavasileiadis"
+  },
+  "plugins": [
+    {
+      "name": "agent-skills",
+      "source": "./",
+      "description": "Personal agent skills: babysit (shepherd a PR to green or merged), html-plan (interactive HTML implementation plans) and skill-creator (build and evaluate skills)."
+    }
+  ]
+}
