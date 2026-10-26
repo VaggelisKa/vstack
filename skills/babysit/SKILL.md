@@ -17,7 +17,7 @@ babysit <pr> --merge    # same loop, then merge when every gate in merge.md pass
 ### Arguments
 
 Read the arguments from the user's message, whatever the invocation looks like
-(`/agent-skills:babysit 42 --merge`, `$babysit 42`, `/babysit 42`, or "babysit
+(`/vstack:babysit 42 --merge`, `$babysit 42`, `/babysit 42`, or "babysit
 PR 42 and merge it"). Don't rely on a template variable being filled in.
 
 - `<pr>`: the first PR number, PR URL or branch name in the message, as accepted

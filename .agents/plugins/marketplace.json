@@ -5,7 +5,7 @@
   },
   "plugins": [
     {
-      "name": "agent-skills",
+      "name": "vstack",
       "source": {
         "source": "local",
         "path": "./"

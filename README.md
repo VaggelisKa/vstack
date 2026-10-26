@@ -1,7 +1,10 @@
-# agent-skills
+# vstack
 
-Personal collection of agent skills, packaged as one plugin (`agent-skills`) for
+Personal collection of agent skills, packaged as one plugin (`vstack`) for
 Claude Code and Codex, and as plain skill folders for Antigravity.
+
+> This repository and plugin were formerly named `agent-skills`. GitHub redirects
+> the old URL, but reinstall as `vstack@vaggeliska` to pick up the new name.
 
 | Skill | What it does |
 |---|---|
@@ -30,7 +33,7 @@ NOTICE                            # bundled skills and their upstreams
 ## Private repo: git credentials
 
 This repository is private. Every install below clones it with your normal git
-credentials, so make sure `git clone https://github.com/VaggelisKa/agent-skills`
+credentials, so make sure `git clone https://github.com/VaggelisKa/vstack`
 works in a terminal first (for example after `gh auth login` and
 `gh auth setup-git`, or with an SSH key). Desktop apps that run in the
 background may not see credentials that only your shell has.
@@ -40,33 +43,33 @@ background may not see credentials that only your shell has.
 Install:
 
 ```
-/plugin marketplace add VaggelisKa/agent-skills
-/plugin install agent-skills@vaggeliska
+/plugin marketplace add VaggelisKa/vstack
+/plugin install vstack@vaggeliska
 ```
 
-The same works from a shell: `claude plugin marketplace add VaggelisKa/agent-skills`
-then `claude plugin install agent-skills@vaggeliska`.
+The same works from a shell: `claude plugin marketplace add VaggelisKa/vstack`
+then `claude plugin install vstack@vaggeliska`.
 
-Use: `/agent-skills:babysit <pr> [--merge]`, `/agent-skills:html-plan <what to build>`,
+Use: `/vstack:babysit <pr> [--merge]`, `/vstack:html-plan <what to build>`,
 or just describe the task and let the skill trigger.
 
 Update (the Claude manifest has no `version`, so updates follow the latest commit):
 
 ```
 /plugin marketplace update vaggeliska
-/plugin update agent-skills@vaggeliska
+/plugin update vstack@vaggeliska
 ```
 
 Uninstall:
 
 ```
-/plugin uninstall agent-skills@vaggeliska
+/plugin uninstall vstack@vaggeliska
 /plugin marketplace remove vaggeliska
 ```
 
 > Tested: the `claude plugin ...` shell commands above (add, install, update,
 > uninstall, remove). Not yet tested: the in-session `/plugin ...` slash commands,
-> and `/agent-skills:babysit` typed inside an interactive session.
+> and `/vstack:babysit` typed inside an interactive session.
 
 ## Codex
 
@@ -75,8 +78,8 @@ Plugins work in the Codex CLI and the ChatGPT desktop app, not in the IDE extens
 Install:
 
 ```
-codex plugin marketplace add VaggelisKa/agent-skills
-codex plugin add agent-skills@vaggeliska
+codex plugin marketplace add VaggelisKa/vstack
+codex plugin add vstack@vaggeliska
 ```
 
 or, after adding the marketplace, open `/plugins` in the CLI and install it from
@@ -96,7 +99,7 @@ releasing changes; if an update doesn't show up, remove and re-add the plugin.
 Uninstall:
 
 ```
-codex plugin remove agent-skills@vaggeliska
+codex plugin remove vstack@vaggeliska
 codex plugin marketplace remove vaggeliska
 ```
 
@@ -108,11 +111,11 @@ codex plugin marketplace remove vaggeliska
 Skills only, installed by copying (no plugin manifest is used):
 
 ```
-git clone https://github.com/VaggelisKa/agent-skills
+git clone https://github.com/VaggelisKa/vstack
 # all workspaces (Antigravity app and IDE):
-mkdir -p ~/.gemini/config/skills && cp -R agent-skills/skills/* ~/.gemini/config/skills/
+mkdir -p ~/.gemini/config/skills && cp -R vstack/skills/* ~/.gemini/config/skills/
 # or one workspace:
-mkdir -p .agents/skills && cp -R agent-skills/skills/* .agents/skills/
+mkdir -p .agents/skills && cp -R vstack/skills/* .agents/skills/
 ```
 
 The Antigravity CLI reads global skills from `~/.gemini/antigravity-cli/skills/`
@@ -125,7 +128,7 @@ Update: pull the clone and copy again. Uninstall: delete the copied skill folder
 ## Arguments
 
 Every `SKILL.md` reads its arguments from the user's message, so the same skill
-works whether it was invoked as `/agent-skills:babysit 42 --merge`, `$babysit 42`,
+works whether it was invoked as `/vstack:babysit 42 --merge`, `$babysit 42`,
 `/babysit 42`, or in plain words. None rely on `$ARGUMENTS`.
 
 ## Authoring skills

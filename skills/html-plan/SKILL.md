@@ -7,7 +7,7 @@ description: Write an implementation plan as one interactive HTML page - a tree 
 
 # html-plan
 
-Plan what the user asked for. Take it from their message: the text after the skill invocation (`/agent-skills:html-plan`, `$html-plan`, `/html-plan`) or the task they described. If they gave nothing to plan, ask.
+Plan what the user asked for. Take it from their message: the text after the skill invocation (`/vstack:html-plan`, `$html-plan`, `/html-plan`) or the task they described. If they gave nothing to plan, ask.
 
 You write **one HTML file by hand**. It holds a tree of claims. A small runtime draws the tree and lets the reader open it level by level, answer decisions, edit schemas, comment on anything, and copy one response back to you. Do not start building until that response arrives.
 
