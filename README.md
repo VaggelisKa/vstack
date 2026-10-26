@@ -127,10 +127,18 @@ Use: `/vstack:babysit <pr> [--merge]`, `/vstack:html-plan <what to build>`.
 Update: `agy plugin uninstall vstack`, then install again (or `git pull` in the
 cloned folder). Uninstall: `agy plugin uninstall vstack`, or delete the folder.
 
-> Tested with `agy` 1.4.7: `agy plugin validate --strict`, install from a clone
-> of this repo, install via the clone into `~/.gemini/config/plugins/`, `list`
-> and `uninstall`. Not yet verified: invoking the skills (and passing arguments)
-> inside an Antigravity session.
+> Tested with `agy` 1.4.7:
+> - `agy plugin install https://github.com/VaggelisKa/vstack` from the private
+>   repo (with git credentials set up as above) installs `vstack` with 2 skills
+>   (`babysit`, `html-plan`) into `~/.gemini/config/plugins/vstack`
+> - `agy plugin install <path>` from a local clone installs `vstack` with 2 skills
+> - a `git clone` into `~/.gemini/config/plugins/vstack` is picked up by
+>   `agy plugin list` with 2 skills
+> - `agy plugin validate . --strict` passes
+> - `agy plugin list` and `agy plugin uninstall vstack` work
+>
+> Not yet verified: invoking the skills, or passing arguments to them, inside an
+> Antigravity session.
 
 ## Arguments
 
