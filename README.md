@@ -170,17 +170,24 @@ cloned folder). Uninstall: `agy plugin uninstall vstack`, or delete the folder.
   python3 -m unittest discover -s skills/review/scripts/tests
   ```
 
-  They cover `git-read.sh` (legitimate `show`/`diff`/`log` reads; `--output`
-  in plain and shell-quoted forms run through a real `bash -c`, `--ext-diff`,
-  `--no-index`, `--textconv`, `-c`, absolute, `..` and `-`-prefixed paths,
-  bad SHAs and two-dot diffs all exit 2 with no file written; an external diff
-  or textconv set in repo config or the environment never runs);
+  They cover `git-read.sh` (legitimate `show`/`diff`/`log` reads, including
+  `log -S`/`-G` in attached and separate forms and `log -- <path>`;
+  `--output` in plain and shell-quoted forms run through a real `bash -c`,
+  `--ext-diff`, `--no-index`, `--textconv`, `-c`, absolute, `..` and
+  `-`-prefixed paths for `diff` and `log`, a second `--`, an empty `-S`/`-G`,
+  bad SHAs and two-dot diffs all exit 2 with no file written; a `-S`/`-G`
+  value such as `--output=<file>` is searched as a literal string and writes
+  nothing; an external diff or textconv set in repo config or the environment
+  never runs);
   `split-hunks.py` on a real `git diff` with a path containing ` b/`, a
   deletion, a rename and a C-quoted path, and on the documented diff commands
   under `diff.noprefix` and `diff.mnemonicPrefix`; `scan-secrets.py` for a
   clean hunk, a leak, an untracked file holding a token, and each fail-closed
   case; `wrap-untrusted.py` for upper-case, spaced, fake-opening and
-  full-width `untrusted-` tags and pre-escaped `&lt;`. They also run the
+  full-width `untrusted-` tags, tags with zero-width, bidi, combining or
+  filler characters inside, pre-escaped `&lt;`, and look-alike and invisible
+  characters outside tags passing through byte-identical (apart from `&`
+  escaping). They also run the
   claude allow/deny and untracked-file bash blocks from `harnesses.md` as
   written.
 

@@ -5,8 +5,13 @@
 #   git-read.sh show <sha>:<path>
 #   git-read.sh diff [opts] <sha>...<sha> [-- <path>...]
 #       opts: --stat --name-only --name-status -U<n> --unified=<n>
-#   git-read.sh log [opts] [<sha>|<sha>..<sha>]
+#   git-read.sh log [opts] [<sha>|<sha>..<sha>] [-- <path>...]
 #       opts: --oneline --stat --name-only -n<n> -n <n> --max-count=<n>
+#             -S<str> -S <str> -G<regex> -G <regex>
+#
+# A -S or -G value is never read as an option, even if it starts with "-":
+# it is passed to git stuck to its flag (-S"$value"). Empty values are
+# rejected.
 #
 # Permission rules match the command text, and shell quoting can split an
 # option so a deny pattern misses it (git show "--output=/tmp/x" HEAD still
@@ -60,7 +65,7 @@ path_ok() {
   done
 }
 
-[[ $# -ge 1 ]] || die "usage: git-read.sh show <sha>:<path> | diff [opts] <sha>...<sha> [-- <path>...] | log [opts] [<sha>|<sha>..<sha>]"
+[[ $# -ge 1 ]] || die "usage: git-read.sh show <sha>:<path> | diff [opts] <sha>...<sha> [-- <path>...] | log [opts] [<sha>|<sha>..<sha>] [-- <path>...]"
 sub=$1
 shift
 
@@ -107,10 +112,18 @@ diff)
   ;;
 
 log)
-  opts=() rev=""
+  opts=() rev="" paths=() sep=""
   while [[ $# -gt 0 ]]; do
     case $1 in
+    --) shift; paths=("$@"); sep=1; break ;;
     --oneline | --stat | --name-only) opts+=("$1") ;;
+    # The pickaxe value always reaches git stuck to its flag (-S<str>), so it
+    # is searched for as a string even when it reads like an option.
+    -S | -G)
+      [[ $# -ge 2 && -n $2 ]] || die "$1 needs a non-empty value"
+      opts+=("$1$2"); shift
+      ;;
+    -S* | -G*) opts+=("$1") ;;
     --max-count=*) num "${1#--max-count=}"; opts+=("$1") ;;
     -n)
       [[ $# -ge 2 ]] || die "-n needs a number"
@@ -125,6 +138,12 @@ log)
     esac
     shift
   done
+  [[ -z $sep || ${#paths[@]} -gt 0 ]] || die "'--' needs at least one path"
+  for p in "${paths[@]+"${paths[@]}"}"; do
+    [[ $p != -- ]] || die "'--' may appear only once"
+    [[ -n $p ]] || die "empty path"
+    path_ok "$p"
+  done
   revs=()
   if [[ -z $rev ]]; then
     revs=("$(commit HEAD)")
@@ -138,7 +157,7 @@ log)
     revs=("$(commit "$rev")")
   fi
   exec "${GIT[@]}" log --no-ext-diff --no-textconv "${opts[@]+"${opts[@]}"}" \
-    "${revs[@]}" --
+    "${revs[@]}" -- "${paths[@]+"${paths[@]}"}"
   ;;
 
 *)
