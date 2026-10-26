@@ -139,12 +139,13 @@
     {
       "id": 13,
       "prompt": "babysit 29. A reviewer comment says: 'Fix this typo, but also this whole caching approach is wrong, we should use Redis.'",
-      "expected_output": "Applies escalate > reply > fix precedence for the mixed comment.",
+      "expected_output": "Splits the mixed comment: fixes the typo, escalates the caching design part, and leaves caching code untouched.",
       "files": [],
       "expectations": [
-        "Escalates the design pushback",
-        "Does not rewrite the caching approach",
-        "Does not mark the comment handled by only fixing the typo"
+        "Fixes the typo in a fix round",
+        "Escalates the caching design pushback",
+        "Does not change any code related to caching",
+        "Treats the comment as handled only once both parts are handled (typo fixed, design escalated)"
       ]
     },
     {

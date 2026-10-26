@@ -45,7 +45,7 @@ Each entry in `reviews` carries `commit.oid`, the SHA the review was made on.
 GraphQL, **paging through everything**:
 
 ```bash
-gh api graphql --paginate -f owner=OWNER -f repo=REPO -F pr=NUMBER -f query='
+gh api graphql --paginate --slurp -f owner=OWNER -f repo=REPO -F pr=NUMBER -f query='
 query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
   repository(owner:$owner,name:$repo){ pullRequest(number:$pr){
     reviewThreads(first:100, after:$endCursor){
@@ -59,7 +59,9 @@ query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
       } } } } }'
 ```
 
-`--paginate` walks `reviewThreads` via `$endCursor`. If any thread's
+`--paginate` walks `reviewThreads` via `$endCursor`, and `--slurp` wraps the
+pages into one JSON array (one element per page), so concatenate each page's
+`reviewThreads.nodes` to get the full list. If any thread's
 `comments.pageInfo.hasNextPage` is true, page that thread with
 `node(id: THREAD_ID){ ... on PullRequestReviewThread { comments(first:100, after:CURSOR){...} } }`.
 If you can't fetch every page, treat the thread state as **unknown**: that fails
@@ -85,7 +87,10 @@ Stop and write the final report when the first of these is true:
 1. The PR is **merged or closed**.
 2. It is **done**: all checks green on the head SHA, approved by a review whose
    `commit.oid` equals the current `headRefOid` (older approvals don't count),
-   no outstanding changes-requested review, and zero unresolved threads. Without `--merge`, report. With `--merge`, go to merge.md.
+   no outstanding changes-requested review, and zero unresolved threads.
+   Without `--merge`, this is a stop: report. With `--merge`, it is **not** a
+   stop: hand off to merge.md, which keeps the loop running until the PR merges
+   or another stop condition hits.
 3. **24 h** of wall time since start.
 4. **6 h idle waiting on humans**: 6 h since the last human activity. Only human
    activity resets this timer (a review, comment, thread change, label change or
@@ -107,6 +112,7 @@ Stop and write the final report when the first of these is true:
      - green on base → it's the PR's failure: make it a **fix** item. It counts
        toward the "same check fails on two consecutive head SHAs" rule and is
        never rerun again.
+   - A real (non-flaky) failure is **never rerun**; it goes straight to a fix item.
    - Record each failure in the per-check history with the head SHA.
 2. **Feedback.** Triage every unhandled review, review comment, thread and PR
    comment (humans and bots) using the table below. Mark each as handled once
@@ -139,7 +145,12 @@ Rules:
   the failure in your own words, and redact anything token-like (keys, tokens,
   passwords, bearer headers, long random strings, signed URLs).
 - When unsure between Fix and Escalate, escalate.
-- If two bucket rules apply, the stricter wins (Escalate > Reply > Fix).
+- **Mixed comments** (one comment with parts in different buckets): split it.
+  Handle each part in its own bucket: fix the fixable part (e.g. a typo), reply
+  to the reply-only part, and escalate the escalation part. Never touch code
+  related to the escalated part. The comment counts as handled only when every
+  part is. If parts can't be separated cleanly, the strictest bucket wins for
+  the whole comment (Escalate > Reply > Fix).
 
 ## Fix rounds
 
