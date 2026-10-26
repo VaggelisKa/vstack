@@ -1,18 +1,5 @@
 {
-  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  "name": "agent-skills",
-  "version": "0.1.0",
-  "description": "Personal agent skills: babysit (shepherd a PR to green or merged) and html-plan (interactive HTML implementation plans).",
-  "author": {
-    "name": "Evangelos Karavasileiadis",
-    "url": "https://github.com/VaggelisKa"
-  },
-  "repository": "https://github.com/VaggelisKa/agent-skills",
-  "license": "Apache-2.0",
-  "keywords": [
-    "skills",
-    "github",
-    "pull-requests",
-    "planning"
-  ]
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "vstack",
+  "description": "Personal agent skills: babysit (shepherd a PR to green or merged) and html-plan (interactive HTML implementation plans)."
 }

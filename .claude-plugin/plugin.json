@@ -1,11 +1,11 @@
 {
-  "name": "agent-skills",
+  "name": "vstack",
   "description": "Personal agent skills: babysit (shepherd a PR to green or merged) and html-plan (interactive HTML implementation plans).",
   "author": {
     "name": "Evangelos Karavasileiadis",
     "url": "https://github.com/VaggelisKa"
   },
-  "repository": "https://github.com/VaggelisKa/agent-skills",
+  "repository": "https://github.com/VaggelisKa/vstack",
   "license": "Apache-2.0",
   "keywords": [
     "skills",

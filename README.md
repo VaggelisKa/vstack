@@ -1,7 +1,10 @@
-# agent-skills
+# vstack
 
-Personal collection of agent skills, packaged as one plugin (`agent-skills`) for
-Claude Code and Codex, and as plain skill folders for Antigravity.
+Personal collection of agent skills, packaged as one plugin (`vstack`) for
+Claude Code, Codex and Antigravity.
+
+> This repository and plugin were formerly named `agent-skills`. GitHub redirects
+> the old URL, but reinstall as `vstack@vaggeliska` to pick up the new name.
 
 | Skill | What it does |
 |---|---|
@@ -16,7 +19,8 @@ there are no symlinks; the manifests just point at the repo root.
 ```
 .claude-plugin/plugin.json        # Claude Code plugin manifest (skills/ is scanned automatically)
 .claude-plugin/marketplace.json   # Claude Code marketplace, one entry, source "./"
-plugin.json                       # portable Agent Plugins manifest (read by Codex)
+.codex-plugin/plugin.json         # Codex plugin manifest (name, version, metadata)
+plugin.json                       # Antigravity plugin manifest (name and description only)
 .agents/plugins/marketplace.json  # Codex marketplace, one entry, source.path "./"
 skills/
   <skill-name>/
@@ -30,7 +34,7 @@ NOTICE                            # bundled skills and their upstreams
 ## Private repo: git credentials
 
 This repository is private. Every install below clones it with your normal git
-credentials, so make sure `git clone https://github.com/VaggelisKa/agent-skills`
+credentials, so make sure `git clone https://github.com/VaggelisKa/vstack`
 works in a terminal first (for example after `gh auth login` and
 `gh auth setup-git`, or with an SSH key). Desktop apps that run in the
 background may not see credentials that only your shell has.
@@ -40,33 +44,33 @@ background may not see credentials that only your shell has.
 Install:
 
 ```
-/plugin marketplace add VaggelisKa/agent-skills
-/plugin install agent-skills@vaggeliska
+/plugin marketplace add VaggelisKa/vstack
+/plugin install vstack@vaggeliska
 ```
 
-The same works from a shell: `claude plugin marketplace add VaggelisKa/agent-skills`
-then `claude plugin install agent-skills@vaggeliska`.
+The same works from a shell: `claude plugin marketplace add VaggelisKa/vstack`
+then `claude plugin install vstack@vaggeliska`.
 
-Use: `/agent-skills:babysit <pr> [--merge]`, `/agent-skills:html-plan <what to build>`,
+Use: `/vstack:babysit <pr> [--merge]`, `/vstack:html-plan <what to build>`,
 or just describe the task and let the skill trigger.
 
 Update (the Claude manifest has no `version`, so updates follow the latest commit):
 
 ```
 /plugin marketplace update vaggeliska
-/plugin update agent-skills@vaggeliska
+/plugin update vstack@vaggeliska
 ```
 
 Uninstall:
 
 ```
-/plugin uninstall agent-skills@vaggeliska
+/plugin uninstall vstack@vaggeliska
 /plugin marketplace remove vaggeliska
 ```
 
 > Tested: the `claude plugin ...` shell commands above (add, install, update,
 > uninstall, remove). Not yet tested: the in-session `/plugin ...` slash commands,
-> and `/agent-skills:babysit` typed inside an interactive session.
+> and `/vstack:babysit` typed inside an interactive session.
 
 ## Codex
 
@@ -75,8 +79,8 @@ Plugins work in the Codex CLI and the ChatGPT desktop app, not in the IDE extens
 Install:
 
 ```
-codex plugin marketplace add VaggelisKa/agent-skills
-codex plugin add agent-skills@vaggeliska
+codex plugin marketplace add VaggelisKa/vstack
+codex plugin add vstack@vaggeliska
 ```
 
 or, after adding the marketplace, open `/plugins` in the CLI and install it from
@@ -90,13 +94,13 @@ Update:
 codex plugin marketplace upgrade vaggeliska
 ```
 
-Codex caches installs by the `version` in the root `plugin.json`, so bump it when
+Codex caches installs by the `version` in `.codex-plugin/plugin.json`, so bump it when
 releasing changes; if an update doesn't show up, remove and re-add the plugin.
 
 Uninstall:
 
 ```
-codex plugin remove agent-skills@vaggeliska
+codex plugin remove vstack@vaggeliska
 codex plugin marketplace remove vaggeliska
 ```
 
@@ -105,27 +109,33 @@ codex plugin marketplace remove vaggeliska
 
 ## Antigravity
 
-Skills only, installed by copying (no plugin manifest is used):
+Install with the Antigravity CLI (`agy`):
 
 ```
-git clone https://github.com/VaggelisKa/agent-skills
-# all workspaces (Antigravity app and IDE):
-mkdir -p ~/.gemini/config/skills && cp -R agent-skills/skills/* ~/.gemini/config/skills/
-# or one workspace:
-mkdir -p .agents/skills && cp -R agent-skills/skills/* .agents/skills/
+agy plugin install https://github.com/VaggelisKa/vstack
+agy plugin list
 ```
 
-The Antigravity CLI reads global skills from `~/.gemini/antigravity-cli/skills/`
-instead. Use: `/babysit <pr> [--merge]`, `/html-plan <what to build>`.
+If that doesn't work for you, clone the repo into the global plugins folder:
 
-Update: pull the clone and copy again. Uninstall: delete the copied skill folders.
+```
+git clone https://github.com/VaggelisKa/vstack ~/.gemini/config/plugins/vstack
+```
 
-> Not yet verified: installing and invoking the skills in Antigravity.
+Use: `/vstack:babysit <pr> [--merge]`, `/vstack:html-plan <what to build>`.
+
+Update: `agy plugin uninstall vstack`, then install again (or `git pull` in the
+cloned folder). Uninstall: `agy plugin uninstall vstack`, or delete the folder.
+
+> Tested with `agy` 1.4.7: `agy plugin validate --strict`, install from a clone
+> of this repo, install via the clone into `~/.gemini/config/plugins/`, `list`
+> and `uninstall`. Not yet verified: invoking the skills (and passing arguments)
+> inside an Antigravity session.
 
 ## Arguments
 
 Every `SKILL.md` reads its arguments from the user's message, so the same skill
-works whether it was invoked as `/agent-skills:babysit 42 --merge`, `$babysit 42`,
+works whether it was invoked as `/vstack:babysit 42 --merge`, `$babysit 42`,
 `/babysit 42`, or in plain words. None rely on `$ARGUMENTS`.
 
 ## Authoring skills
