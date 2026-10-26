@@ -1,7 +1,7 @@
 # vstack
 
 Personal collection of agent skills, packaged as one plugin (`vstack`) for
-Claude Code and Codex, and as plain skill folders for Antigravity.
+Claude Code, Codex and Antigravity.
 
 > This repository and plugin were formerly named `agent-skills`. GitHub redirects
 > the old URL, but reinstall as `vstack@vaggeliska` to pick up the new name.
@@ -19,7 +19,8 @@ there are no symlinks; the manifests just point at the repo root.
 ```
 .claude-plugin/plugin.json        # Claude Code plugin manifest (skills/ is scanned automatically)
 .claude-plugin/marketplace.json   # Claude Code marketplace, one entry, source "./"
-plugin.json                       # portable Agent Plugins manifest (read by Codex)
+.codex-plugin/plugin.json         # Codex plugin manifest (name, version, metadata)
+plugin.json                       # Antigravity plugin manifest (name and description only)
 .agents/plugins/marketplace.json  # Codex marketplace, one entry, source.path "./"
 skills/
   <skill-name>/
@@ -93,7 +94,7 @@ Update:
 codex plugin marketplace upgrade vaggeliska
 ```
 
-Codex caches installs by the `version` in the root `plugin.json`, so bump it when
+Codex caches installs by the `version` in `.codex-plugin/plugin.json`, so bump it when
 releasing changes; if an update doesn't show up, remove and re-add the plugin.
 
 Uninstall:
@@ -108,22 +109,28 @@ codex plugin marketplace remove vaggeliska
 
 ## Antigravity
 
-Skills only, installed by copying (no plugin manifest is used):
+Install with the Antigravity CLI (`agy`):
 
 ```
-git clone https://github.com/VaggelisKa/vstack
-# all workspaces (Antigravity app and IDE):
-mkdir -p ~/.gemini/config/skills && cp -R vstack/skills/* ~/.gemini/config/skills/
-# or one workspace:
-mkdir -p .agents/skills && cp -R vstack/skills/* .agents/skills/
+agy plugin install https://github.com/VaggelisKa/vstack
+agy plugin list
 ```
 
-The Antigravity CLI reads global skills from `~/.gemini/antigravity-cli/skills/`
-instead. Use: `/babysit <pr> [--merge]`, `/html-plan <what to build>`.
+If that doesn't work for you, clone the repo into the global plugins folder:
 
-Update: pull the clone and copy again. Uninstall: delete the copied skill folders.
+```
+git clone https://github.com/VaggelisKa/vstack ~/.gemini/config/plugins/vstack
+```
 
-> Not yet verified: installing and invoking the skills in Antigravity.
+Use: `/vstack:babysit <pr> [--merge]`, `/vstack:html-plan <what to build>`.
+
+Update: `agy plugin uninstall vstack`, then install again (or `git pull` in the
+cloned folder). Uninstall: `agy plugin uninstall vstack`, or delete the folder.
+
+> Tested with `agy` 1.4.7: `agy plugin validate --strict`, install from a clone
+> of this repo, install via the clone into `~/.gemini/config/plugins/`, `list`
+> and `uninstall`. Not yet verified: invoking the skills (and passing arguments)
+> inside an Antigravity session.
 
 ## Arguments
 
