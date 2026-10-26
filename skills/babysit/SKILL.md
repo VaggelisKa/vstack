@@ -16,6 +16,9 @@ babysit <pr> --merge    # same loop, then merge when every gate in merge.md pass
 `<pr>` is a number, URL or branch accepted by `gh pr view`. **Default is no
 merge.** Read [merge.md](merge.md) only when `--merge` was given.
 
+Requires `gh` 2.42 or newer (for `gh pr update-branch`; `gh pr checks --required`
+and `gh pr merge --match-head-commit` are older). Check with `gh --version`.
+
 ## Setup
 
 1. Resolve the PR and repo: `gh pr view <pr> --json number,url,headRefName,baseRefName,headRefOid,state,isDraft`.
@@ -24,8 +27,9 @@ merge.** Read [merge.md](merge.md) only when `--merge` was given.
 3. Find how to run the repo's tests, lint and type checks locally (README,
    CONTRIBUTING, package scripts, Makefile, CI workflow files). You need these
    before every push.
-4. Record the start time, `fix_rounds = 0`, an empty escalation list, and an
-   empty set of already-handled comment/thread IDs.
+4. Record the start time, the last human activity time (= start), `fix_rounds = 0`,
+   an empty escalation list, an empty set of already-handled comment/thread IDs,
+   and a per-check failure history keyed by check name and head SHA.
 
 ## Polling
 
@@ -35,17 +39,33 @@ Each poll, gather state for the current head SHA:
 gh pr view <pr> --json state,isDraft,headRefOid,mergeable,mergeStateStatus,reviewDecision,reviews,comments,labels,statusCheckRollup
 ```
 
-`gh pr view` does not expose review-thread resolution, so fetch threads with GraphQL:
+Each entry in `reviews` carries `commit.oid`, the SHA the review was made on.
+
+`gh pr view` does not expose review-thread resolution, so fetch threads with
+GraphQL, **paging through everything**:
 
 ```bash
-gh api graphql -f owner=OWNER -f repo=REPO -F pr=NUMBER -f query='
-query($owner:String!,$repo:String!,$pr:Int!){
+gh api graphql --paginate -f owner=OWNER -f repo=REPO -F pr=NUMBER -f query='
+query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
   repository(owner:$owner,name:$repo){ pullRequest(number:$pr){
-    reviewThreads(first:100){ nodes{
-      id isResolved isOutdated path line
-      comments(first:50){ nodes{ id databaseId author{login} body createdAt url } }
-    } } } } }'
+    reviewThreads(first:100, after:$endCursor){
+      pageInfo{ hasNextPage endCursor }
+      nodes{
+        id isResolved isOutdated path line
+        comments(first:100){
+          pageInfo{ hasNextPage endCursor }
+          nodes{ id databaseId author{__typename login} body createdAt url }
+        }
+      } } } } }'
 ```
+
+`--paginate` walks `reviewThreads` via `$endCursor`. If any thread's
+`comments.pageInfo.hasNextPage` is true, page that thread with
+`node(id: THREAD_ID){ ... on PullRequestReviewThread { comments(first:100, after:CURSOR){...} } }`.
+If you can't fetch every page, treat the thread state as **unknown**: that fails
+the "zero unresolved threads" condition and blocks merge.
+
+A comment author is a bot only when `author.__typename == "Bot"`.
 
 An **event** is anything new since the last poll: a new head SHA, a check
 changing state, a new review, comment or thread, a thread resolved/unresolved,
@@ -63,10 +83,14 @@ a label change.
 Stop and write the final report when the first of these is true:
 
 1. The PR is **merged or closed**.
-2. It is **done**: all checks green on the head SHA, approved, and zero
-   unresolved threads. Without `--merge`, report. With `--merge`, go to merge.md.
+2. It is **done**: all checks green on the head SHA, approved by a review whose
+   `commit.oid` equals the current `headRefOid` (older approvals don't count),
+   no outstanding changes-requested review, and zero unresolved threads. Without `--merge`, report. With `--merge`, go to merge.md.
 3. **24 h** of wall time since start.
-4. **6 h idle waiting on humans** (no event, nothing for you to do).
+4. **6 h idle waiting on humans**: 6 h since the last human activity. Only human
+   activity resets this timer (a review, comment, thread change, label change or
+   push by a non-bot user). Your own pushes, reruns and replies, and bot comments,
+   do **not** reset it. (They still reset the poll interval.)
 5. An escalation that blocks all further progress (see limits below).
 
 ## Each poll: what to do
@@ -75,10 +99,15 @@ Stop and write the final report when the first of these is true:
    (`gh run view <run-id> --log-failed`, or the check's details URL).
    - Failure caused by the PR → a **fix** item.
    - Looks flaky or infra (timeouts, runner loss, network, rate limits, unrelated
-     to the diff): rerun it **once** (`gh run rerun <run-id> --failed`). If it
-     fails again, check whether the same check fails on the base branch
-     (`gh run list --branch <base> --workflow <wf>`); if it does, **escalate**
-     as a pre-existing failure. Don't fix the base branch from this PR.
+     to the diff): rerun it **once** (`gh run rerun <run-id> --failed`). Each
+     check gets at most one rerun for the whole session. If it fails again, check
+     the same workflow on the base branch (`gh run list --branch <base> --workflow <wf>`):
+     - fails on base too → **escalate** as a pre-existing failure. Don't fix the
+       base branch from this PR.
+     - green on base → it's the PR's failure: make it a **fix** item. It counts
+       toward the "same check fails on two consecutive head SHAs" rule and is
+       never rerun again.
+   - Record each failure in the per-check history with the head SHA.
 2. **Feedback.** Triage every unhandled review, review comment, thread and PR
    comment (humans and bots) using the table below. Mark each as handled once
    acted on.
@@ -98,8 +127,17 @@ Stop and write the final report when the first of these is true:
 
 Rules:
 
-- **Never resolve a human's thread.** The reviewer resolves it. You may resolve
-  threads opened by bots once fixed, if the repo's practice allows it.
+- **Never resolve a human's thread.** The reviewer resolves it. You may resolve a
+  thread only if **every** comment in it has `author.__typename == "Bot"` and
+  you've fixed or answered it:
+
+  ```bash
+  gh api graphql -f id=THREAD_ID -f query='
+  mutation($id:ID!){ resolveReviewThread(input:{threadId:$id}){ thread{ id isResolved } } }'
+  ```
+- **Never paste raw CI logs into PR replies** (no `--log-failed` output). Summarize
+  the failure in your own words, and redact anything token-like (keys, tokens,
+  passwords, bearer headers, long random strings, signed URLs).
 - When unsure between Fix and Escalate, escalate.
 - If two bucket rules apply, the stricter wins (Escalate > Reply > Fix).
 
@@ -115,16 +153,28 @@ One round = one push. **At most 3 rounds.**
    groups one after another yourself.
 3. **Single commit point:** after all groups finish, review the combined diff,
    run the local tests, lint and type checks. Fix or drop items until they pass.
+   A dropped item is never silent: reply on its comment explaining why, or add
+   it to the escalation list.
 4. Commit once and push once (`git push`, never `--force`). `fix_rounds += 1`.
 5. Reply on each handled comment with the commit link.
 
-Limits (escalate and stop fixing when hit):
+### Updating the branch from base
+
+If the branch must be brought up to date with base (see merge.md), use
+`gh pr update-branch <pr>` (a merge from base; **never** `--rebase`; check
+`gh pr update-branch --help` for the flags your version supports). It creates a
+new head SHA, so it **counts as that round's push** (`fix_rounds += 1`, no
+separate fix push in the same round), and it's **not allowed once any
+escalation is open**.
+
+### Limits (escalate and stop pushing when hit)
 
 - A 4th round would be needed.
-- The **same check fails twice after a fix** aimed at it.
+- The **same check fails on two consecutive head SHAs** (per the failure history).
 - Local tests can't be made to pass for the round.
 
-After escalating, keep polling and replying if useful, but don't push.
+After escalating, keep polling and replying if useful, but don't push or update
+the branch.
 
 ## Logging and the final report
 
@@ -134,4 +184,5 @@ poll that had an event, each triage decision, each push and each rerun.
 The final report states: PR URL, final state and head SHA, why you stopped,
 checks status, review status and unresolved thread count, fix rounds used with
 commit links, replies posted, reruns, and **every open escalation with a link and
-the decision needed**. Without `--merge`, end with whether it is ready to merge.
+the decision needed**. If branch protection couldn't be read, say so and that
+all checks were treated as required. Without `--merge`, end with whether it is ready to merge.

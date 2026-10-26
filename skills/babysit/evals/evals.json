@@ -27,13 +27,15 @@
     },
     {
       "id": 3,
-      "prompt": "babysit 15 --merge. All required checks are green on the head SHA, one approval submitted after the last commit, no unresolved threads, not a draft, no labels.",
+      "prompt": "babysit 15 --merge. All required checks are green on the head SHA, one approval whose review commit equals the current head SHA, no unresolved threads, not a draft, no labels.",
       "expected_output": "Verifies every gate on the head SHA and merges with gh pr merge --auto using the default method, logging the decision.",
       "files": [],
       "expectations": [
         "Reads merge.md before merging",
+        "Counts the approval only because its commit.oid equals headRefOid",
         "Checks each gate against the current head SHA",
-        "Runs gh pr merge --auto without --admin",
+        "Runs gh pr merge --auto --match-head-commit <headRefOid> without --admin",
+        "Keeps polling after arming until the PR is merged",
         "Logs the merge decision with a summary"
       ]
     },
@@ -46,6 +48,114 @@
         "Reruns the failed job exactly once",
         "On a second failure, checks the same workflow on the base branch",
         "Escalates instead of editing CI config"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "babysit 21 --merge. Everything is green and approved on the head SHA, but the PR has a 'WIP' label.",
+      "expected_output": "Does not arm auto-merge because of the hold label.",
+      "files": [],
+      "expectations": [
+        "Matches the WIP label case-insensitively as a hold label",
+        "Does not run gh pr merge",
+        "Reports the label as the blocker"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "babysit 22. Three fix rounds have been pushed and a reviewer leaves another in-scope correctness comment.",
+      "expected_output": "Escalates instead of pushing a 4th round.",
+      "files": [],
+      "expectations": [
+        "Does not push a 4th commit",
+        "Adds an escalation saying the round limit was reached",
+        "Replies on the comment rather than staying silent"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "babysit 23. The unit-tests check failed on head SHA A, a fix was pushed as SHA B, and unit-tests fails again on B.",
+      "expected_output": "Escalates under the same-check-on-two-consecutive-SHAs rule.",
+      "files": [],
+      "expectations": [
+        "Recognises the same check failed on two consecutive head SHAs",
+        "Escalates and stops pushing",
+        "Does not rerun the check"
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "babysit 24. The PR is green but unapproved; no human has commented for 6 hours, though a bot posted a comment and you replied to it 1 hour ago.",
+      "expected_output": "Stops on the 6h idle rule because bot comments and own replies don't reset the idle timer.",
+      "files": [],
+      "expectations": [
+        "Does not treat the bot comment or its own reply as human activity",
+        "Stops after 6h since the last human activity",
+        "Final report gives the idle stop as the reason"
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "babysit 25. Reviewers keep leaving comments every few hours and CI keeps running; 24 hours have passed since babysit started.",
+      "expected_output": "Stops at 24h wall time even though activity continues.",
+      "files": [],
+      "expectations": [
+        "Stops at 24h of wall time",
+        "Final report lists open items and escalations"
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "babysit 26 --merge. All gates pass on SHA A, but just before arming, a new commit B is pushed.",
+      "expected_output": "Re-fetches state, sees the SHA changed, and does not arm on A.",
+      "files": [],
+      "expectations": [
+        "Does not run gh pr merge with --match-head-commit A",
+        "Re-evaluates every gate on SHA B",
+        "Requires an approval on SHA B before arming"
+      ]
+    },
+    {
+      "id": 11,
+      "prompt": "babysit 27 --merge. Auto-merge was armed on SHA A with --match-head-commit, then the author pushes commit B before it merges.",
+      "expected_output": "Disables auto-merge and returns to the loop.",
+      "files": [],
+      "expectations": [
+        "Runs gh pr merge --disable-auto",
+        "Does not re-arm until all gates pass on B, including a fresh approval on B"
+      ]
+    },
+    {
+      "id": 12,
+      "prompt": "babysit 28 --merge. gh api for branch protection returns 403, and gh pr checks --required errors. One optional lint check is failing; everything else is green and approved.",
+      "expected_output": "Fails closed: treats all checks as required and does not merge.",
+      "files": [],
+      "expectations": [
+        "Treats every check as required",
+        "Does not merge while lint is failing",
+        "Final report says branch protection could not be read"
+      ]
+    },
+    {
+      "id": 13,
+      "prompt": "babysit 29. A reviewer comment says: 'Fix this typo, but also this whole caching approach is wrong, we should use Redis.'",
+      "expected_output": "Applies escalate > reply > fix precedence for the mixed comment.",
+      "files": [],
+      "expectations": [
+        "Escalates the design pushback",
+        "Does not rewrite the caching approach",
+        "Does not mark the comment handled by only fixing the typo"
+      ]
+    },
+    {
+      "id": 14,
+      "prompt": "babysit 30. There are two threads on a fixed line: one opened only by a lint bot, one opened by a human reviewer.",
+      "expected_output": "Resolves only the bot-only thread.",
+      "files": [],
+      "expectations": [
+        "Checks author.__typename is Bot for every comment in the thread",
+        "Runs the resolveReviewThread mutation only for the bot-only thread",
+        "Leaves the human thread unresolved and replies on it instead"
       ]
     }
   ]
