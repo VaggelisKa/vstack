@@ -3,9 +3,11 @@ name: html-plan
 description: Write an implementation plan as one interactive HTML page - a tree of claims (why › what › how › where), each proved by one exhibit (UI mockup, state machine, call stack, schema or code), with the decisions the user has to make placed on the claim they change. Use when the user types /html-plan, or asks for a plan, RFC or design before building something that touches more than a couple of files.
 ---
 
+<!-- Modified by Evangelos Karavasileiadis, 2026-10-26: the request is now read from the user's message instead of a harness-specific arguments placeholder. Otherwise unchanged from upstream; see NOTICE.md. -->
+
 # html-plan
 
-Plan this: $ARGUMENTS
+Plan what the user asked for. Take it from their message: the text after the skill invocation (`/agent-skills:html-plan`, `$html-plan`, `/html-plan`) or the task they described. If they gave nothing to plan, ask.
 
 You write **one HTML file by hand**. It holds a tree of claims. A small runtime draws the tree and lets the reader open it level by level, answer decisions, edit schemas, comment on anything, and copy one response back to you. Do not start building until that response arrives.
 

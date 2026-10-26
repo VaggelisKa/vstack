@@ -1,5 +1,6 @@
 ---
 name: babysit
+argument-hint: "<pr> [--merge]"
 description: Watch a GitHub pull request until it is done - poll CI checks, reviews and review threads, triage every comment, fix what is in scope, reply to the rest, escalate what needs a human, and (only with --merge) merge it once every gate passes. Use this skill whenever the user says "babysit <pr>", "babysit <pr> --merge", or asks to watch, shepherd, monitor, land, or get a PR green, keep an eye on CI, handle review feedback on a PR, or "take this PR to merge", even if they don't say "babysit".
 ---
 
@@ -12,6 +13,18 @@ plain `gh` and `git`, without a human driving each step.
 babysit <pr>            # watch, fix, reply, report. Never merges.
 babysit <pr> --merge    # same loop, then merge when every gate in merge.md passes
 ```
+
+### Arguments
+
+Read the arguments from the user's message, whatever the invocation looks like
+(`/agent-skills:babysit 42 --merge`, `$babysit 42`, `/babysit 42`, or "babysit
+PR 42 and merge it"). Don't rely on a template variable being filled in.
+
+- `<pr>`: the first PR number, PR URL or branch name in the message, as accepted
+  by `gh pr view`. If there is none, use the PR for the current branch
+  (`gh pr view --json number`); if that fails, ask which PR.
+- `--merge`: on only if the message contains `--merge` (or plainly asks you to
+  merge when done). Otherwise merge mode is off.
 
 `<pr>` is a number, URL or branch accepted by `gh pr view`. **Default is no
 merge.** Read [merge.md](merge.md) only when `--merge` was given.
