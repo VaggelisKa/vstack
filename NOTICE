@@ -13,10 +13,5 @@ origin note in its own folder:
   License: Apache-2.0 (skills/html-plan/LICENSE); upstream plugin.json declares MIT
   Modified: yes, see skills/html-plan/NOTICE.md
 
-- skills/skill-creator
-  Upstream: https://github.com/anthropics/skills (skills/skill-creator)
-  License: Apache-2.0 (skills/skill-creator/LICENSE.txt)
-  Modified: no, see skills/skill-creator/NOTICE.md
-
 - skills/babysit
   Original work in this repository (Apache-2.0).
