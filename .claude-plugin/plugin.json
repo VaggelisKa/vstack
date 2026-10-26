@@ -1,6 +1,5 @@
 {
   "name": "agent-skills",
-  "version": "0.1.0",
   "description": "Personal agent skills: babysit (shepherd a PR to green or merged), html-plan (interactive HTML implementation plans) and skill-creator (build and evaluate skills).",
   "author": {
     "name": "Evangelos Karavasileiadis",
