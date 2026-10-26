@@ -1,0 +1,47 @@
+{
+  "title": "review: reviewer result",
+  "description": "One reviewer's result. Strict-mode compatible (every property required, no additionalProperties, no numeric bounds); the coordinator checks ranges itself.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "kind", "area", "harness", "model", "verdict", "score", "confidence", "coverage", "findings"],
+  "properties": {
+    "id": { "type": "string", "description": "Reviewer id assigned in the prompt, e.g. R3." },
+    "kind": {
+      "type": "string",
+      "enum": ["security", "data-integrity", "concurrency", "architecture", "design", "ui-live", "scalability", "bug-hunt"]
+    },
+    "area": { "type": "string", "description": "Area name assigned in the prompt." },
+    "harness": { "type": "string", "description": "Where this reviewer ran, e.g. claude-code subagent, codex, gemini, agy, sequential personas." },
+    "model": { "type": "string", "description": "Model name or alias, or 'inherited'." },
+    "verdict": { "type": "string", "enum": ["approved", "needs_changes", "blocked"] },
+    "score": { "type": "integer", "description": "0-10. 10 no findings above nit; 8-9 minors only; 6-7 one major; 3-5 several majors; 0-2 any blocker." },
+    "confidence": { "type": "number", "description": "0-1. Confidence in the overall verdict." },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["files_reviewed", "status", "note"],
+      "properties": {
+        "files_reviewed": { "type": "array", "items": { "type": "string" }, "description": "Repo-relative paths actually read." },
+        "status": { "type": "string", "enum": ["complete", "partial"] },
+        "note": { "type": "string", "description": "What was not reviewed and why. Empty string when complete." }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "file", "line", "claim", "evidence", "fix", "confidence"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["blocker", "major", "minor", "nit"] },
+          "file": { "type": "string", "description": "Repo-relative path." },
+          "line": { "type": ["integer", "null"], "description": "Line in the head version, >= 1. Null only when no single line applies; then evidence must carry a reproduction." },
+          "claim": { "type": "string", "description": "One sentence: what is wrong." },
+          "evidence": { "type": "string", "description": "Quoted code and/or a concrete reproduction (input, call sequence, interleaving)." },
+          "fix": { "type": "string", "description": "One or two sentences describing the fix. No patch." },
+          "confidence": { "type": "number", "description": "0-1." }
+        }
+      }
+    }
+  }
+}

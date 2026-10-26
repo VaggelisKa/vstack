@@ -10,6 +10,7 @@ Claude Code, Codex and Antigravity.
 |---|---|
 | `babysit` | Watch a pull request until it's green and approved (or merged with `--merge`): poll checks and reviews, fix, reply, escalate |
 | `html-plan` | Write an implementation plan as one interactive HTML page |
+| `review` | Read-only code review of a PR, branch, path or local changes: plans risk-weighted parallel reviewers (security, data integrity, concurrency, architecture, design, live UI, scalability, bug hunt), challenges serious findings with a skeptic, and writes a report with a Ship / Ship with fixes / Rethink / Incomplete decision |
 
 ## Layout
 
@@ -139,6 +140,23 @@ cloned folder). Uninstall: `agy plugin uninstall vstack`, or delete the folder.
 >
 > Not yet verified: invoking the skills, or passing arguments to them, inside an
 > Antigravity session.
+
+## review: what's tested
+
+`/vstack:review [PR|branch|path] [--cross] [--budget N] [--out PATH] [--no-skeptic]`
+(`$review` in Codex).
+
+- Tested in Claude Code against a real merged PR: three parallel subagent
+  reviewers, one skeptic on a different model, report written to `--out`, and
+  the working tree left unchanged.
+- The non-interactive flags in `skills/review/references/harnesses.md` were
+  checked against `--help` for codex-cli 0.160.0, Claude Code 2.1.310,
+  gemini 0.65.0 and agy 1.4.7.
+
+> Not yet verified: `--cross` (running reviewers through codex, gemini or agy),
+> the sequential-personas fallback, the `ui-live` lens (Playwright and simctl),
+> budget trimming on large diffs, and running the skill inside Codex or
+> Antigravity sessions.
 
 ## Arguments
 

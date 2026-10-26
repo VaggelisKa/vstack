@@ -1,0 +1,62 @@
+{
+  "skill_name": "review",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "/vstack:review 142. The PR adds a password-reset endpoint (src/api/auth/reset.ts, ~180 lines, issues a token and updates users.password_hash), a migration adding a reset_tokens table, and a small README tweak.",
+      "expected_output": "Resolves PR 142, plans areas with C/K scores, assigns security and data-integrity plus bug-hunt with extra copies and strong tier on the K=3 auth area, prints the plan table before spawning, runs reviewers in parallel as subagents, never edits or comments, and writes a report file with a decision.",
+      "files": [],
+      "expectations": [
+        "Resolves the scope with gh pr view 142 / gh pr diff 142 rather than the local working tree diff",
+        "Prints a plan table with an area, C, K, flags and reviewer counts before starting any reviewer",
+        "Scores the auth/reset area K=3 and assigns security and data-integrity reviewers to the auth and migration areas",
+        "Gives the K=3, C>=2 auth area more than one security reviewer, with copies differing by model or persona, using the strongest tier",
+        "Plans the README change as a cheap-tier bug-hunt (or folds it into a trivial area) and keeps the total within the default budget of 8",
+        "Starts all reviewers in parallel and does not edit files, commit, push or post PR comments",
+        "Writes the report to ./review-pr-142-<YYYYMMDD-HHMM>.md and prints decision, score, top findings and the report path"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "review my changes before I commit, just fixed a typo in docs/setup.md (3 lines). no PR open for this branch yet",
+      "expected_output": "Uses uncommitted changes as the scope, recognises a trivial docs-only change, runs exactly one cheap reviewer, and reports Ship (unless that reviewer finds a real issue).",
+      "files": [],
+      "expectations": [
+        "Uses git diff HEAD (uncommitted changes) as the scope",
+        "Treats the change as trivial and plans exactly one reviewer in total",
+        "Uses the cheap tier (e.g. haiku / low effort) for that reviewer",
+        "Does not modify docs/setup.md or any other file except the report",
+        "Decision is Ship when no major or blocker finding stands"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "review feature/ledger-batching --cross --budget 4. It touches src/ledger/batch.go (a new worker pool writing balance updates, ~350 lines), src/ledger/store.go (a new upsert), and web/ledger/Table.tsx (a column rename). codex and gemini are on PATH; agy is not.",
+      "expected_output": "Diffs the branch against its merge base, flags concurrency and data-integrity on a K=3 area, prints the --cross privacy warning naming OpenAI and Google before running anything, uses only verified read-only CLI flags with timeouts, trims to budget 4 without removing data-integrity on the K=3 area, and spreads duplicate reviewers across harnesses.",
+      "files": [],
+      "expectations": [
+        "Diffs with the default branch's merge base (git diff <default>...feature/ledger-batching)",
+        "Prints a warning naming OpenAI (codex) and Google (gemini) as recipients before starting any cross reviewer",
+        "Runs codex with exec -s read-only --ephemeral --output-schema and gemini with --approval-mode plan -o json, each wrapped in timeout",
+        "Does not try to run agy",
+        "Trims starting from the lowest C+K area (the Table.tsx rename), never removes data-integrity reviewers on K=3 ledger areas, and either fits within 4 or states that protected reviewers exceed the budget",
+        "Places copies of the same (area, lens) on different harnesses",
+        "Validates each CLI's JSON and counts malformed or timed-out output as no verdict"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "review 77. Simulated results: the security reviewer (opus) on the K=3 area api/payments timed out; a bug-hunt reviewer returned verdict 'approved' with score 9 but listed a 'major' finding with file:line and quoted code; a scalability reviewer reported a 'blocker' with no file or line, only 'this will be slow'; a data-integrity reviewer's 'major' was refuted by the skeptic, who quoted the unique constraint.",
+      "expected_output": "Recomputes the inconsistent bug-hunt verdict, drops the evidence-free blocker, removes the refuted major, runs the skeptic on a different model, and decides Incomplete because the K=3 area's security reviewer returned nothing, explaining why.",
+      "files": [],
+      "expectations": [
+        "Recomputes the bug-hunt result to needs_changes with a score in the 6-7 band and notes the recomputation",
+        "Drops the scalability blocker for lacking concrete evidence and counts it as dropped in the report",
+        "Runs the skeptic for the data-integrity major on a model different from the reviewer's, and lists the refuted finding with the skeptic's reason",
+        "Records the timed-out security reviewer as no verdict and does not retry it as a success",
+        "Decision is Incomplete (overriding Ship or Ship with fixes), naming api/payments and the missing security verdict",
+        "Reports an overall score as a weighted mean plus the minimum, marked advisory"
+      ]
+    }
+  ]
+}
