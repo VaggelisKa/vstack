@@ -22,6 +22,8 @@ Copy or symlink `skills/<skill-name>` into your agent's skills directory
 
 ## Adding a skill
 
+New skills use [`skill-creator`](skills/skill-creator) as the baseline for structure and quality.
+
 1. Create `skills/<skill-name>/SKILL.md` with frontmatter `name` and `description`.
 2. If the skill comes from another repo, keep its files intact, copy the upstream
    license next to it, and add a `NOTICE.md` with the source repo, path and commit.
