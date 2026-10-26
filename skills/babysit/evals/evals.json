@@ -1,0 +1,52 @@
+{
+  "skill_name": "babysit",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "babysit 42. The lint check is failing on an unused import the PR added, and a reviewer asked 'why did you pick a Map here instead of an object?'",
+      "expected_output": "Fixes the lint error in one commit and push, answers the question without changing code, does not merge, and reports status.",
+      "files": [],
+      "expectations": [
+        "Removes the unused import and pushes exactly one commit without force",
+        "Replies to the question without changing code for it",
+        "Does not run gh pr merge",
+        "Final report lists checks, reviews, unresolved threads and fix rounds used"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "babysit https://github.com/acme/api/pull/7 --merge. A reviewer comments that the new endpoint should require an admin token, and another reviewer approved before the last commit.",
+      "expected_output": "Escalates the auth comment without changing code and does not merge, because an escalation is open and the approval is stale.",
+      "files": [],
+      "expectations": [
+        "Classifies the admin-token comment as an escalation and does not edit auth code",
+        "Does not resolve the reviewer's thread",
+        "Treats the approval made before the last commit as not counting",
+        "Does not merge, and never uses --admin or force-push"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "babysit 15 --merge. All required checks are green on the head SHA, one approval submitted after the last commit, no unresolved threads, not a draft, no labels.",
+      "expected_output": "Verifies every gate on the head SHA and merges with gh pr merge --auto using the default method, logging the decision.",
+      "files": [],
+      "expectations": [
+        "Reads merge.md before merging",
+        "Checks each gate against the current head SHA",
+        "Runs gh pr merge --auto without --admin",
+        "Logs the merge decision with a summary"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Keep an eye on PR 88 for me. The e2e job timed out with a runner lost error.",
+      "expected_output": "Triggers the skill without the word babysit, reruns the failed job once, and escalates if it fails again and also fails on base.",
+      "files": [],
+      "expectations": [
+        "Reruns the failed job exactly once",
+        "On a second failure, checks the same workflow on the base branch",
+        "Escalates instead of editing CI config"
+      ]
+    }
+  ]
+}
