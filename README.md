@@ -7,7 +7,6 @@ Claude Code and Codex, and as plain skill folders for Antigravity.
 |---|---|
 | `babysit` | Watch a pull request until it's green and approved (or merged with `--merge`): poll checks and reviews, fix, reply, escalate |
 | `html-plan` | Write an implementation plan as one interactive HTML page |
-| `skill-creator` | Create, evaluate and improve skills; the baseline for every skill here |
 
 ## Layout
 
@@ -129,9 +128,17 @@ Every `SKILL.md` reads its arguments from the user's message, so the same skill
 works whether it was invoked as `/agent-skills:babysit 42 --merge`, `$babysit 42`,
 `/babysit 42`, or in plain words. None rely on `$ARGUMENTS`.
 
+## Authoring skills
+
+New skills are authored using Anthropic's
+[skill-creator](https://github.com/anthropics/skills/tree/main/skills/skill-creator)
+as the baseline for structure, descriptions and evals. It's a dev tool: install it
+separately as a personal skill (for Claude Code, copy it to
+`~/.claude/skills/skill-creator`). It is not shipped in this plugin.
+
 ## Adding a skill
 
-1. Build it with `skill-creator` as the baseline: `skills/<skill-name>/SKILL.md`
+1. Author it as described above: `skills/<skill-name>/SKILL.md`
    with frontmatter `name` and a strong `description`, references for detail,
    and `evals/evals.json`.
 2. If the skill comes from another repo, keep its files and upstream license,

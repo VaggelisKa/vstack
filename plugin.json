@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "agent-skills",
   "version": "0.1.0",
-  "description": "Personal agent skills: babysit (shepherd a PR to green or merged), html-plan (interactive HTML implementation plans) and skill-creator (build and evaluate skills).",
+  "description": "Personal agent skills: babysit (shepherd a PR to green or merged) and html-plan (interactive HTML implementation plans).",
   "author": {
     "name": "Evangelos Karavasileiadis",
     "url": "https://github.com/VaggelisKa"
