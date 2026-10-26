@@ -151,9 +151,14 @@ cloned folder). Uninstall: `agy plugin uninstall vstack`, or delete the folder.
   the working tree left unchanged.
 - The non-interactive flags in `skills/review/references/harnesses.md` were
   checked against `--help` for codex-cli 0.160.0, Claude Code 2.1.310,
-  gemini 0.65.0 and agy 1.4.7.
+  gemini 0.65.0 and agy 1.4.7. Prompts on stdin were run live for codex
+  (`exec -`) and claude (`-p`); claude's `--disallowed-tools "Read(**/.env*)"`
+  was run live and blocked reading `.env`.
+- The secret-scan helpers in `skills/review/scripts/` were run on a sample diff.
 
 > Not yet verified: `--cross` (running reviewers through codex, gemini or agy),
+> gemini's stdin prompt (help only), agy's stream-json stdin (not used),
+> the gitleaks and trufflehog invocations (neither was installed),
 > the sequential-personas fallback, the `ui-live` lens (Playwright and simctl),
 > budget trimming on large diffs, and running the skill inside Codex or
 > Antigravity sessions.
