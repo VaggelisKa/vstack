@@ -28,6 +28,10 @@ class GitRead(unittest.TestCase):
         (r / "a.txt").write_text("two\n")
         (r / "src/app.py").write_text("x = 2\n")
         cls.head = commit_all(r, "change")
+        # A commit whose content reads like an option, for the pickaxe tests.
+        git(r, "checkout", "-qb", "pick")
+        (r / "notes.txt").write_text("--output=X\n")
+        cls.pick = commit_all(r, "notes")
         git(r, "checkout", "-q", "main")
         # Anything that runs a program leaves this marker behind.
         cls.marker = tmpdir() / "ran"
@@ -107,6 +111,44 @@ class GitRead(unittest.TestCase):
         self.assertIn("a.txt", self.ok("log", "--max-count=1", "--name-only", self.head))
         self.assertIn("base", self.ok("log", "--oneline"))             # defaults to HEAD
 
+    def test_log_pickaxe_and_paths(self):
+        b, h = self.base, self.head
+        def subjects(*args):
+            return [l.split(" ", 1)[1] for l in self.ok("log", "--oneline", *args).splitlines()]
+        self.assertEqual(subjects("-Stwo", "feature"), ["change"])
+        self.assertEqual(subjects("-S", "two", "feature"), ["change"])
+        self.assertEqual(subjects("-G", "x = [0-9]", "feature"), ["change", "base"])
+        self.assertEqual(subjects("-Gx = .*2", f"{b}..{h}"), ["change"])
+        self.assertEqual(subjects("-Sone", f"{b}..{h}"), ["change"])  # removed "one"
+        self.assertEqual(subjects("-Snowhere", "feature"), [])
+        self.assertEqual(subjects("feature", "--", "src/app.py"), ["change", "base"])
+        self.assertEqual(subjects(f"{b}..{h}", "--", "src"), ["change"])
+        self.assertEqual(subjects("pick", "--", "notes.txt", "a.txt"), ["notes", "change", "base"])
+        self.assertEqual(subjects("-n", "1", "-Stwo", "pick", "--", "a.txt"), ["change"])
+        self.assertIn("notes.txt", self.ok("log", "--stat", "-Gput", "pick", "--", "notes.txt"))
+        # shell-quoted forms, undone by a real shell
+        r = self.shell(f"log --oneline -G'x = .*2' {b}..{h}")
+        self.assertEqual((r.returncode, r.stdout.decode().split(" ", 1)[1]), (0, "change\n"))
+
+    def test_log_pickaxe_value_is_never_an_option(self):
+        o = self.out
+        # Searched as a literal string: it finds the commit that added it...
+        for args in (("-S", "--output=X"), ("-S--output=X",), ("-G", "--output=X"),
+                     ("-G--output=X",)):
+            with self.subTest(args=args):
+                self.assertIn("notes", self.ok("log", "--oneline", *args, "pick"))
+        # ...and an --output aimed at a file writes nothing (tearDown checks).
+        for args in (("-S", f"--output={o}/s1"), (f"-S--output={o}/s2",),
+                     ("-G", f"--output={o}/g1"), (f"-G--output={o}/g2",),
+                     ("-S", "--ext-diff", "-n1"), ("-S", "-p")):
+            with self.subTest(args=args):
+                self.assertEqual(self.ok("log", *args, "pick"), "")
+        for cmd in (f'log -S "--output={o}/q1" pick', f"log -G'--output={o}/q2' pick",
+                    f'log -S"--out"put={o}/q3 pick'):
+            with self.subTest(cmd=cmd):
+                r = self.shell(cmd)
+                self.assertEqual((r.returncode, r.stdout), (0, b""), r.stderr)
+
     # --- writes a file, runs a program, or reads outside the commit -------
 
     def test_output_rejected_in_every_quoting(self):
@@ -152,7 +194,16 @@ class GitRead(unittest.TestCase):
                      ("diff", f"{self.base}...{h}", "--", "-x"),
                      ("diff", f"{self.base}...{h}", "--", ":(exclude)a.txt"),
                      ("diff", f"{self.base}...{h}", "--"),
-                     ("log", h, "--", "a.txt")):              # paths are for diff only
+                     ("log", h, "--", "/etc/passwd"),
+                     ("log", h, "--", "../x"),
+                     ("log", h, "--", "src/../.."),
+                     ("log", h, "--", f"--output={self.out}/p1"),
+                     ("log", "--", "-x"),
+                     ("log", "--", ":(exclude)a.txt"),
+                     ("log", "--", ""),
+                     ("log", h, "--"),
+                     ("log", h, "--", "a.txt", "--", "src"),          # '--' only once
+                     ("log", "--", "--")):
             with self.subTest(args=args):
                 self.rejected(self.read(*args))
 
@@ -175,6 +226,15 @@ class GitRead(unittest.TestCase):
                      ("log", b, h),
                      ("log", "-n", "x"),
                      ("log", "-n"),
+                     ("log", "-S"),                            # pickaxe without a value
+                     ("log", "-G"),
+                     ("log", "-S", ""),
+                     ("log", "-G", "", h),
+                     ("log", "-Sfoo", "--pickaxe-regex"),
+                     ("log", "-Sfoo", "--pickaxe-all"),
+                     ("log", "--find-object=HEAD"),
+                     ("log", f"--output={self.out}/o1"),
+                     ("log", "-Sfoo", f"--output={self.out}/o2"),
                      ("blame", "a.txt"),
                      ()):
             with self.subTest(args=args):
