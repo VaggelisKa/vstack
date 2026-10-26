@@ -31,12 +31,27 @@ Beyond `--help`:
   (`--disallowedTools, --disallowed-tools <tools...>`), and a live run
   confirmed it blocks reading `./.env` while other reads work. The other
   `Read(...)` rules use the same syntax but weren't each tested.
+- Read denies also cover Grep and Glob (live, opus): with only
+  `"Read(**/.env*)"` denied, Grep on `.env` was blocked and Glob `**/.env`
+  returned no files (without the deny, Glob found it). `"Grep(<pattern>)"` and
+  `"Glob(<pattern>)"` rules were also accepted, and the Grep rule blocked Grep.
+  They're added below as defence in depth, in case that coverage changes.
+- `git show` can write files (live): with `--allowed-tools "Bash(git show:*)"`
+  alone, `git show --output=/tmp/x HEAD` ran and wrote `/tmp/x`. Adding
+  `--disallowed-tools "Bash(git * --output*)" "Bash(git *--ext-diff*)"
+  "Bash(git *--textconv*)"` blocked it and no file was written. With the full deny list,
+  `git diff --ext-diff HEAD` and `git diff --no-index .env /dev/null` were
+  blocked too, and `git --no-pager show HEAD:a.txt` ran under the
+  `Bash(git --no-pager show:*)` allow. `--textconv` wasn't triggered
+  separately.
 - `gemini -p ""` with the prompt on stdin: help only ("Appended to input on
   stdin (if any)"). No authenticated run.
 - `agy`: help documents stdin only for `--input-format stream-json`, so agy
   still takes the prompt as an argument (see [agy](#agy)).
 - `gitleaks` and `trufflehog`: **not verified**. Neither was installed on the
-  machine these notes were written on; the invocations follow their docs.
+  machine these notes were written on; the invocations and exit codes follow
+  their docs. `scripts/split-hunks.py`, `scan-secrets.py` and
+  `wrap-untrusted.py` are tested, including every fail-closed exit.
 
 Use only these flags. If an installed version is different, run
 `<cli> --help` and confirm each flag you're about to use is listed. If one is
@@ -106,26 +121,43 @@ to a hunk without anyone printing the secret:
 ```bash
 python3 -I "$SKILL_DIR/scripts/split-hunks.py" "$TMP/A1.diff" "$TMP/hunks/A1"
 # -> $TMP/hunks/A1/<n>.patch and index.tsv: "<n>.patch<TAB><path><TAB><@@ header @@>"
+# A non-zero exit here holds back the whole area, like a scanner error.
 ```
 
 Then scan each hunk directory with the first tool available:
 
 ```bash
-# gitleaks (not verified here). Exit 1 means leaks found; --redact keeps values out of the report.
+# gitleaks (not verified here). --redact keeps values out of the report.
 gitleaks detect --no-git --source "$TMP/hunks/A1" --redact --no-banner \
-  --report-format json --report-path "$TMP/A1.leaks.json"
-#   or per hunk: gitleaks stdin --redact --no-banner < "$TMP/hunks/A1/3.patch"
-# flagged hunks: the "File" field of each finding
+  --exit-code 1 --report-format json --report-path "$TMP/A1.leaks.json"
+echo $? > "$TMP/A1.scan.exit"
+# flagged hunks: the basename of each finding's "File" field
 
 # trufflehog (not verified here). --no-verification stops it sending found
 # credentials to their issuers to test them; its JSON holds raw values, so
 # read only SourceMetadata.Data.Filesystem.file, then delete the file.
 trufflehog filesystem "$TMP/hunks/A1" --json --no-verification --no-update \
   > "$TMP/A1.leaks.jsonl"
+echo $? > "$TMP/A1.scan.exit"
 
-# Neither installed, or the scanner errored: token regex fallback (tested).
+# Neither installed: token regex fallback (tested).
 python3 -I "$SKILL_DIR/scripts/scan-secrets.py" "$TMP/hunks/A1" > "$TMP/A1.flagged"
+echo $? > "$TMP/A1.scan.exit"
 ```
+
+**Fail closed.** Read the exit code before the output. Any non-zero or
+unexpected scanner exit holds back **every** hunk in that area, not just the
+flagged ones, because a scanner that errored has checked nothing and its empty
+output looks exactly like a clean result:
+
+| Scanner | Clean | Leaks found (flag those hunks) | Anything else: hold back every hunk |
+|---|---|---|---|
+| gitleaks | exit 0 | exit 1 **and** the report parses as a non-empty JSON array | exit 1 with a missing, unparseable or empty report (gitleaks also exits 1 on fatal errors), any other code |
+| trufflehog | exit 0, every line parses as JSON, no findings | exit 0, every line parses; each finding's file is a flagged hunk | any non-zero exit, or a line that doesn't parse |
+| `scan-secrets.py` | exit 0, empty stdout | exit 0; stdout lists the flagged hunks, one per line | exit 2 (no argument, missing directory or `index.tsv`, a listed `.patch` missing, unreadable file) or any other code |
+
+Don't fall back to the regex after a scanner error; the hunks are already
+held back. List them as "held back: <scanner> exit <code>" in "Not reviewed".
 
 The fallback matches AWS keys (`AKIA[0-9A-Z]{16}`), GitHub tokens
 (`gh[pousr]_...`, `github_pat_...`), Slack tokens (`xox[baprs]-...`),
@@ -133,11 +165,12 @@ private key headers (`-----BEGIN ... PRIVATE KEY-----`) and generic
 assignments (`(api|secret|token|passw)[^\n]{0,20}[:=]\s*['"][^'"]{12,}`,
 case-insensitive). It prints only hunk file names.
 
-For every flagged hunk:
+For every flagged or held-back hunk:
 
 - Drop it from the area diff that goes to other providers. In-harness
   reviewers still get it.
-- For claude, also add `Read(<path>)` for its file to `--disallowed-tools`.
+- For claude, also deny `Read(<path>)`, `Grep(<path>)` and `Glob(<path>)` for
+  its file (see [claude](#claude)).
 - List it in the report's "Not reviewed" section as file plus hunk header
   (`src/config.ts @@ -1,3 +1,4 @@`, held back by secret scan). **Never** print,
   log or quote the matched value, in the chat, the report or a finding.
@@ -164,7 +197,8 @@ can see the code. Wrap each call in `timeout <secs>` using the tier timeout
 **Heads that aren't checked out.** When the PR head was fetched as objects only
 (or the branch under review isn't the current one), the working tree is a
 different commit. Use the "not checked out" `{{read_instructions}}` from reviewer-contract.md, so reviewers read code only
-through `git show <head_sha>:<path>` and `git diff <base>...<head>`. For claude,
+through `git --no-pager show <head_sha>:<path>` and
+`git --no-pager diff --no-ext-diff --no-textconv <base>...<head>`. For claude,
 also narrow the tools (see below). codex, gemini and agy can't be narrowed, so
 for them the prompt is the only guard; that's one more reason to run `--cross`
 only in a repo without secrets in the working tree.
@@ -196,39 +230,55 @@ timeout 900 codex exec -s read-only --skip-git-repo-check --ephemeral \
 ## claude
 
 Plan mode, an allowlist of read-only tools, a denylist that keeps the
-[secret exclusions](#secret-exclusions) unreadable, and the schema enforced
-through `--json-schema`, which takes the schema **text**:
+[secret exclusions](#secret-exclusions) unreadable and blocks git's
+file-writing and program-running options, and the schema enforced through
+`--json-schema`, which takes the schema **text**:
 
 ```bash
+EXCLUDE=(   # the secret exclusion list, quoted so bash doesn't expand the globs
+  '.env' '.env.*' '*.pem' '*.key' '*.p12' '*.pfx' '*.jks'
+  '.npmrc' '.netrc' '.pypirc' '.git-credentials' '.aws/credentials'
+  'kubeconfig' '*kubeconfig*' '*.tfstate' '*.tfstate.backup'
+  'service-account*.json' 'credentials.json' '*.secret'
+  'id_rsa*' 'id_dsa*' 'id_ecdsa*' 'id_ed25519*'
+)
 CLAUDE_DENY=(
-  "Read(**/.env)" "Read(**/.env.*)" "Read(**/*.pem)" "Read(**/*.key)"
-  "Read(**/*.p12)" "Read(**/*.pfx)" "Read(**/*.jks)"
-  "Read(**/.npmrc)" "Read(**/.netrc)" "Read(**/.pypirc)" "Read(**/.git-credentials)"
-  "Read(**/.aws/credentials)" "Read(**/kubeconfig)" "Read(**/*kubeconfig*)"
-  "Read(**/*.tfstate)" "Read(**/*.tfstate.backup)"
-  "Read(**/service-account*.json)" "Read(**/credentials.json)" "Read(**/*.secret)"
-  "Read(**/id_rsa*)" "Read(**/id_dsa*)" "Read(**/id_ecdsa*)" "Read(**/id_ed25519*)"
-)   # plus "Read(<path>)" for each file with a hunk flagged by the secret scan
+  # git show/diff/log --output=<file> writes a file even under plan mode;
+  # --ext-diff and --textconv run configured programs; --no-index reads
+  # arbitrary working-tree files, bypassing the Read() denies.
+  "Bash(git * --output*)" "Bash(git *--ext-diff*)" "Bash(git *--textconv*)"
+  "Bash(git *--no-index*)"
+)
+for p in "${EXCLUDE[@]}"; do
+  CLAUDE_DENY+=("Read(**/$p)" "Grep(**/$p)" "Glob(**/$p)")
+done   # plus Read/Grep/Glob(<path>) for each file with a flagged or held-back hunk
+GIT_READ="Bash(git show:*),Bash(git diff:*),Bash(git log:*),Bash(git --no-pager show:*),Bash(git --no-pager diff:*),Bash(git --no-pager log:*)"
 
 (cd "$REPO" && timeout 900 claude -p \
   --model opus --effort high --permission-mode plan \
-  --allowed-tools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(gh pr view:*),Bash(gh pr diff:*)" \
+  --allowed-tools "Read,Grep,Glob,$GIT_READ,Bash(gh pr view:*),Bash(gh pr diff:*)" \
   --disallowed-tools "${CLAUDE_DENY[@]}" \
   --output-format json \
   --json-schema "$(cat "$SKILL_DIR/references/reviewer.schema.json")" \
   < "$TMP/R4.prompt") > "$TMP/R4.out.json" 2> "$TMP/R4.err"
 ```
 
-- Keep `CLAUDE_DENY` in step with the exclusion list: one `Read(**/<entry>)`
-  per entry.
+- Keep `EXCLUDE` in step with the exclusion list. Each entry gets a `Read`,
+  `Grep` and `Glob` deny. Read denies already hide files from Grep and Glob
+  (see [Verified versions](#verified-versions)); the other two are there in
+  case that changes.
+- Keep the three git denies: in the live test the `Bash(git show:*)` allow
+  rule alone let `git show --output=<file>` write a file. The allow rules
+  match by prefix, so `git -c ...`, `git --exec-path ...` and aliases aren't
+  allowed at all.
 - **Head not checked out**: replace the allowlist with
-  `--allowed-tools "Bash(git show:*),Bash(git diff:*),Bash(git log:*)"`. No
+  `--allowed-tools "$GIT_READ"` and keep the same denies. No
   Read, Grep or Glob, because they'd only see the wrong commit.
 - `--output-format json` prints a single envelope object. Use
   `structured_output` if it's there. Otherwise parse the `result` string as
   JSON. If `is_error` is true, there's no verdict.
 - Don't add tools to the allowlist. Anything that writes stays blocked by plan
-  mode and the list.
+  mode, the allowlist and the git denies.
 
 ## gemini
 

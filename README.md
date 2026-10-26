@@ -153,8 +153,16 @@ cloned folder). Uninstall: `agy plugin uninstall vstack`, or delete the folder.
   checked against `--help` for codex-cli 0.160.0, Claude Code 2.1.310,
   gemini 0.65.0 and agy 1.4.7. Prompts on stdin were run live for codex
   (`exec -`) and claude (`-p`); claude's `--disallowed-tools "Read(**/.env*)"`
-  was run live and blocked reading `.env`.
-- The secret-scan helpers in `skills/review/scripts/` were run on a sample diff.
+  was run live and blocked reading `.env`, and also blocked Grep on it and
+  hid it from Glob. Live on Claude Code 2.1.310: an allowed `Bash(git show:*)`
+  let `git show --output=<file>` write a file, and the
+  `Bash(git * --output*)` deny in harnesses.md blocked it.
+- The helpers in `skills/review/scripts/` have unit tests (run outside the
+  repo): `split-hunks.py` on a real `git diff` with a path containing ` b/`,
+  a deletion, a rename and a C-quoted path; `scan-secrets.py` for a clean
+  hunk, a leak, and each fail-closed case (exit 2: no argument, missing
+  directory, missing `index.tsv`, listed hunks missing); `wrap-untrusted.py`
+  for upper-case, spaced and fake-opening `untrusted-` tags.
 
 > Not yet verified: `--cross` (running reviewers through codex, gemini or agy),
 > gemini's stdin prompt (help only), agy's stream-json stdin (not used),
