@@ -2,17 +2,26 @@
 
 Usage: python3 -I wrap-untrusted.py <diff|pr-description|finding> [file] > block
 Reads the file, or stdin without one, and writes
-"<untrusted-NAME>\n<content>\n</untrusted-NAME>\n" to stdout. Every opening or
-closing untrusted tag inside the content, in any case and with any spacing
-(regex <\\s*/?\\s*untrusted-, case-insensitive), has its "<" replaced with
-"&lt;", so it can't end the block early or open a fake one.
+"<untrusted-NAME>\n<content>\n</untrusted-NAME>\n" to stdout.
 
-Prints the number of escapes, and nothing else, on stderr. More than 0 means
-the content tried to break out of its block: record it as an injection
-attempt. Exits 2 with a message on stderr on bad arguments or a read error.
+The content is NFKC-normalised first, so look-alike characters such as a
+full-width "＜" become the ASCII they stand for and can't hide a tag from the
+match below. The wrapped text is therefore the normalised text, not the exact
+bytes: a reviewer that needs those reads the file itself. Then every "&"
+becomes "&amp;", so text that already reads "&lt;/untrusted-" can't be
+decoded back into a real tag, and every opening or closing untrusted tag, in
+any case and with any spacing (regex <\\s*/?\\s*untrusted-, case-insensitive),
+has its "<" replaced with "&lt;", so it can't end the block early or open a
+fake one.
+
+Prints the number of escaped tags, and nothing else, on stderr ("&" escapes
+aren't counted). More than 0 means the content tried to break out of its
+block: record it as an injection attempt. Exits 2 with a message on stderr on
+bad arguments or a read error.
 """
 import re
 import sys
+import unicodedata
 
 NAMES = ("diff", "pr-description", "finding")
 TAG = re.compile(r"<(?=\s*/?\s*untrusted-)", re.IGNORECASE)
@@ -31,7 +40,8 @@ except OSError as e:
     print(f"wrap-untrusted: can't read {e.filename}: {e.strerror}", file=sys.stderr)
     sys.exit(2)
 
-text, count = TAG.subn("&lt;", data.decode("utf-8", "surrogateescape"))
+text = unicodedata.normalize("NFKC", data.decode("utf-8", "surrogateescape"))
+text, count = TAG.subn("&lt;", text.replace("&", "&amp;"))
 if text and not text.endswith("\n"):
     text += "\n"
 sys.stdout.buffer.write(

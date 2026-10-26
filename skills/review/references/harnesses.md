@@ -37,21 +37,38 @@ Beyond `--help`:
   `"Glob(<pattern>)"` rules were also accepted, and the Grep rule blocked Grep.
   They're added below as defence in depth, in case that coverage changes.
 - `git show` can write files (live): with `--allowed-tools "Bash(git show:*)"`
-  alone, `git show --output=/tmp/x HEAD` ran and wrote `/tmp/x`. Adding
-  `--disallowed-tools "Bash(git * --output*)" "Bash(git *--ext-diff*)"
-  "Bash(git *--textconv*)"` blocked it and no file was written. With the full deny list,
-  `git diff --ext-diff HEAD` and `git diff --no-index .env /dev/null` were
-  blocked too, and `git --no-pager show HEAD:a.txt` ran under the
-  `Bash(git --no-pager show:*)` allow. `--textconv` wasn't triggered
-  separately.
+  alone, `git show --output=/tmp/x HEAD` ran and wrote `/tmp/x`. A deny of
+  `"Bash(git * --output*)"` blocked that spelling, **but not quoted ones**
+  (live): `git show "--output=/tmp/q1" HEAD` and
+  `git show '--output'=/tmp/q3 HEAD` were allowed and wrote their files, and
+  `--ext"-diff"` and `--no"-index"` got past their denies the same way. Deny
+  patterns match the command text, and quoting splits the tokens. So the claude
+  harness no longer allows raw git at all: reviewers read history through
+  `scripts/git-read.sh`, which checks arguments after the shell has unquoted
+  them. Its tests (`scripts/tests/test_git_read.py`) pass the quoted forms
+  through a real `bash -c` and check each is rejected with exit 2 and no file
+  written.
+- `--permission-mode dontAsk`: listed in `claude --help` (choices
+  `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan`).
+  It denies any tool call the allow rules don't cover, rather than asking.
+  Live on Claude Code 2.1.310 (opus) with `--permission-mode dontAsk`,
+  `--allowed-tools "Bash(<abs>/git-read.sh:*)"` and the backstop denies:
+  `git show "--output=/tmp/q1" HEAD`, `git show '--output'=/tmp/q3 HEAD`,
+  `git diff --ext"-diff" HEAD~1`, `git diff --no"-index" a.txt /dev/null` and
+  `git show --output=/tmp/q4 HEAD` were all blocked; the script with a quoted
+  `"--output=/tmp/q5"` ran and the script rejected it; the script followed by
+  `> /tmp/q6`, `; git show --output=...` or `&& touch /tmp/q8` was blocked;
+  legitimate `show <sha>:a.txt`, `diff <sha>...<sha>` and `log --oneline` ran.
+  No `/tmp/q*` file was written.
 - `gemini -p ""` with the prompt on stdin: help only ("Appended to input on
   stdin (if any)"). No authenticated run.
 - `agy`: help documents stdin only for `--input-format stream-json`, so agy
   still takes the prompt as an argument (see [agy](#agy)).
 - `gitleaks` and `trufflehog`: **not verified**. Neither was installed on the
   machine these notes were written on; the invocations and exit codes follow
-  their docs. `scripts/split-hunks.py`, `scan-secrets.py` and
-  `wrap-untrusted.py` are tested, including every fail-closed exit.
+  their docs. `scripts/split-hunks.py`, `scan-secrets.py`,
+  `wrap-untrusted.py` and `git-read.sh` are tested, including every
+  fail-closed exit (`python3 -m unittest discover -s skills/review/scripts/tests`).
 
 Use only these flags. If an installed version is different, run
 `<cli> --help` and confirm each flag you're about to use is listed. If one is
@@ -86,7 +103,7 @@ Excluded by name: <files, or "none">. Held back by secret scan (<gitleaks|truffl
 
 Their read-only sandboxes stop writes, not reads, so a reviewer that decides
 to open `.env` can. claude is narrower (see [claude](#claude)), but its
-allowed `git show` can still print any **committed** file. The user opted in
+allowed `git-read.sh show` can still print any **committed** file. The user opted in
 with `--cross`, so go ahead after the warning without asking again.
 
 ## Secret exclusions
@@ -115,8 +132,25 @@ security review needs. Secrets inside ordinary source files are the
 ## Secret scan
 
 Names miss secrets pasted into code, so scan the content of every hunk you're
-about to send. Split each area diff into one file per hunk, so a hit maps back
-to a hunk without anyone printing the secret:
+about to send. That includes **untracked files** in an uncommitted scope:
+`git diff` leaves them out, so append each one (not on the exclusion list) to
+its area diff as a new-file diff before splitting. Exit 1 with output means the
+file differs from `/dev/null`, which is expected. Anything else (exit 128 for an
+unreadable file, exit 1 with no output for one that vanished) holds the file
+back, like a scanner error:
+
+```bash
+# untracked-diff: $UNTRACKED holds this area's untracked files, one per line,
+# minus the exclusion list (git ls-files -z --others --exclude-standard).
+while IFS= read -r f; do
+  (cd "$REPO" && git --no-pager diff --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ --no-index -- /dev/null "$f") > "$TMP/one.diff"
+  if [ $? -eq 1 ] && [ -s "$TMP/one.diff" ]; then cat "$TMP/one.diff" >> "$TMP/A1.diff"
+  else printf '%s\n' "$f" >> "$TMP/A1.untracked-held"; fi   # list under "Not reviewed"
+done < "$UNTRACKED"
+```
+
+Split each area diff into one file per hunk, so a hit maps back to a hunk
+without anyone printing the secret:
 
 ```bash
 python3 -I "$SKILL_DIR/scripts/split-hunks.py" "$TMP/A1.diff" "$TMP/hunks/A1"
@@ -183,9 +217,14 @@ should report it by file and line, with the value redacted.
 ```bash
 REPO=$(git rev-parse --show-toplevel)
 SKILL_DIR=<absolute path of this skill>        # the folder holding SKILL.md
+GIT_READ="$SKILL_DIR/scripts/git-read.sh"      # {{git_read}} in the prompts
 TMP=$(mktemp -d)                               # prompts, outputs, logs: outside the repo
 # Per reviewer: write the filled prompt from reviewer-contract.md to $TMP/<id>.prompt
 ```
+
+If `$SKILL_DIR` contains spaces or shell metacharacters, copy `git-read.sh`
+into `$TMP` and point `GIT_READ` there, so the allow rule below and the
+command reviewers type match without quoting.
 
 Write each prompt to a file and feed it on **stdin** (`< "$TMP/<id>.prompt"`),
 not as one argument. Arguments show up in the process table, where any local
@@ -197,8 +236,8 @@ can see the code. Wrap each call in `timeout <secs>` using the tier timeout
 **Heads that aren't checked out.** When the PR head was fetched as objects only
 (or the branch under review isn't the current one), the working tree is a
 different commit. Use the "not checked out" `{{read_instructions}}` from reviewer-contract.md, so reviewers read code only
-through `git --no-pager show <head_sha>:<path>` and
-`git --no-pager diff --no-ext-diff --no-textconv <base>...<head>`. For claude,
+through `"$GIT_READ" show <head_sha>:<path>` and
+`"$GIT_READ" diff <base>...<head>`. For claude,
 also narrow the tools (see below). codex, gemini and agy can't be narrowed, so
 for them the prompt is the only guard; that's one more reason to run `--cross`
 only in a repo without secrets in the working tree.
@@ -229,10 +268,10 @@ timeout 900 codex exec -s read-only --skip-git-repo-check --ephemeral \
 
 ## claude
 
-Plan mode, an allowlist of read-only tools, a denylist that keeps the
-[secret exclusions](#secret-exclusions) unreadable and blocks git's
-file-writing and program-running options, and the schema enforced through
-`--json-schema`, which takes the schema **text**:
+`dontAsk` permission mode with an allowlist of `git-read.sh` (plus Read, Grep
+and Glob when the head is checked out) and **no raw git**, a denylist that keeps the
+[secret exclusions](#secret-exclusions) unreadable, and the schema enforced
+through `--json-schema`, which takes the schema **text**:
 
 ```bash
 EXCLUDE=(   # the secret exclusion list, quoted so bash doesn't expand the globs
@@ -243,42 +282,47 @@ EXCLUDE=(   # the secret exclusion list, quoted so bash doesn't expand the globs
   'id_rsa*' 'id_dsa*' 'id_ecdsa*' 'id_ed25519*'
 )
 CLAUDE_DENY=(
-  # git show/diff/log --output=<file> writes a file even under plan mode;
-  # --ext-diff and --textconv run configured programs; --no-index reads
-  # arbitrary working-tree files, bypassing the Read() denies.
-  "Bash(git * --output*)" "Bash(git *--ext-diff*)" "Bash(git *--textconv*)"
-  "Bash(git *--no-index*)"
+  # Best effort only: raw git isn't allowed at all, and these patterns can be
+  # dodged by quoting (git show "--output=/tmp/x" HEAD). They stay as a
+  # backstop for the unquoted forms in case an allow rule ever lets git in.
+  "Bash(git *output*)" "Bash(git *ext*diff*)" "Bash(git *textconv*)" "Bash(git *no*index*)"
 )
 for p in "${EXCLUDE[@]}"; do
   CLAUDE_DENY+=("Read(**/$p)" "Grep(**/$p)" "Glob(**/$p)")
 done   # plus Read/Grep/Glob(<path>) for each file with a flagged or held-back hunk
-GIT_READ="Bash(git show:*),Bash(git diff:*),Bash(git log:*),Bash(git --no-pager show:*),Bash(git --no-pager diff:*),Bash(git --no-pager log:*)"
+CLAUDE_ALLOW=("Bash($GIT_READ:*)")              # the only Bash the reviewer gets
+if [ "$CHECKED_OUT" = 1 ]; then CLAUDE_ALLOW+=(Read Grep Glob); fi   # 1 = head is the working tree
 
 (cd "$REPO" && timeout 900 claude -p \
-  --model opus --effort high --permission-mode plan \
-  --allowed-tools "Read,Grep,Glob,$GIT_READ,Bash(gh pr view:*),Bash(gh pr diff:*)" \
+  --model opus --effort high --permission-mode dontAsk \
+  --allowed-tools "${CLAUDE_ALLOW[@]}" \
   --disallowed-tools "${CLAUDE_DENY[@]}" \
   --output-format json \
   --json-schema "$(cat "$SKILL_DIR/references/reviewer.schema.json")" \
   < "$TMP/R4.prompt") > "$TMP/R4.out.json" 2> "$TMP/R4.err"
 ```
 
+- `dontAsk` denies every tool call the allowlist doesn't cover, instead of
+  prompting (which a non-interactive run can't answer). Plan mode isn't
+  enough on its own: it let an allowed `git show --output=<file>` write.
+- **No raw git.** Every allow rule for `git` can be bypassed by quoting an
+  option, so reviewers get `git-read.sh` only, which rejects options after the
+  shell has unquoted them. The `git` denies above are a documented best-effort
+  backstop, not the guard.
+- Redirection and chaining after the allowed script (`"$GIT_READ" show ... >
+  file`, `... ; cmd`, `... && cmd`) were blocked live by Claude Code's command
+  parsing under `dontAsk`; the script itself can't stop those.
+- **Head not checked out** (`CHECKED_OUT=0`): the script is the only tool. No
+  Read, Grep or Glob, because they'd only see the wrong commit.
 - Keep `EXCLUDE` in step with the exclusion list. Each entry gets a `Read`,
   `Grep` and `Glob` deny. Read denies already hide files from Grep and Glob
   (see [Verified versions](#verified-versions)); the other two are there in
-  case that changes.
-- Keep the three git denies: in the live test the `Bash(git show:*)` allow
-  rule alone let `git show --output=<file>` write a file. The allow rules
-  match by prefix, so `git -c ...`, `git --exec-path ...` and aliases aren't
-  allowed at all.
-- **Head not checked out**: replace the allowlist with
-  `--allowed-tools "$GIT_READ"` and keep the same denies. No
-  Read, Grep or Glob, because they'd only see the wrong commit.
+  case that changes. `git-read.sh show` can still print a committed excluded
+  file; the [privacy warning](#privacy-warning) says so.
 - `--output-format json` prints a single envelope object. Use
   `structured_output` if it's there. Otherwise parse the `result` string as
   JSON. If `is_error` is true, there's no verdict.
-- Don't add tools to the allowlist. Anything that writes stays blocked by plan
-  mode, the allowlist and the git denies.
+- Don't add tools to the allowlist, and never add a `Bash(git ...)` allow.
 
 ## gemini
 
@@ -394,8 +438,12 @@ This is the default mode, with no code leaving the current provider.
 - **Claude Code**: use the Agent (Task) tool, one call per reviewer, all in one
   message so they run at the same time. Set `model` to `haiku`, `sonnet` or
   `opus` by tier. Use a read-only agent type if one can read files and run
-  `git`. Otherwise use a general agent and rely on the read-only rule in the
-  prompt. Run them in the background and collect every result before aggregating.
+  Bash (for `git-read.sh`). Otherwise use a general agent and rely on the
+  read-only rule in the prompt. Run them in the background and collect every
+  result before aggregating.
+- Subagents get the same prompt, so they read git history through
+  `{{git_read}}` too, never raw git. Their tools usually inherit the session's
+  permissions and can't be narrowed per call, so here the prompt is the guard.
 - **Codex / Antigravity**: if the host offers a subagent or parallel-task
   tool, use it the same way. If it doesn't but the host's CLI is on `PATH`, run
   that CLI in parallel as shown above (same provider, so no warning needed).
@@ -403,5 +451,4 @@ This is the default mode, with no code leaving the current provider.
 - If the host can't choose a model per subagent, record `model: "inherited"`
   and tell copies apart by persona.
 - **Head not checked out**: give subagents the same
-  "git show / git diff only" `{{read_instructions}}`. Their tools usually can't
-  be narrowed per call, so the prompt carries the rule.
+  "git-read.sh only" `{{read_instructions}}`.

@@ -54,7 +54,8 @@ you find a serious problem in its domain, report it anyway and say so in the cla
   `Option`. Make sure the bug exists in this language.
 - Pre-existing bugs the diff doesn't touch or make reachable are out of scope.
 - Style differences (early return versus nested `if`) aren't bugs.
-- A test that looks redundant may be pinning a regression. Check `git log` for it.
+- A test that looks redundant may be pinning a regression. Check the history
+  for it (`git-read.sh log --stat`).
 
 ## Severity
 

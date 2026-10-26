@@ -65,7 +65,8 @@ Attacker-driven tampering (security), query speed and index *performance*
 - A migration tool may add `CONCURRENTLY` or batching automatically, or the
   table may be known to be small. Say what you assumed.
 - A column drop in a contract-phase migration is fine if an earlier release
-  already stopped using it. Check the history with `git log -S`.
+  already stopped using it. Check the history (`git-read.sh log --stat`, then
+  `git-read.sh show <sha>:<path>`) and search the head for remaining uses.
 - Test databases and seed files aren't production data.
 
 ## Severity
