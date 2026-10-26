@@ -140,9 +140,9 @@ unreadable file, exit 1 with no output for one that vanished) holds the file
 back, like a scanner error:
 
 ```bash
-# untracked-diff: $UNTRACKED holds this area's untracked files, one per line,
+# untracked-diff: $UNTRACKED holds this area's untracked files, NUL-separated,
 # minus the exclusion list (git ls-files -z --others --exclude-standard).
-while IFS= read -r f; do
+while IFS= read -r -d '' f; do
   (cd "$REPO" && git --no-pager diff --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ --no-index -- /dev/null "$f") > "$TMP/one.diff"
   if [ $? -eq 1 ] && [ -s "$TMP/one.diff" ]; then cat "$TMP/one.diff" >> "$TMP/A1.diff"
   else printf '%s\n' "$f" >> "$TMP/A1.untracked-held"; fi   # list under "Not reviewed"

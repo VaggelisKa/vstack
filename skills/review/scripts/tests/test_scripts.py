@@ -311,7 +311,7 @@ class HarnessSnippets(unittest.TestCase):
         (repo / "locked.txt").write_text("x\n")
         (repo / "locked.txt").chmod(0)                    # git exits 128 (unless run as root)
         tmp = tmpdir()
-        (tmp / "untracked").write_text("deploy.sh\nreadme draft.md\nmissing.txt\nlocked.txt\n")
+        (tmp / "untracked").write_bytes(b"deploy.sh\0readme draft.md\0missing.txt\0locked.txt\0")  # NUL-separated, as git ls-files -z
         r = subprocess.run(["bash", "-c", snippet("# untracked-diff:", 'done < "$UNTRACKED"')],
                            capture_output=True, text=True,
                            env={**GIT_ENV, "REPO": str(repo), "TMP": str(tmp),
