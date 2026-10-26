@@ -15,7 +15,8 @@ Copied from:
 repository's contents. The upstream `html-plan/.claude-plugin/plugin.json` also
 declares `"license": "MIT"`, and no MIT license text ships with it. This copy is
 redistributed under the repository's Apache-2.0 license; the MIT declaration is
-recorded here for completeness.
+recorded here for completeness. If the MIT declaration in upstream plugin.json
+governs, this copy also complies with it.
 
 ## Modifications
 

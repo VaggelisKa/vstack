@@ -23,7 +23,7 @@ skills/
   <skill-name>/
     SKILL.md                      # name, description and instructions
     ...                           # references, scripts, assets, evals
-    LICENSE, NOTICE.md            # upstream license and origin, for skills copied from elsewhere
+    LICENSE (or LICENSE.txt), NOTICE.md  # upstream license and origin, for skills copied from elsewhere
 LICENSE                           # Apache-2.0, this repo's own work
 NOTICE                            # bundled skills and their upstreams
 ```
@@ -64,6 +64,10 @@ Uninstall:
 /plugin uninstall agent-skills@vaggeliska
 /plugin marketplace remove vaggeliska
 ```
+
+> Tested: the `claude plugin ...` shell commands above (add, install, update,
+> uninstall, remove). Not yet tested: the in-session `/plugin ...` slash commands,
+> and `/agent-skills:babysit` typed inside an interactive session.
 
 ## Codex
 
