@@ -1,6 +1,6 @@
 # vstack
 
-Personal agent skills, packaged as one plugin (`vstack`) for Claude Code, Codex, GitHub Copilot and Antigravity.
+Personal agent skills, packaged as one plugin (`vstack`) for Claude Code, Codex, GitHub Copilot, Antigravity and Gemini CLI.
 
 - `babysit`: watch a PR until it's green and approved, fixing and replying as needed (`--merge` to merge)
 - `html-plan`: write an implementation plan as one interactive HTML page
@@ -51,6 +51,14 @@ agy plugin install https://github.com/VaggelisKa/vstack
 ```
 
 Use `/vstack:<skill>`. Update by uninstalling and installing again; remove with `agy plugin uninstall vstack`.
+
+### Gemini CLI
+
+```
+gemini extensions install https://github.com/VaggelisKa/vstack
+```
+
+Skills are discovered from the extension (check with `gemini skills list`) and activated by the model when a request matches. Update with `gemini extensions update vstack`, remove with `gemini extensions uninstall vstack`. Install and discovery tested with Gemini CLI 0.65.0; skills not run in a session.
 
 ## Docs
 
