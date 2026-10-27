@@ -3,7 +3,7 @@
   "description": "One skeptic's verdict on a blocker/major cluster. Strict-mode compatible; the coordinator checks ranges itself.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["cluster_id", "harness", "model", "outcome", "severity", "reasoning", "evidence", "confidence"],
+  "required": ["cluster_id", "harness", "model", "outcome", "severity", "reasoning", "evidence", "confidence", "unreadable", "done"],
   "properties": {
     "cluster_id": { "type": "string", "description": "Cluster id assigned in the prompt, e.g. C2." },
     "harness": { "type": "string" },
@@ -12,6 +12,8 @@
     "severity": { "type": "string", "enum": ["blocker", "major", "minor", "nit"], "description": "Severity after review. Equal to the original when confirmed; lower when downgraded; the original when refuted." },
     "reasoning": { "type": "string", "description": "Why the claim stands, is overstated, or is wrong." },
     "evidence": { "type": "string", "description": "file:line and quoted code (the guard, invariant, caller constraint or test), or a concrete reproduction." },
-    "confidence": { "type": "number", "description": "0-1." }
+    "confidence": { "type": "number", "description": "0-1." },
+    "unreadable": { "type": "array", "items": { "type": "string" }, "description": "Every input you tried to open and could not. Empty when you read everything." },
+    "done": { "type": "string", "description": "Exactly 'CHECKED <cluster_id>', set last and only after you checked the claim. Leave it empty if you could not read your inputs." }
   }
 }

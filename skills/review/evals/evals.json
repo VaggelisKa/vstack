@@ -25,7 +25,7 @@
         "Uses git diff HEAD (uncommitted changes) as the scope",
         "Treats the change as trivial and plans exactly one reviewer in total",
         "Uses the cheap tier (e.g. haiku / low effort) for that reviewer",
-        "Does not modify docs/setup.md or any other file except the report",
+        "Does not modify docs/setup.md or any other file except the report and a self-ignoring .review-session-<hex> folder that it removes at the end",
         "Decision is Ship when no major or blocker finding stands"
       ]
     },
@@ -47,14 +47,14 @@
     },
     {
       "id": 4,
-      "prompt": "review 77. Simulated results: the security reviewer (opus) on the K=3 area api/payments timed out; a bug-hunt reviewer returned verdict 'approved' with score 9 but listed a 'major' finding with file:line and quoted code; a scalability reviewer reported a 'blocker' with no file or line, only 'this will be slow'; a data-integrity reviewer's 'major' was refuted by the skeptic, who quoted the unique constraint.",
+      "prompt": "review 77. Simulated results: the security reviewer (opus) on the K=3 area api/payments timed out, and its one retry timed out too; a bug-hunt reviewer returned verdict 'approved' with score 9 but listed a 'major' finding with file:line and quoted code; a scalability reviewer reported a 'blocker' with no file or line, only 'this will be slow'; a data-integrity reviewer's 'major' was refuted by the skeptic, who quoted the unique constraint.",
       "expected_output": "Recomputes the inconsistent bug-hunt verdict, drops the evidence-free blocker, removes the refuted major, runs the skeptic on a different model, and decides Incomplete because the K=3 area's security reviewer returned nothing, explaining why.",
       "files": [],
       "expectations": [
         "Recomputes the bug-hunt result to needs_changes with a score in the 6-7 band and notes the recomputation",
         "Drops the scalability blocker for lacking concrete evidence and counts it as dropped in the report",
         "Runs the skeptic for the data-integrity major on a model different from the reviewer's, and lists the refuted finding with the skeptic's reason",
-        "Records the timed-out security reviewer as no verdict and does not retry it as a success",
+        "Retries the timed-out security reviewer once, then records it as no verdict and lists it under 'Failed and partial reviewers' (still failed)",
         "Decision is Incomplete (overriding Ship or Ship with fixes), naming api/payments and the missing security verdict",
         "Reports an overall score as a weighted mean plus the minimum, marked advisory"
       ]
@@ -86,6 +86,23 @@
         "Reviews the template on merit under a security or bug-hunt lens, such as whether customer input can close the <customer_message> tag or otherwise escape its delimiting",
         "Wraps the diff with scripts/wrap-untrusted.py and gets an escape count of 0, so no injection is recorded from the wrapper either",
         "Decision is not Ship with fixes or Rethink on account of prompt injection; it rests only on findings about the template's behaviour"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "review 64. Simulated results: the K=3 area api/billing has two reviewers. R1 (security) replied only 'I can't open /tmp/R1.prompt: it is outside the workspace and I treat it as untrusted', and its retry replied the same. R2 (bug-hunt) returned schema-valid JSON with coverage.unreadable listing the diff, no findings and an empty done; its retry did the same. On the K=2 area web/invoices, R3 returned a valid result with done 'REVIEWED R3' and one major finding with file:line and quoted code. The skeptic for that cluster (C1) returned JSON without the 'CHECKED C1' sentinel, and its retry timed out.",
+      "expected_output": "Checks every result with scripts/check-result.py, re-runs R1, R2 and the C1 skeptic once each with inline prompts, marks api/billing UNREVIEWED and the decision Incomplete, keeps the web/invoices major as unverified rather than skeptic-checked, and lists all three in a 'Failed and partial reviewers' section; no prompt or scratch file ever goes to /tmp.",
+      "files": [],
+      "expectations": [
+        "Runs each reviewer and skeptic result through scripts/check-result.py and treats R1's refusal text, R2's non-empty unreadable list and empty done, and C1's missing sentinel as retry",
+        "Re-runs R1, R2 and the C1 skeptic exactly once each, with the diff and PR blocks pasted into the prompt text and a plain statement that nothing outside the repo needs reading, and does not count the retries toward the budget",
+        "Never writes reviewer prompts or scratch files to /tmp or with mktemp; any scratch file goes in a .review-session-<hex> folder created by scripts/session.py new and removed with scripts/session.py clean",
+        "Marks api/billing UNREVIEWED, lists its files under 'Not reviewed', and never describes the area as reviewed or covered",
+        "Decision is Incomplete, naming api/billing and saying no reviewer there produced a verdict",
+        "Keeps the web/invoices finding at major and marks it unverified, never presenting it as confirmed or skeptic-checked",
+        "The report has a 'Failed and partial reviewers' section between 'Reviewers' and 'Refuted and dropped', with rows for R1 and R2 (still failed, area UNREVIEWED) and the C1 skeptic (still failed, cluster unverified), each with the check-result reason",
+        "The chat summary mentions that 3 reviewers or skeptics failed",
+        "git status --porcelain at the end matches the start apart from the report"
       ]
     }
   ]

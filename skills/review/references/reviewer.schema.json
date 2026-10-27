@@ -3,7 +3,7 @@
   "description": "One reviewer's result. Strict-mode compatible (every property required, no additionalProperties, no numeric bounds); the coordinator checks ranges itself.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "kind", "area", "harness", "model", "verdict", "score", "confidence", "coverage", "findings"],
+  "required": ["id", "kind", "area", "harness", "model", "verdict", "score", "confidence", "coverage", "findings", "done"],
   "properties": {
     "id": { "type": "string", "description": "Reviewer id assigned in the prompt, e.g. R3." },
     "kind": {
@@ -19,11 +19,12 @@
     "coverage": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["files_reviewed", "status", "note"],
+      "required": ["files_reviewed", "status", "note", "unreadable"],
       "properties": {
         "files_reviewed": { "type": "array", "items": { "type": "string" }, "description": "Repo-relative paths actually read." },
         "status": { "type": "string", "enum": ["complete", "partial"] },
-        "note": { "type": "string", "description": "What was not reviewed and why. Empty string when complete." }
+        "note": { "type": "string", "description": "What was not reviewed and why. Empty string when complete." },
+        "unreadable": { "type": "array", "items": { "type": "string" }, "description": "Every input you tried to open and could not (the prompt, the diff, a file). Empty when you read everything." }
       }
     },
     "findings": {
@@ -42,6 +43,7 @@
           "confidence": { "type": "number", "description": "0-1." }
         }
       }
-    }
+    },
+    "done": { "type": "string", "description": "Exactly 'REVIEWED <id>', set last and only after you read your whole file list. Leave it empty if you could not read your inputs." }
   }
 }
