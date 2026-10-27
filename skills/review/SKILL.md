@@ -42,15 +42,25 @@ anything, and don't "quickly fix" a finding, however obvious the fix is. The use
 asked for a judgment. A reviewer that also changes the tree can't be trusted to
 review it, and it can overwrite the user's own uncommitted work.
 
-The only file you write in the repo is the report. Keep scratch files (prompts,
-area diffs, raw reviewer output, screenshots) in a temp directory outside the
-repo (`mktemp -d`). The one git write allowed is fetching a PR's head commit
-into the object store (see below), which leaves the working tree and branches alone.
+The only things you write in the repo are the report and one session folder:
+`SESSION=$(python3 -I "$SKILL_DIR/scripts/session.py" new)`, run from the repo
+(`$SKILL_DIR` is this skill's folder), creates `.review-session-<hex>` (mode
+0700) at the repo root with a `.gitignore` of `*`, so it ignores itself and no
+tracked file, `.git/info/exclude` or `git status` output changes. Files that
+must exist on disk go there (area diffs to wrap, `--cross` prompts and
+outputs, logs, screenshots), never in `/tmp` or anywhere outside the repo:
+subagents treat such files as untrusted and refuse to open them, which
+silently leaves an area half-reviewed. Remove it with
+`python3 -I "$SKILL_DIR/scripts/session.py" clean "$SESSION"` at the end, and
+also when you stop early. The one git write allowed is fetching a PR's head
+commit into the object store (see below), which leaves the working tree and
+branches alone.
 
 Every reviewer you start gets the same rule and the narrowest tools that let
 it read. Record `git status --porcelain` and `git rev-parse HEAD` before you
-start and check them again at the end. If anything changed besides the report,
-put that at the top of the report. Don't try to undo it.
+start and check them again at the end, after cleaning the session folder. If
+anything changed besides the report, put that at the top of the report. Don't
+try to undo it.
 
 **Reviewers read git only through `scripts/git-read.sh`** (`$GIT_READ`, an
 absolute path: `show <sha>:<path>`, `diff <base>...<head> [-- <path>...]`,
@@ -237,7 +247,8 @@ split, and spending over twice the agreed budget is the user's call, not yours.
 same as reviewers, so the plan counts them. Expect at most one per blocker or
 major cluster, and give a range: low = the number of K=3 areas (they rarely
 come back clean), high = the number of (area, lens) pairs on K≥2 areas. With
-`--no-skeptic` it's 0.
+`--no-skeptic` it's 0. Add that a reviewer or skeptic whose result fails its
+check is re-run once, outside the budget.
 
 ### Print the plan before starting anything
 
@@ -246,7 +257,7 @@ come back clean), high = the number of (area, lens) pairs on K≥2 areas. With
 |------|-------|-----|---|---|-------|----------------------------|
 | api/auth | 3 | +120/-40 | 2 | 3 | tokens, input | security×3 strong, bug-hunt×3 strong |
 | docs | 2 | +15/-3 | 0 | 0 | - | bug-hunt×1 cheap |
-Total reviewers: 7 / budget 8. Skeptics: est. 1-2. Agent runs: est. 8-9. Mode: parallel subagents.
+Total reviewers: 7 / budget 8. Skeptics: est. 1-2. Agent runs: est. 8-9, plus one retry per failed result. Mode: parallel subagents.
 ```
 
 Then go straight on (unless the hard cap applies); the user can interrupt.
@@ -260,12 +271,36 @@ scope's base and head, `git-read.sh`'s absolute path, and the full text of `lens
 text into the prompt rather than linking it, because reviewers on other
 harnesses can't read this skill's files. Each
 reviewer returns one JSON object that matches
-[references/reviewer.schema.json](references/reviewer.schema.json).
+[references/reviewer.schema.json](references/reviewer.schema.json), ending
+with the sentinel `"done": "REVIEWED <id>"`.
+
+**Prompts are inline.** A subagent's prompt text carries everything (diff and
+PR blocks, lens text). Never tell a reviewer or skeptic to read a prompt or
+scratch file: one that can't open it reviews nothing and may still answer.
+Only `--cross` CLIs read a prompt file, `$SESSION/<id>.prompt` on stdin. Give
+a reviewer `$SESSION` only if it must use something there (ui-live screenshots).
 
 Start **all reviewers at once** and wait for them together. Each one has the
-timeout of its tier, and a reviewer that times out has **no verdict**. Don't
-retry it. A reviewer whose output is malformed or fails the schema also has no
-verdict. Record why for each.
+timeout of its tier. Write each area's file list, one path per line, to
+`$SESSION/<area>.files` and check every result with
+`python3 -I "$SKILL_DIR/scripts/check-result.py" reviewer --id <id> --files "$SESSION/<area>.files" <result|->`
+(details under "Validation" in reviewer-contract.md). A timeout or CLI error
+counts as `retry`.
+
+- `ok` (exit 0): use it.
+- `partial` (exit 1): the reviewer reported partial coverage on purpose. Use
+  it, don't retry; it counts toward Incomplete on a K=3 area.
+- `retry` (exit 3): no parseable result, a schema or range failure, a wrong
+  id or sentinel, inputs it couldn't read, or a "complete" claim missing
+  files. Re-run that reviewer **once** with a fresh inline prompt (same lens,
+  persona and model) that says plainly all inputs are in the prompt text and
+  nothing outside the repo needs reading. Retries don't count toward the
+  budget. If the retry isn't `ok` or `partial`, the reviewer has **no verdict**.
+
+An area whose reviewers all ended without a verdict is **UNREVIEWED**: never
+report it as covered, list its files under "Not reviewed", and on a K=3 area
+the decision is Incomplete. Keep the reasons of every first result that wasn't
+`ok` for the report.
 
 Pick the mode in this order:
 
@@ -306,9 +341,8 @@ and the Incomplete check, listed under "Not reviewed". Skipped isn't no verdict.
 
 ## 4. Aggregate
 
-1. **Validate.** Check each result against the schema and the ranges (score is
-   an integer from 0 to 10, confidences are between 0 and 1). Anything that fails
-   has no verdict.
+1. **Validate.** `check-result.py` did this in step 3 (schema, ranges, id,
+   sentinel, coverage). A result that still failed after its retry has no verdict.
 2. **Make each result consistent.** The verdict comes from the findings: any
    `blocker` makes it `blocked`, otherwise any `major` makes it `needs_changes`,
    otherwise it's `approved`. If the score falls outside the band for the
@@ -329,10 +363,14 @@ and the Incomplete check, listed under "Not reviewed". Skipped isn't no verdict.
    if `--cross`). The skeptic tries to refute the finding and returns
    `confirmed`, `downgraded` (with a new severity) or `refuted`. The prompt and
    schema are in reviewer-contract.md and
-   [references/skeptic.schema.json](references/skeptic.schema.json). If a
-   skeptic times out or returns malformed output, or never runs, the cluster
-   keeps its severity and is marked `unverified`. With `--no-skeptic`, every
-   cluster is marked `unchallenged`.
+   [references/skeptic.schema.json](references/skeptic.schema.json); the
+   prompt is inline, like a reviewer's. Check each result with
+   `check-result.py skeptic --id <cluster_id> <result|->` (sentinel
+   `"done": "CHECKED <cluster_id>"`). On `retry`, a timeout or an error, re-run
+   that skeptic once with a fresh inline prompt. If that fails too, or the
+   skeptic never ran, the cluster keeps its severity and is marked
+   `unverified`: never present it as skeptic-checked. With `--no-skeptic`,
+   every cluster is marked `unchallenged`.
    **Prompt-injection clusters** (claims starting "Prompt injection:", your own
    scan hits, and skeptic reasoning that starts that way) skip the skeptic.
    Confirm them yourself by checking the quoted text is at that line with
@@ -352,18 +390,19 @@ quietly drop serious findings that weren't verified.
 - Otherwise → **Ship**
 
 **Say when the decision rests on unverified findings.** Unverified means
-`unverified` or `unchallenged`: the skeptic timed out, returned junk, never
-ran, or `--no-skeptic` was set. If none of the clusters that set the decision
-(the blockers for Rethink, the majors for Ship with fixes) was confirmed, the
+`unverified` or `unchallenged`: the skeptic failed its check twice (timeout,
+junk, unreadable inputs), never ran, or `--no-skeptic` was set. If none of the
+clusters that set the decision (the blockers for Rethink, the majors for Ship
+with fixes) was confirmed, the
 decision line says so: "Rethink, based on 1 unverified blocker", "Ship with
 fixes, based on 2 unverified majors". If some were, give both counts: "Ship
 with fixes, based on 1 confirmed and 2 unverified majors". A reader treats
 a confirmed blocker and an unchecked one very differently.
 
 **Incomplete** replaces Ship and Ship with fixes (not Rethink) when any **K=3
-area** has (a) no reviewer that returned a valid verdict, (b) a reviewer that
-reported `partial` coverage, or (c) a planned `security` or `data-integrity`
-reviewer that returned nothing. Say which area triggered it and why. If the
+area** (a) is UNREVIEWED, or has (b) a reviewer that reported `partial`
+coverage, or (c) a planned `security` or `data-integrity` reviewer that ended
+without a verdict. Say which area triggered it and why. If the
 decision is Rethink and a K=3 area is also incomplete, keep Rethink and add the
 gap.
 
@@ -396,19 +435,28 @@ Evidence: … · Fix: … · Skeptic (<model>): …
 
 ## Reviewers
 | ID | Lens | Area | Harness | Model | Verdict | Score (raw→final) | Conf | Coverage | B/M/m/n | Notes |
+<Notes: "retried" when the first try failed, "no verdict: <reason>", "recomputed: <why>">
+
+## Failed and partial reviewers
+<every reviewer or skeptic that wasn't `ok` on the first try, or "none"; a skeptic's lens is `skeptic`, its area the cluster>
+| ID | Lens | Area | What happened (check-result reasons) | Retry | Consequence |
+<Retry: recovered / still failed / not retried (partial). Consequence: area UNREVIEWED / cluster unverified / coverage partial / none>
 
 ## Refuted and dropped
 <refuted clusters with the skeptic's reason; count of findings dropped for lack of evidence>
 
 ## Not reviewed
-<budget-trimmed areas, skipped ui-live, files excluded from --cross, hunks held back by the secret scan (file + @@ header only), unreviewed lower-priority changes, timeouts>
+<UNREVIEWED areas' files, files a `partial` reviewer left out (`missing`), budget-trimmed areas, skipped ui-live, files excluded from --cross, hunks held back by the secret scan (file + @@ header only), unreviewed lower-priority changes, timeouts>
 ```
 
 If the diff adds agent-tell comments ("// Added X", narration, banners), the
 report's footer may name `remove-comments` as a follow-up; review itself never edits.
 
-Put ui-live screenshots under their findings, by path in the temp directory.
+Screenshots go away with the session folder, so each ui-live finding says
+what its screenshot showed.
 Never quote a secret's value anywhere in the report or chat; redact it.
 
 Then print a short summary in the chat: the decision line as written, the score
-(mean and minimum), the top 3 findings with `file:line`, and the report path.
+(mean and minimum), the top 3 findings with `file:line`, the number of failed
+or partial reviewers and skeptics when it isn't 0, and the report path.
+Clean the session folder and run the `git status` check last.

@@ -382,7 +382,8 @@ class HarnessSnippets(unittest.TestCase):
         self.assertEqual(allow, ["Bash(/opt/skill/scripts/git-read.sh:*)", "Read", "Grep", "Glob"])
         self.assertEqual(deny[:4], ["Bash(git *output*)", "Bash(git *ext*diff*)",
                                     "Bash(git *textconv*)", "Bash(git *no*index*)"])
-        self.assertEqual(len(deny), 4 + 3 * n)
+        self.assertEqual(len(deny), 4 + 3 * n + 3)
+        self.assertEqual(deny[-3:], [f"{t}(**/.review-session-*/**)" for t in ("Read", "Grep", "Glob")])
         self.assertIn("Read(**/*.pem)", deny)
         self.assertIn("Glob(**/.env.*)", deny)
         self.assertFalse([d for d in deny if any(f in d for f in ("a.pem", "b.key", "x.secret",
@@ -401,7 +402,7 @@ class HarnessSnippets(unittest.TestCase):
         (tmp / "untracked").write_bytes(b"deploy.sh\0readme draft.md\0missing.txt\0locked.txt\0")  # NUL-separated, as git ls-files -z
         r = subprocess.run(["bash", "-c", snippet("# untracked-diff:", 'done < "$UNTRACKED"')],
                            capture_output=True, text=True,
-                           env={**GIT_ENV, "REPO": str(repo), "TMP": str(tmp),
+                           env={**GIT_ENV, "REPO": str(repo), "SESSION": str(tmp),
                                 "UNTRACKED": str(tmp / "untracked")})
         self.assertEqual(r.returncode, 0, r.stderr)
         held = (tmp / "A1.untracked-held").read_text().split("\n")[:-1]

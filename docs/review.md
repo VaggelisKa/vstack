@@ -47,11 +47,25 @@
   escaping). They also run the
   claude allow/deny and untracked-file bash blocks from `harnesses.md` as
   written.
+- Scratch files live in a `.review-session-<hex>` folder inside the repo that
+  ignores itself, not in `/tmp`: in a real run, subagents refused to open
+  prompt files under `/tmp`, so one area was only partly reviewed without
+  anyone noticing. Prompts now go to subagents inline. `session.py` tests
+  cover creating the folder in a temp repo (`git status --porcelain`, tracked
+  files and `.git/info/exclude` unchanged), outside a repo, and `clean`
+  refusing symlinks, wrong names, `..` and folders outside the toplevel.
+- `check-result.py` checks every reviewer and skeptic result (schema, ranges,
+  id, the `done` sentinel, `unreadable`, the file manifest) and says `ok`,
+  `partial` or `retry`; a failed result gets one inline re-run, then its area
+  is UNREVIEWED or its cluster unverified. Its tests cover refusal prose,
+  truncated, fenced and prose-wrapped JSON, schema and range failures, wrong
+  or missing sentinels and ids, manifest gaps, injected text (never echoed)
+  and 1 MB inputs. 85 tests in total (48 before).
 
 > Not yet verified: `--cross` (running reviewers through codex, gemini or agy),
 > gemini's stdin prompt (help only), agy's stream-json stdin (not used),
 > the gitleaks and trufflehog invocations (neither was installed),
-> the sequential-personas fallback, the `ui-live` lens (Playwright and simctl),
+> the sequential-personas fallback, the retry and UNREVIEWED flow in a live run, the `ui-live` lens (Playwright and simctl),
 > budget trimming on large diffs, and running the skill inside Codex or
 > Antigravity sessions.
 

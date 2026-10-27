@@ -34,10 +34,11 @@ skipped, not approved.
    affects, and the states each should have (default, loading, empty, error,
    long content, signed-out).
 2. Visit each one at **desktop (1280×800) and mobile (390×844)** widths and take
-   screenshots into the temp directory you were given (never into the repo):
-   `npx --no playwright screenshot --viewport-size=1280,800 --full-page <url> <tmp>/<name>-desktop.png`.
+   screenshots into `<session>/ui-live/` in the session folder you were given
+   (never elsewhere in the repo, never `/tmp`):
+   `npx --no playwright screenshot --viewport-size=1280,800 --full-page <url> <session>/ui-live/<name>-desktop.png`.
    For interactions (click, type, submit), use the harness browser tool or a
-   throwaway script in the temp directory.
+   throwaway script in that folder.
 3. Drive the **changed flow** end to end: fill forms, submit, go back, refresh
    mid-flow, double-click submit. Use test accounts or data that already exist.
    Don't create real records in shared environments; if the flow writes data,
@@ -47,7 +48,7 @@ skipped, not approved.
    order logical, can Esc close dialogs), zoom to 200%, and check contrast on new
    colours.
 6. Simulator (macOS only): `xcrun simctl openurl booted <deeplink>` and
-   `xcrun simctl io booted screenshot <tmp>/<name>-ios.png`.
+   `xcrun simctl io booted screenshot <session>/ui-live/<name>-ios.png`.
 
 ## Look for
 
@@ -59,7 +60,8 @@ regressions on screens that share the changed component.
 
 ## Gather evidence
 
-Each finding gives the route, viewport and steps, the **screenshot path**,
+Each finding gives the route, viewport and steps, the **screenshot path**
+and what it shows (the session folder is deleted after the review),
 and the console or network line if there is one. Point `file`/`line` at the
 component the diff changed that's most likely responsible, and say in
 `evidence` that the link is inferred if you didn't confirm it.
