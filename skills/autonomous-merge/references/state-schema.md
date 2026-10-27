@@ -35,7 +35,7 @@ the gate never reads it.
 
 | Field | Value |
 |---|---|
-| `merge` | Whether this invocation had `--merge`; set again by every `init` |
+| `merge` | Whether this run's request explicitly asked to merge (`init --merge`); set again by every `init` |
 | `started_at` | Start of the 2-hour window; `init --continue` restarts it |
 | `counters.review_rounds` | Review rounds recorded; a 4th is refused |
 | `caps` | Always `{"review_rounds": 3, "fix_rounds": 6, "minutes": 120}`; any other value fails the checks |
@@ -62,7 +62,7 @@ many. It also stops at once (`security_blocker`) on a blocker whose rule is
 
 **Resume.** A new session runs `init` and continues from `counters`,
 `last_head` and the open findings. After a `ready` stop, `init` clears it (say,
-to rerun with `--merge`); after a handback, only `init --continue` does, and it
+to rerun asking for a merge); after a handback, only `init --continue` does, and it
 keeps the counters and fingerprints. After `merged`, nothing resumes.
 With no state file, `init` refuses (`escalated`) when `review.json` or
 `babysit.json` already exists for the PR, unless `--fresh`.
