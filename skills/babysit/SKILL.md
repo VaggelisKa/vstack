@@ -149,9 +149,13 @@ whether the PR is `settled`, each failing check and thread as `open`,
   reply about it, and a plain `vstack:babysit:<id>` line per item in the fix's
   commit message (`coordination.py markers --item <id>` prints both). Unmarked
   work counts as another fixer's.
+- For each id in `lost_claims` (another fixer claimed it first), run
+  `coordination.py remove-claim --pr <number> --item <id>` (removes only your
+  own 👀) and leave the item alone.
 - Exit 5 is a handback for one item: `stale_claim` (its claimant went quiet
-  for 2 CI cycles or 3 polls) or `conflicting_fixer` (you and another fixer
-  keep undoing each other). Add it to the escalation list with its `action`
+  for 2 CI cycles or 3 polls), `conflicting_fixer` (you and another fixer
+  keep undoing each other) or `escalated` (a thread was reopened after another
+  fixer replied in it). Add it to the escalation list with its `action`
   and leave the item; on `conflicting_fixer` also stop pushing. Exit 4: treat
   the PR as not settled this poll.
 - Add `--take-over` (stale items become actionable) only when the user's own
@@ -244,7 +248,9 @@ If the branch must be brought up to date with base (see merge.md), use
 `gh pr update-branch --help` for the flags your version supports). It creates a
 new head SHA, so it **counts as that round's push** (`fix_rounds += 1`, no
 separate fix push in the same round), and it's **not allowed once any
-escalation is open**.
+escalation is open**. Like any push, the new head starts over: coordination
+isn't settled on it until the next poll, every gate re-runs on it, and under
+autonomous-merge the review and its gate re-run on it too.
 
 ### Limits (escalate and stop pushing when hit)
 

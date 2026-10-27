@@ -20,7 +20,7 @@ base rulesets that can't be read (paginated; a 404 means none, any other error
 is unknown), no clean review on this head, and, before a merge is armed,
 babysit's fixer coordination (../../babysit/scripts/coordination.py, which
 records this look in its state): a handback from it (conflicting_fixer,
-stale_claim), a PR that isn't settled (not_settled; with no earlier babysit
+escalated, stale_claim), a PR that isn't settled (not_settled; with no earlier babysit
 poll of this head it never is), or any item another fixer or babysit has
 claimed (claimed_items). An approval is needed only when
 the repo requires one (reviewDecision REVIEW_REQUIRED, or a ruleset's

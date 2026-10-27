@@ -30,7 +30,7 @@ handback.
 | `unresolved_threads` | gate | An unresolved review thread (Bitbucket: open task or inline comment), or threads couldn't all be read | A human resolves theirs |
 | `branch_protection` | gate | `mergeStateStatus` BLOCKED or BEHIND, or the merge was refused by protection or merge checks | Meet the rule; never bypass it |
 | `needs_review` | gate, state | No `review.json` for this head and base, or it isn't a clean Ship; or the head or base moved while auto-merge was pending | Run review on the head |
-| `escalated` | state escalate, state init | A finding or comment needs a human decision (ambiguous, a code owner's), or babysit escalated; or `init` found review's or babysit's result for the PR with no state file | Decide it; for `init`, run `init --fresh` yourself if a new run should start |
+| `escalated` | state escalate, state init, gate, babysit | A finding or comment needs a human decision (ambiguous, a code owner's), or babysit escalated (also when a resolved thread is reopened after another fixer replied in it); or `init` found review's or babysit's result for the PR with no state file | Decide it; for `init`, run `init --fresh` yourself if a new run should start |
 | `security_blocker` | state | A `security` or `data-integrity` blocker (from review, or escalated) | Fix it yourself |
 | `ci_unreproducible` | state escalate | A red check that can't be reproduced locally | Read the logs, fix or rerun |
 | `conflict_judgement` | state escalate | A conflict with the base that needs a choice between both sides | Resolve it |
@@ -58,7 +58,7 @@ run `gh pr merge N --disable-auto` (or check `autoMergeRequest` with
 The gate collects every block it finds, reports the first in the table's gate
 order (not_open, draft, conflicts, changes_requested, not_approved,
 checks_failing, unresolved_threads, branch_protection, unknown, needs_review,
-then coordination's conflicting_fixer or stale_claim, not_settled, claimed_items
+then coordination's conflicting_fixer, escalated or stale_claim, not_settled, claimed_items
 on GitHub, or merge_unsupported_host on Bitbucket)
 and lists the rest in `detail` after "also".
 

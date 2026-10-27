@@ -38,7 +38,10 @@ marked fixed, or a new commit that puts a file a recorded fix touched back to
 its content before that fix, is oscillation. A review round whose blocker plus
 major count isn't below the previous round's (when that one had any) is
 no_progress. A blocker from the security or data-integrity reviewer is
-security_blocker. Each records the stop and hands back. Once stopped, every
+security_blocker. A `gh pr update-branch` merge from the base is a new head
+like any push: record-review needs a review of that head, so the review loop,
+and then gate.py (which needs review.json on the live head and a settled
+coordination poll of it), run again on the new head. Each records the stop and hands back. Once stopped, every
 command but show, stop, reset and init hands the stop back; `init --continue`
 clears a handback and starts a new 2-hour window, keeping counters and
 fingerprints. A "ready" stop is cleared by plain init.

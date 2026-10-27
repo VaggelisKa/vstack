@@ -4,22 +4,33 @@ already working on? See references/coordination.md.
 
 Usage: python3 -I coordination.py poll --pr N [-R [HOST/]OWNER/REPO] [--input FILE|-] [--take-over]
        python3 -I coordination.py claim --pr N --item ID [-R [HOST/]OWNER/REPO]
+       python3 -I coordination.py remove-claim --pr N --item ID [-R [HOST/]OWNER/REPO]
        python3 -I coordination.py markers --item ID
 
 poll reads the PR with gh (`gh pr view --json headRefOid,commits,...`, the
-review threads over GraphQL and the PR's reactions), or a bundle from --input
-({"view": that pr view JSON, "threads": review thread nodes, "pr_reactions":
-REST reactions, "viewer": login}; nothing is fetched then), updates the PR's
-coordination state in <git-common-dir>/vstack/<pr>/coordination.json and
-prints {settled, settled_reasons, items, claimed_count, actionable,
+review threads over GraphQL, and every page of the 👀 reactions over REST: the
+PR's, and those on the first and last comment of each unresolved thread), or a
+bundle from --input ({"view": that pr view JSON, "threads": review thread
+nodes, "pr_reactions": REST reactions, "comment_reactions": {comment
+databaseId: REST reactions}, "viewer": login}; nothing is fetched then),
+updates the PR's coordination state in
+<git-common-dir>/vstack/<pr>/coordination.json and prints {settled,
+settled_reasons, items, claimed_count, actionable, lost_claims,
 own_fix_rounds, handback}. Item ids are check:<name> and thread:<threadId>;
 states are open, claimed, addressed and stale-claim.
 
 Settled: no check queued or running on the head, the head is the one the last
-poll saw (so the first poll is never settled), and no other actor's working
-signal (a "working" comment with no later "done" or commit, a 👀 on the PR
-newer than the head commit, an @copilot/@codex/@claude mention not yet
-answered, a pending review). Not settled means actionable is empty.
+poll saw (so the first poll is never settled; a `gh pr update-branch` merge is
+a new head too), and no other actor's working signal (a "working" comment
+with no later "done" or commit, a 👀 on the PR newer than the head commit, an
+@copilot/@codex/@claude mention not yet answered, a draft (PENDING) review by
+someone other than the viewer; a requested reviewer who hasn't started doesn't
+count). Comments with an own marker are never working signals, mentions in
+them included. Not settled means actionable is empty.
+
+A thread reply answers the thread (addressed) only from the PR author, the
+viewer, or an actor who claimed the thread (a 👀, an earlier "working" reply,
+or the claimant the last poll recorded); other bots' replies don't.
 
 Own work carries a marker: `<!-- vstack:babysit:<item> -->` in a comment, a
 plain `vstack:babysit:<item>` line in a commit message (autonomous-merge's
@@ -29,10 +40,18 @@ polls with CI idle and nothing new; that hands back `stale_claim` unless
 --take-over (pass it only when the user's own words in this run's request say
 take over), which makes stale items actionable instead. A check fixed by one
 side that fails again after the other side's commit, or that fails again after
-foreign commits twice, hands back `conflicting_fixer`.
+foreign commits twice, hands back `conflicting_fixer`. A thread that was
+resolved and is reopened after another fixer replied in it hands back
+`escalated`, and the item keeps `escalate: true` (never actionable) until it is
+addressed again.
 
 claim adds a 👀 reaction (content=eyes) to the thread's first comment, or to
 the PR for a check, and records it as babysit's own; it posts nothing else.
+When both sides claim, the earlier claim wins; an item babysit claimed but
+lost is listed in lost_claims. remove-claim deletes the viewer's own 👀 on the
+item's subject (REST DELETE .../reactions/<id>; kept, with only the record
+dropped, while another check claim still uses the PR's 👀) and forgets the
+claim. claim and remove-claim are the only GitHub writes.
 markers prints the comment and commit markers for an item.
 
 Never prints a token. Exits 0 ok, 5 handback, 2 usage (also -h, or a state
@@ -70,7 +89,6 @@ WORKING = re.compile(r"(?i)👀|\b(on it|working on (it|this|that)|i'?m working|
                      r"|looking into|taking (a look|this|it)|wip|in progress)\b")
 DONE = re.compile(r"(?i)\b(done|fixed|addressed|pushed|resolved|finished|completed)\b")
 MENTION = re.compile(r"(?i)(?<![\w@/])@(copilot|codex|claude)\b")
-AGENT_LOGIN = re.compile(r"(?i)^(copilot|codex|claude)|\[bot\]$")
 PASS = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 CLAIMED = ("claimed", "stale-claim")
 TOKENS = [re.compile(r"\bgh[pousr]_[A-Za-z0-9]{16,}"), re.compile(r"\bgithub_pat_[A-Za-z0-9_]{16,}"),
@@ -84,8 +102,7 @@ query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
       pageInfo{ hasNextPage endCursor }
       nodes{ id isResolved path
         comments(first:50){ pageInfo{ hasNextPage }
-          nodes{ id author{ __typename login } body createdAt
-            reactions(first:20){ nodes{ content createdAt user{ login } } } } } } } } } }
+          nodes{ id databaseId author{ __typename login } body createdAt } } } } } } }
 """
 FIRST_COMMENT_QUERY = """
 query($id:ID!){ node(id:$id){ ... on PullRequestReviewThread { comments(first:1){ nodes{ id databaseId } } } } }
@@ -184,8 +201,9 @@ def fetch_threads(gh, host, owner, repo, pr):
     return (None if more else threads), viewer
 
 
-def fetch_reactions(gh, host, owner, repo, pr):
-    r = gh("api", "--hostname", host, "--paginate", "--slurp", f"repos/{owner}/{repo}/issues/{pr}/reactions?per_page=100")
+def fetch_reactions(gh, host, endpoint):
+    """Every 👀 on a PR or review comment (all pages), or None if they can't be read."""
+    r = gh("api", "--hostname", host, "--paginate", "--slurp", f"{endpoint}?content=eyes&per_page=100")
     if r.returncode != 0:
         return None
     try:
@@ -197,11 +215,33 @@ def fetch_reactions(gh, host, owner, repo, pr):
     return [x for p in pages for x in p if isinstance(x, dict)]
 
 
+def reaction_comments(threads):
+    """databaseIds of the comments whose 👀 matter: the first and last of each unresolved thread."""
+    out = []
+    for node in threads or []:
+        if not isinstance(node, dict) or node.get("isResolved"):
+            continue
+        nodes = [c for c in (node.get("comments") or {}).get("nodes") or [] if isinstance(c, dict)]
+        for c in nodes[:1] + nodes[-1:]:
+            if c.get("databaseId") not in out:
+                out.append(c.get("databaseId"))
+    return out
+
+
 def fetch(pr, repo_arg=None, gh=default_gh):
     view = pr_view(gh, pr, repo_arg, VIEW_FIELDS)
     host, owner, repo = repo_of(view)
     threads, viewer = fetch_threads(gh, host, owner, repo, pr)
-    return {"view": view, "threads": threads, "pr_reactions": fetch_reactions(gh, host, owner, repo, pr),
+    pr_reactions = fetch_reactions(gh, host, f"repos/{owner}/{repo}/issues/{pr}/reactions")
+    comment_reactions = {}
+    for db_id in reaction_comments(threads):
+        rx = (fetch_reactions(gh, host, f"repos/{owner}/{repo}/pulls/comments/{db_id}/reactions")
+              if type(db_id) is int else None)
+        if rx is None:
+            comment_reactions = None
+            break
+        comment_reactions[str(db_id)] = rx
+    return {"view": view, "threads": threads, "pr_reactions": pr_reactions, "comment_reactions": comment_reactions,
             "viewer": viewer, "repo": [host, owner, repo]}
 
 
@@ -412,18 +452,28 @@ def working_signals(view, reactions, commits, viewer, self_subjects, head_date):
         if after(rx.get("created_at"), head_date):
             out.append((login(rx), "reacted 👀 on the PR after the last commit", rx.get("created_at")))
     for rv in view.get("reviews") or []:
-        if isinstance(rv, dict) and rv.get("state") == "PENDING":
+        if isinstance(rv, dict) and rv.get("state") == "PENDING" and not (viewer and login(rv) == viewer):
             out.append((login(rv), "has a pending review", None))
     return out
 
 
-def resolve_claim(foreign, self_claim):
-    """(state, claimant, own) from foreign claims [(who, when)] and babysit's own claim."""
+def resolve_claim(iid, foreign, ctx, st):
+    """(state, claimant, own) from foreign claims [(who, when)] and babysit's own
+    claim; a claim babysit lost goes to ctx["lost"]."""
+    self_claim = st["claims"].get(iid)
     if foreign and not (self_claim and all(w and w > self_claim["at"] for _, w in foreign)):
+        if self_claim:
+            ctx["lost"].append(iid)
         return "claimed", foreign[0][0] or "someone", False
     if self_claim:
         return "claimed", "babysit", True
     return "open", None, False
+
+
+def eyes(c, ctx):
+    """The 👀 reactions read for review comment c (REST shape)."""
+    return [rx for rx in (ctx["comment_reactions"] or {}).get(str(c.get("databaseId")), [])
+            if isinstance(rx, dict) and str(rx.get("content")).lower() == "eyes"]
 
 
 def thread_raw(node, ctx, st):
@@ -438,29 +488,29 @@ def thread_raw(node, ctx, st):
     reviewer, last = login(comments[0]), comments[-1]
     if own_marker(last.get("body")):
         return "addressed", "babysit", True
-    who = login(last)
-    reactors = {login(rx) for c in comments for rx in (c.get("reactions") or {}).get("nodes") or []
-                if str(rx.get("content")).upper() == "EYES"}
-    answerer = who in (ctx["pr_author"], ctx["viewer"]) or who in reactors \
-        or (last.get("author") or {}).get("__typename") == "Bot" or bool(who and AGENT_LOGIN.search(who))
-    if who and who != reviewer and answerer:
-        if WORKING.search(last.get("body") or ""):
-            return "claimed", who, False
+    who, since = login(last), last.get("createdAt")
+    working = bool(who and who != reviewer and WORKING.search(last.get("body") or ""))
+    prev = st["items"].get(iid) or {}
+    claimants = {login(rx) for c in comments for rx in eyes(c, ctx)}
+    claimants |= {login(c) for c in comments[1:-1] if login(c) != reviewer and WORKING.search(c.get("body") or "")}
+    if prev.get("state") in CLAIMED and not prev.get("own"):
+        claimants.add(prev.get("claimant"))
+    if who and who != reviewer and not working and (who in (ctx["pr_author"], ctx["viewer"]) or who in claimants):
         return "addressed", who, False
-    since, foreign = last.get("createdAt"), []
+    foreign = [(who, since)] if working else []
     for c in comments:
-        for rx in (c.get("reactions") or {}).get("nodes") or []:
-            if str(rx.get("content")).upper() != "EYES" or not after(rx.get("createdAt"), since):
+        for rx in eyes(c, ctx):
+            if not after(rx.get("created_at"), since):
                 continue
             if not (login(rx) and login(rx) == ctx["viewer"] and c.get("id") in ctx["self_subjects"]):
-                foreign.append((login(rx), rx.get("createdAt")))
+                foreign.append((login(rx), rx.get("created_at")))
     path, tid = node.get("path"), str(node.get("id"))
     for k in ctx["commits"]:
         if k["own"] or not after(k["date"], since):
             continue
         if tid in k["message"] or (path and path in (ctx["files"](k["oid"]) or ())):
             foreign.append((k["login"], k["date"]))
-    return resolve_claim(foreign, st["claims"].get(iid))
+    return resolve_claim(iid, foreign, ctx, st)
 
 
 def check_raw(name, status, prev, ctx, st):
@@ -481,7 +531,7 @@ def check_raw(name, status, prev, ctx, st):
         body = (c or {}).get("body") or ""
         if not own_marker(body) and WORKING.search(body) and low in body.lower() and after(c.get("createdAt"), since_at):
             foreign.append((login(c), c.get("createdAt")))
-    return resolve_claim(foreign, st["claims"].get(iid))
+    return resolve_claim(iid, foreign, ctx, st)
 
 
 def party(since, ctx):
@@ -556,7 +606,8 @@ def evaluate(b, st, take_over=False, gh=None):
     files = st["files"]
     ctx = {"view": view, "head": head, "prev_head": prev_head, "commits": commits, "index": index,
            "ci_running": ci_running, "viewer": viewer, "pr_author": login(view), "now": now(),
-           "self_subjects": set(st["self_subjects"]), "conflicts": [],
+           "self_subjects": set(st["self_subjects"]), "conflicts": [], "lost": [], "escalations": [],
+           "comment_reactions": b.get("comment_reactions"),
            "files": lambda sha: commit_files(sha, files, gh, b.get("repo"))}
 
     reasons = []
@@ -568,8 +619,8 @@ def evaluate(b, st, take_over=False, gh=None):
         reasons.append("checks_running: " + ", ".join(sorted(n for n, s in checks.items() if s == "running"))[:300])
     if threads is None:
         reasons.append("threads_unreadable: couldn't read every review thread")
-    if reactions is None:
-        reasons.append("reactions_unreadable: couldn't read the PR's reactions")
+    if reactions is None or ctx["comment_reactions"] is None:
+        reasons.append("reactions_unreadable: couldn't read every 👀 on the PR and its unresolved threads")
 
     head_date = commits[-1]["date"] if commits and commits[-1]["oid"] == head else None
     signals = working_signals(view, reactions, commits, viewer, ctx["self_subjects"], head_date)
@@ -592,17 +643,30 @@ def evaluate(b, st, take_over=False, gh=None):
                        | {i[6:] for i in st["items"] if i.startswith("check:")}):
         prev = st["items"].get(f"check:{name}")
         raw = check_raw(name, checks.get(name, "missing"), prev, ctx, st)
-        items.append(track(f"check:{name}", "check", raw, json.dumps([head, checks.get(name)]), ctx, st))
+        items.append({**track(f"check:{name}", "check", raw, json.dumps([head, checks.get(name)]), ctx, st),
+                      "escalate": False})
     seen = set()
     for node in threads or []:
         if not isinstance(node, dict) or not node.get("id"):
             continue
         iid = f"thread:{node['id']}"
         seen.add(iid)
-        nodes = (node.get("comments") or {}).get("nodes") or []
-        sig = json.dumps([head, bool(node.get("isResolved")), len(nodes),
-                          sum(len((c.get("reactions") or {}).get("nodes") or []) for c in nodes if isinstance(c, dict))])
-        items.append(track(iid, "thread", thread_raw(node, ctx, st), sig, ctx, st))
+        nodes = [c for c in (node.get("comments") or {}).get("nodes") or [] if isinstance(c, dict)]
+        resolved = bool(node.get("isResolved"))
+        sig = json.dumps([head, resolved, len(nodes), sum(len(eyes(c, ctx)) for c in nodes)])
+        prev = st["items"].get(iid) or {}
+        reviewer = login(nodes[0]) if nodes else None
+        reopened = prev.get("resolved") and not resolved and any(
+            login(c) != reviewer and not own_marker(c.get("body")) for c in nodes[1:])
+        out = track(iid, "thread", thread_raw(node, ctx, st), sig, ctx, st)
+        it = st["items"][iid]
+        it["resolved"] = resolved
+        if reopened:
+            it["escalate"] = True
+            ctx["escalations"].append(iid)
+        elif out["state"] == "addressed":
+            it["escalate"] = False
+        items.append({**out, "escalate": bool(it.get("escalate"))})
     if threads is not None:
         for iid in [i for i in st["items"] if i.startswith("thread:") and i not in seen]:
             del st["items"][iid]
@@ -619,6 +683,11 @@ def evaluate(b, st, take_over=False, gh=None):
                     "detail": f"{iid} was fixed by one fixer and broke again after the other's commit "
                               f"(babysit and another fixer are undoing each other)",
                     "action": f"Pick one fixer for {iid} and pause the other, then rerun."}
+    elif ctx["escalations"]:
+        iid = ctx["escalations"][0]
+        handback = {"reason": "escalated",
+                    "detail": f"{iid} was resolved, then reopened after another fixer replied in it",
+                    "action": f"A maintainer needs to decide who handles {iid}; babysit leaves it alone."}
     elif (stale or stale_working) and not take_over:
         what = stale[0]["id"] if stale else "the PR"
         detail = (f"{stale[0]['claimant']} claimed {what} and it's still not addressed after "
@@ -626,7 +695,7 @@ def evaluate(b, st, take_over=False, gh=None):
                   f"{st['items'][what]['polls_without_progress']} quiet poll(s)") if stale else stale_working
         handback = {"reason": "stale_claim", "detail": detail,
                     "action": f"the other fixer seems stuck on {what}; fix it yourself or rerun with 'take over'"}
-    actionable = [i["id"] for i in items if settled and (
+    actionable = [i["id"] for i in items if settled and not i["escalate"] and (
         i["state"] == "open" or (i["state"] == "claimed" and i["own"]) or (i["state"] == "stale-claim" and take_over))]
 
     st["last_head"] = head
@@ -634,7 +703,8 @@ def evaluate(b, st, take_over=False, gh=None):
     st["files"] = {k: v for k, v in files.items() if k in index}
     return {"pr": st["pr"], "head": head, "settled": settled, "settled_reasons": reasons, "items": items,
             "claimed_count": sum(1 for i in items if i["state"] in CLAIMED), "actionable": actionable,
-            "own_fix_rounds": sum(1 for k in commits if k["babysit"]), "handback": handback}
+            "lost_claims": sorted(set(ctx["lost"])), "own_fix_rounds": sum(1 for k in commits if k["babysit"]),
+            "handback": handback}
 
 
 def poll(pr, bundle, take_over=False, gh=None, top=None):
@@ -653,20 +723,24 @@ def markers(item):
     return {"item": item, "comment": f"<!-- vstack:babysit:{item} -->", "commit": f"vstack:babysit:{item}"}
 
 
+def subject_of(gh, host, owner, repo, pr, item):
+    """(reactions endpoint, self_subjects key) for an item: the thread's first comment, or the PR."""
+    if not item.startswith("thread:"):
+        return f"repos/{owner}/{repo}/issues/{pr}/reactions", "pr"
+    r = gh("api", "graphql", "--hostname", host, "-f", f"id={item[7:]}", "-f", f"query={FIRST_COMMENT_QUERY}")
+    try:
+        first = gh_json(r, "reading the thread")["data"]["node"]["comments"]["nodes"][0]
+        db_id, subject = int(first["databaseId"]), str(first["id"])
+    except (KeyError, TypeError, IndexError, ValueError):
+        raise Internal(f"couldn't find the first comment of {item}")
+    return f"repos/{owner}/{repo}/pulls/comments/{db_id}/reactions", subject
+
+
 def claim(pr, item, repo_arg=None, gh=default_gh):
     top = common_dir()
     st = load(top, pr)
     host, owner, repo = repo_of(pr_view(gh, pr, repo_arg, "url"))
-    if item.startswith("thread:"):
-        r = gh("api", "graphql", "--hostname", host, "-f", f"id={item[7:]}", "-f", f"query={FIRST_COMMENT_QUERY}")
-        try:
-            first = gh_json(r, "reading the thread")["data"]["node"]["comments"]["nodes"][0]
-            db_id, subject = int(first["databaseId"]), str(first["id"])
-        except (KeyError, TypeError, IndexError, ValueError):
-            raise Internal(f"couldn't find the first comment of {item}")
-        endpoint = f"repos/{owner}/{repo}/pulls/comments/{db_id}/reactions"
-    else:
-        endpoint, subject = f"repos/{owner}/{repo}/issues/{pr}/reactions", "pr"
+    endpoint, subject = subject_of(gh, host, owner, repo, pr, item)
     r = gh("api", "--hostname", host, "-X", "POST", endpoint, "-f", "content=eyes")
     if r.returncode != 0:
         raise Internal(f"adding the reaction: gh exited {r.returncode}: {redact(r.stderr or '')}")
@@ -676,6 +750,34 @@ def claim(pr, item, repo_arg=None, gh=default_gh):
     save(top, st)
     return {"claimed": item, "reaction": "eyes", "endpoint": endpoint, **{k: v for k, v in markers(item).items()
                                                                            if k != "item"}}
+
+
+def remove_claim(pr, item, repo_arg=None, gh=default_gh):
+    """Delete the viewer's own 👀 on the item's subject and forget babysit's claim.
+    A check's 👀 is the PR's, shared by every check claim: it stays while another one is recorded."""
+    top = common_dir()
+    st = load(top, pr)
+    host, owner, repo = repo_of(pr_view(gh, pr, repo_arg, "url"))
+    endpoint, subject = subject_of(gh, host, owner, repo, pr, item)
+    kept_for = sorted(i for i in st["claims"] if i != item and i.startswith("check:")) if subject == "pr" else []
+    deleted = []
+    if not kept_for:
+        user = gh_json(gh("api", "--hostname", host, "user"), "reading the viewer")
+        me = user.get("login") if isinstance(user, dict) else None
+        found = fetch_reactions(gh, host, endpoint)
+        if not me or found is None:
+            raise Internal(f"couldn't read the viewer or the reactions on {endpoint}")
+        for rx in found:
+            if login(rx) == me and str(rx.get("content")).lower() == "eyes" and type(rx.get("id")) is int:
+                r = gh("api", "--hostname", host, "-X", "DELETE", f"{endpoint}/{rx['id']}")
+                if r.returncode != 0:
+                    raise Internal(f"removing the reaction: gh exited {r.returncode}: {redact(r.stderr or '')}")
+                deleted.append(rx["id"])
+        if subject in st["self_subjects"]:
+            st["self_subjects"].remove(subject)
+    st["claims"].pop(item, None)
+    save(top, st)
+    return {"removed": item, "endpoint": endpoint, "deleted_reactions": deleted, "kept_for": kept_for}
 
 
 def read_bundle(src):
@@ -693,10 +795,13 @@ def read_bundle(src):
         b = None
     if not (isinstance(b, dict) and isinstance(b.get("view"), dict)
             and all(b.get(k) is None or isinstance(b.get(k), list) for k in ("threads", "pr_reactions"))
+            and (b.get("comment_reactions") is None or (isinstance(b["comment_reactions"], dict) and all(
+                isinstance(v, list) for v in b["comment_reactions"].values())))
             and (b.get("viewer") is None or isinstance(b.get("viewer"), str))):
-        raise Usage('--input must be JSON {"view": {...}, "threads": [...], "pr_reactions": [...], "viewer": "..."}')
-    b.setdefault("threads", None)
-    b.setdefault("pr_reactions", None)
+        raise Usage('--input must be JSON {"view": {...}, "threads": [...], "pr_reactions": [...], '
+                    '"comment_reactions": {"<databaseId>": [...]}, "viewer": "..."}')
+    for k in ("threads", "pr_reactions", "comment_reactions"):
+        b.setdefault(k, None)
     b.pop("repo", None)
     return b
 
@@ -709,10 +814,11 @@ def parse_args(argv):
     p.add_argument("-R", "--repo")
     p.add_argument("--input")
     p.add_argument("--take-over", action="store_true")
-    p = sub.add_parser("claim", add_help=False)
-    p.add_argument("--pr", required=True)
-    p.add_argument("--item", required=True)
-    p.add_argument("-R", "--repo")
+    for cmd in ("claim", "remove-claim"):
+        p = sub.add_parser(cmd, add_help=False)
+        p.add_argument("--pr", required=True)
+        p.add_argument("--item", required=True)
+        p.add_argument("-R", "--repo")
     p = sub.add_parser("markers", add_help=False)
     p.add_argument("--item", required=True)
     try:
@@ -736,6 +842,8 @@ def main(argv):
         return markers(a.item), OK
     if a.cmd == "claim":
         return claim(a.pr, a.item, a.repo), OK
+    if a.cmd == "remove-claim":
+        return remove_claim(a.pr, a.item, a.repo), OK
     top = common_dir()
     bundle = read_bundle(a.input) if a.input else fetch(a.pr, a.repo)
     out = poll(a.pr, bundle, a.take_over, None if a.input else default_gh, top)
@@ -752,7 +860,7 @@ if __name__ == "__main__":
     except Exception as e:
         msg = str(e) if isinstance(e, Internal) else f"internal error: {type(e).__name__}"
         print(json.dumps({"settled": False, "settled_reasons": [], "items": [], "claimed_count": 0, "actionable": [],
-                          "handback": {"reason": "unknown", "detail": f"coordination: {msg}",
+                          "lost_claims": [], "handback": {"reason": "unknown", "detail": f"coordination: {msg}",
                                        "action": "Rerun; if it happens again, check gh and report the stderr line."}}))
         print(f"coordination: {msg}", file=sys.stderr)
         code = INTERNAL

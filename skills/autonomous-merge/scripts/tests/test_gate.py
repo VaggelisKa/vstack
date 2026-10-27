@@ -21,8 +21,8 @@ import unittest
 from unittest import mock
 
 from helpers import (BB, COORD_MATCH, REVIEW_WRITER, SCRIPTS, SHIP, VIEW_MATCH, Stubs, bb_pr, bb_rule,
-                     bitbucket_rules, coord_view, finding, gh_review, gh_rule, github_rules, github_view, pr_repo,
-                     review, run, seed_coordination, thread, threads_page, write_result)
+                     bitbucket_rules, commit_all, coord_view, finding, gh_review, gh_rule, git, github_rules,
+                     github_view, pr_repo, review, run, seed_coordination, thread, threads_page, write_result)
 
 spec = importlib.util.spec_from_file_location("am_gate", SCRIPTS / "gate.py")
 gate = importlib.util.module_from_spec(spec)
@@ -362,6 +362,22 @@ class Gate(unittest.TestCase):
         with open(out, "w") as f:
             json.dump(data, f)
         self.assertIn("merge_base", self.handback("needs_review", "--merge")["detail"])
+
+    def test_update_branch_moves_the_head(self):
+        """gh pr update-branch merges the base in: a new head, so coordination isn't settled and review reruns."""
+        git(self.repo, "checkout", "-q", "main")
+        (self.repo / "README").write_text("base moved\n")
+        base = commit_all(self.repo, "Base moves")
+        git(self.repo, "checkout", "-q", "feature")
+        git(self.repo, "merge", "-q", "--no-edit", "main")
+        head = git(self.repo, "rev-parse", "HEAD").decode().strip()
+        commits = [{"oid": self.head, "messageHeadline": "head", "authors": [{"login": "me"}]},
+                   {"oid": head, "messageHeadline": "Merge branch 'main' into feature", "authors": [{"login": "me"}]}]
+        data = self.handback("needs_review", "--merge", view=gh_rule(VIEW_MATCH, github_view(head, base)),
+                             reviews=self.reviews(gh_review(commit=head)),
+                             coord_view=gh_rule(COORD_MATCH, coord_view(head, commits=commits)))
+        self.assertIn("review.json is for another head or base", data["detail"])
+        self.assertIn("also not_settled: the PR isn't settled: new_head", data["detail"])
 
     def coord_item(self, **item):
         path = os.path.join(os.path.realpath(self.repo / ".git"), "vstack", "42", "coordination.json")

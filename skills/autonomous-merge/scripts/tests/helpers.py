@@ -181,7 +181,7 @@ def threads_page(*threads, more=False):
 def thread(resolved=False, bot=False, url="https://github.com/o/r/pull/42#discussion_r1"):
     author = {"__typename": "Bot", "login": "copilot"} if bot else {"__typename": "User", "login": "alice"}
     return {"id": "PRRT_1", "isResolved": resolved,
-            "comments": {"pageInfo": {"hasNextPage": False}, "nodes": [{"author": author, "url": url}]}}
+            "comments": {"pageInfo": {"hasNextPage": False}, "nodes": [{"databaseId": 1, "author": author, "url": url}]}}
 
 
 def gh_review(state="APPROVED", login="bob", commit=None, bot=False):
@@ -242,6 +242,7 @@ def github_rules(head, base, **over):
         "threads": gh_rule(["api graphql"], [threads_page(thread(resolved=True))]),
         "coord_view": gh_rule(COORD_MATCH, coord_view(head)),
         "pr_reactions": gh_rule(["issues/42/reactions"], [[]]),
+        "comment_reactions": gh_rule(["pulls/comments/1/reactions"], [[]]),
         "disable": gh_rule(["pr merge 42 -R github.com/o/r --disable-auto"], ""),
         "merge": gh_rule(["pr merge 42"], ""),
     }
