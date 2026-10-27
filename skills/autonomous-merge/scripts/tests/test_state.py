@@ -4,7 +4,8 @@ caps (3 review rounds, 6 fix rounds, 2 hours, from the constants only), the
 oscillation guard (a fixed finding coming back, a commit undoing a fix), no
 progress between rounds, security blockers, escalations, stops and --continue,
 fix rounds and the 12-commit backstop counted by the viewer's GitHub identity
-(a fake gh answers `gh api user` and each commit's author and committer), the
+(a fake gh answers `gh api user`, `gh api user/emails` and each commit's author
+and committer: by login, by email, and unlinked commits counted), the
 file's checks (caps, started_at, fix_rounds, viewer_commits), and its atomic,
 symlink-refusing writes.
 
@@ -41,12 +42,15 @@ class State(unittest.TestCase):
         self.n = 0
         self.stubs = Stubs(tools=("gh",))
         self.logins = {}
+        self.emails = gh_rule(["user/emails"], [[{"email": "me@example.com"}]])
 
     def gh_rules(self):
-        """gh api user is "me"; a commit is authored by "me" unless self.logins says (author, committer)."""
-        def who(author, committer):
-            return {"author": {"login": author}, "committer": {"login": committer}}
-        return [gh_rule(["api --hostname github.com user"], {"login": "me"}),
+        """gh api user is "me" (id 7); a commit is authored by "me" unless self.logins says
+        (author, committer[, email]), a login of None meaning no linked account."""
+        def who(author, committer, email=None):
+            return {"author": author and {"login": author}, "committer": committer and {"login": committer},
+                    "commit": {"author": {"email": email}, "committer": {"email": email}}}
+        return [self.emails, gh_rule(["api --hostname github.com user"], {"login": "me", "id": 7}),
                 *[gh_rule([f"repos/o/r/commits/{sha}"], who(*ac)) for sha, ac in self.logins.items()],
                 gh_rule(["repos/o/r/commits/"], who("me", "web-flow"))]
 
@@ -344,6 +348,54 @@ class State(unittest.TestCase):
         write_result(REVIEW_WRITER, self.repo, 42, head, self.base, SHIP)
         data = self.handback("cap_reached", "record-review", "--head-sha", head, "--base-sha", self.base)
         self.assertIn("pushed 14 commits", data["detail"])
+
+    def test_unlinked_commits_count_as_the_viewers(self):
+        self.st("init")
+        self.reviewed(self.head)
+        self.logins[self.commit()] = ("mallory", "web-flow", "mallory@example.com")
+        marked = []
+        for ac in ((None, "web-flow", "x@unlinked.example"), (None, None), ("mallory", None, "x@unlinked.example")):
+            marked.append(self.commit(marker="vstack:babysit:check:test"))
+            self.logins[marked[-1]] = ac
+        plain = self.commit()
+        self.logins[plain] = (None, "web-flow")
+        head = self.commit()
+        write_result(BABYSIT_WRITER, self.repo, 42, head, self.base, babysit())
+        out = self.st("record-babysit", "--head-sha", head, "--base-sha", self.base)
+        self.assertEqual((out["new_commits"], out["your_commits"], out["unidentified_commits"], out["babysit_commits"],
+                          out["fix_rounds"]), (6, 5, 4, 3, 3))
+        self.assertEqual(self.load()["fixes"][-1]["commits"], marked)
+        self.assertEqual(self.load()["viewer_commits"], [*marked, plain, head])
+
+    def test_viewer_matched_by_email(self):
+        self.st("init")
+        self.reviewed(self.head)
+        ids = {("old-me", "old-me", "Me@Example.com"): True, (None, "web-flow", "7+me@users.noreply.github.com"): True,
+               ("someone", "someone", "me@users.noreply.github.com"): True,
+               ("mallory", "mallory", "mallory@example.com"): False}
+        for ac in ids:
+            self.logins[self.commit(marker="vstack:babysit:check:test")] = ac
+        head = list(self.logins)[-1]
+        write_result(BABYSIT_WRITER, self.repo, 42, head, self.base, babysit())
+        out = self.st("record-babysit", "--head-sha", head, "--base-sha", self.base)
+        self.assertEqual((out["your_commits"], out["unidentified_commits"], out["fix_rounds"]), (3, 0, 3))
+        self.assertEqual(self.load()["viewer_commits"], [sha for sha, ac in self.logins.items() if ids[ac]])
+        emails = [c["argv"] for c in self.stubs.calls("gh") if "user/emails" in c["argv"]]
+        self.assertEqual(emails, [["api", "--hostname", "github.com", "--paginate", "--slurp", "user/emails"]])
+        self.emails = gh_rule(["user/emails"], code=1, stderr="gh: Not Found (HTTP 404)")
+        listed = self.commit()
+        self.logins[listed] = ("old-me", "old-me", "me@example.com")
+        noreply = self.commit()
+        self.logins[noreply] = ("old-me", "old-me", "7+ME@users.noreply.github.com")
+        write_result(BABYSIT_WRITER, self.repo, 42, noreply, self.base, babysit())
+        out = self.st("record-babysit", "--head-sha", noreply, "--base-sha", self.base)
+        self.assertEqual((out["new_commits"], out["your_commits"]), (2, 1))
+        self.assertNotIn(listed, self.load()["viewer_commits"])
+        self.emails = gh_rule(["user/emails"], code=1, stderr="HTTP 502: Bad Gateway")
+        head = self.commit()
+        self.logins[head] = ("old-me", "old-me", "me@example.com")
+        write_result(BABYSIT_WRITER, self.repo, 42, head, self.base, babysit())
+        self.handback("unknown", "record-babysit", "--head-sha", head, "--base-sha", self.base)
 
     def test_record_babysit(self):
         self.st("init")

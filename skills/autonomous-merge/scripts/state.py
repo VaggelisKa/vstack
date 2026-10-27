@@ -31,14 +31,20 @@ or babysit.json already exists for the PR, unless --fresh.
 A round is clean when review's merge_ok is true (Ship: no blocker, no major,
 no unreviewed area) and it has no blocker or major. Caps: 3 review rounds, 6
 fix rounds (review fixes plus babysit's own commits: the first-parent commits
-whose GitHub author or committer is the viewer (`gh api user`) and that carry a
-`vstack:babysit:<item>` marker line; a marker on anyone else's commit is
-foreign, and another fixer's commits and merges from the base don't count),
-2 hours from started_at. A backstop also stops the run (cap_reached) once the
-viewer has pushed more than MAX_VIEWER_COMMITS (12) commits to the PR in the
-run, marked or not: every commit fix-round records, and the viewer's commits
-record-babysit and record-review see (GitHub only; identity from
-`gh api repos/O/R/commits/<sha>`). A finding that returns in a review after it was
+that are the viewer's and carry a `vstack:babysit:<item>` marker line; a
+marker on anyone else's commit is foreign, and another fixer's commits and
+merges from the base don't count), 2 hours from started_at. A backstop also
+stops the run (cap_reached) once the viewer has pushed more than
+MAX_VIEWER_COMMITS (12) commits to the PR in the run, marked or not: every
+commit fix-round records, and the viewer's commits record-babysit and
+record-review see (GitHub only). A commit is the viewer's when, in
+`gh api repos/O/R/commits/<sha>`, its author or committer login is the
+viewer's (`gh api user`), or its author or committer email is the viewer's
+noreply address (<id>+<login>@ or <login>@users.noreply.github.com) or in
+`gh api user/emails` (skipped on a 403 or 404). It fails closed: a commit
+with no account linked to its author or committer (an unlinked email; a
+web-flow committer stands for the author) counts as the viewer's, for the
+backstop and, with a marker, as a fix round. A finding that returns in a review after it was
 marked fixed, or a new commit that puts a file a recorded fix touched back to
 its content before that fix, is oscillation. A review round whose blocker plus
 major count isn't below the previous round's (when that one had any) is
@@ -371,11 +377,55 @@ def reverted(prior, commits):
     return None
 
 
-def viewer_commits(pr, commits):
-    """The commits whose GitHub author or committer is the viewer (`gh api user`),
+def viewer_emails(t, user):
+    """The viewer's email addresses, lowercased: the noreply ones, plus `gh api user/emails`
+    when the token may read it (a 403 or 404 there is ignored)."""
+    me, uid = user["login"], user.get("id")
+    emails = {f"{me}@users.noreply.github.com".lower()}
+    if type(uid) is int:
+        emails.add(f"{uid}+{me}@users.noreply.github.com".lower())
+    r = c.gh("api", "--hostname", t["hostname"], "--paginate", "--slurp", "user/emails")
+    if r.returncode != 0:
+        if any(s in r.stderr + r.stdout for s in ("HTTP 403", "HTTP 404")):
+            return emails
+        raise c.gh_api_error(r, t, "reading the viewer's emails")
+    pages = c.gh_json(r, "gh api user/emails")
+    for e in (x for p in pages if isinstance(p, list) for x in p) if isinstance(pages, list) else ():
+        if isinstance(e, dict) and isinstance(e.get("email"), str):
+            emails.add(e["email"].lower())
+    return emails
+
+
+def commit_identity(data, me, emails):
+    """viewer, unknown or foreign for a commit as `gh api repos/O/R/commits/<sha>` gives it.
+    viewer: its author or committer login is the viewer's, or its author or committer email is one of
+    theirs (emails() is read only when the logins don't match). unknown: no account is linked to the
+    author, or to the committer (web-flow, GitHub committing a web edit or merge, stands for the author),
+    so it may be the viewer's: it counts like theirs (fail closed). foreign otherwise."""
+    data = data if isinstance(data, dict) else {}
+    meta = data.get("commit") if isinstance(data.get("commit"), dict) else {}
+
+    def who(k):
+        x = data.get(k)
+        return (x.get("login") or None) if isinstance(x, dict) else None
+
+    author, committer = who("author"), who("committer")
+    if committer == "web-flow":
+        committer = author
+    if me in (author, committer):
+        return "viewer"
+    mails = {str(meta[k].get("email") or "").lower() for k in ("author", "committer")
+             if isinstance(meta.get(k), dict)} - {""}
+    if mails and mails & emails():
+        return "viewer"
+    return "unknown" if author is None or committer is None else "foreign"
+
+
+def commit_identities(pr, commits):
+    """{sha: viewer | unknown | foreign} by GitHub identity against the viewer (`gh api user`),
     read with `gh api repos/O/R/commits/<sha>`; None when the PR isn't on GitHub."""
     if not commits:
-        return []
+        return {}
     t = c.parse_target(str(pr))
     if t["host"] != "github":
         return None
@@ -386,16 +436,27 @@ def viewer_commits(pr, commits):
     me = user.get("login") if isinstance(user, dict) else None
     if not isinstance(me, str) or not me:
         raise c.Handback("unknown", "gh api user gave no login", "Check `gh auth status`, then rerun.")
-    mine = []
+    cache = []
+
+    def emails():
+        if not cache:
+            cache.append(viewer_emails(t, user))
+        return cache[0]
+
+    out = {}
     for sha in commits:
         r = c.gh("api", "--hostname", t["hostname"], f"repos/{t['owner']}/{t['repo']}/commits/{sha}")
         if r.returncode != 0:
             raise c.gh_api_error(r, t, f"reading commit {sha[:12]}")
-        data = c.gh_json(r, "gh api commits")
-        if isinstance(data, dict) and me in {(data.get(k) or {}).get("login") for k in ("author", "committer")
-                                             if isinstance(data.get(k), dict)}:
-            mine.append(sha)
-    return mine
+        out[sha] = commit_identity(c.gh_json(r, "gh api commits"), me, emails)
+    return out
+
+
+def viewer_commits(pr, commits):
+    """The commits that count as the viewer's (commit_identities: viewer or unknown);
+    None when the PR isn't on GitHub."""
+    ids = commit_identities(pr, commits)
+    return None if ids is None else [sha for sha in commits if ids[sha] != "foreign"]
 
 
 def add_viewer_commits(s, shas):
@@ -404,7 +465,8 @@ def add_viewer_commits(s, shas):
 
 
 def babysit_commits(commits):
-    """The commits among `commits` (the viewer's) with babysit's marker (coordination.py's)."""
+    """The commits among `commits` (the viewer's, unidentified ones included) with babysit's marker
+    (coordination.py's)."""
     if not commits:
         return []
     if not os.path.exists(COORDINATION):
@@ -641,9 +703,10 @@ def cmd_record_babysit(top, a):
     except reader.Unusable as e:
         raise c.Usage(f"no usable babysit.json: {c.one_line(e, 300)}")
     commits = first_parent_commits(s["last_head"], a.head_sha)
-    mine = viewer_commits(a.pr, commits)
-    if mine is None:
+    ids = commit_identities(a.pr, commits)
+    if ids is None:
         raise c.Usage("record-babysit is for GitHub PRs only (babysit doesn't run on other hosts)")
+    mine = [sha for sha in commits if ids[sha] != "foreign"]
     own = babysit_commits(mine)
     add_viewer_commits(s, mine)
     prior = fix_commits(s)
@@ -660,7 +723,8 @@ def cmd_record_babysit(top, a):
     enforce_caps(top, s)
     save(top, s)
     return {"outcome": "ok", "babysit_status": b["status"], "new_commits": len(commits), "babysit_commits": len(own),
-            "your_commits": len(mine), **summary(s)}
+            "your_commits": len(mine), "unidentified_commits": sum(1 for x in mine if ids[x] == "unknown"),
+            **summary(s)}
 
 
 def cmd_escalate(top, a):

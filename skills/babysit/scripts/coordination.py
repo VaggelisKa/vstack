@@ -8,12 +8,12 @@ Usage: python3 -I coordination.py poll --pr N [-R [HOST/]OWNER/REPO] [--input FI
        python3 -I coordination.py markers --item ID
 
 poll reads the PR with gh (`gh pr view --json headRefOid,commits,...`, the
-review threads over GraphQL, and every page of the 👀 reactions over REST: the
-PR's, and those on the first and last comment of each unresolved thread), or a
-bundle from --input ({"view": that pr view JSON, "threads": review thread
-nodes, "pr_reactions": REST reactions, "comment_reactions": {comment
-databaseId: REST reactions}, "viewer": login}; nothing is fetched then),
-updates the PR's coordination state in
+review threads over GraphQL with up to 50 comments each, and every page of the
+👀 reactions over REST: the PR's, and those on every comment of each
+unresolved thread), or a bundle from --input ({"view": that pr view JSON,
+"threads": review thread nodes, "pr_reactions": REST reactions,
+"comment_reactions": {comment databaseId: REST reactions}, "viewer": login};
+nothing is fetched then), updates the PR's coordination state in
 <git-common-dir>/vstack/<pr>/coordination.json and prints {settled,
 settled_reasons, items, claimed_count, actionable, lost_claims,
 own_fix_rounds, handback}. Item ids are check:<name> and thread:<threadId>;
@@ -23,25 +23,34 @@ Settled: no check queued or running on the head, the head is the one the last
 poll saw (so the first poll is never settled; a `gh pr update-branch` merge is
 a new head too), and no other actor's working signal (a "working" comment
 with no later "done" or commit, a 👀 on the PR newer than the head commit, an
-@copilot/@codex/@claude mention not yet answered, a draft (PENDING) review by
-someone other than the viewer; a requested reviewer who hasn't started doesn't
-count; a bot's comment, __typename Bot or a login ending in [bot], is never a
-"working" one). The viewer's comments with an own marker are never working
+@copilot/@codex/@claude mention on the PR or in an unresolved thread not yet
+answered there, a draft (PENDING) review by someone other than the viewer; a
+requested reviewer who hasn't started doesn't count; a bot's comment,
+__typename Bot or a login ending in [bot], is never a "working" one, except
+from the coding agents in AGENTS (Copilot, Codex, Claude), whose working reply
+is a claim). The viewer's comments with an own marker are never working
 signals, mentions in them included. A thread with more comments than one page
 leaves threads unreadable (threads_unreadable). Not settled means actionable
 is empty.
 
 A thread reply answers the thread (addressed) only from the PR author, the
 viewer, or an actor who claimed the thread (a 👀, an earlier "working" reply,
-or the claimant the last poll recorded); other bots' replies don't.
+or the claimant the last poll recorded); other bots' replies don't. A 👀 by
+anyone but the viewer newer than the PR author's or viewer's last reply keeps
+the thread claimed.
 
 Own work carries a marker: `<!-- vstack:babysit:<item> -->` in a comment, a
 plain `vstack:babysit:<item>` line in a commit message (autonomous-merge's
 review fixes use `vstack:autonomous-merge:<fingerprint>`, also own). A marker
 counts only on the viewer's own work: a comment by the viewer (a babysit marker
 only for the item being evaluated), or a commit whose first author or
-committer is the viewer; anyone else's marker is foreign. own_fix_rounds counts
-the viewer's babysit-marked commits. A claimed
+committer is the viewer, or whose author has no linked account (an unlinked
+email: it may be the viewer's, so it fails closed as own, never foreign);
+anyone else's marker is foreign. gh pr view's commits have no committer, so
+poll reads it with `gh api repos/O/R/commits/<sha>` for a marked commit whose
+first author is someone else (unreadable stays foreign); an --input bundle may
+give commits a "committer": {"login"} itself. own_fix_rounds counts the own
+babysit-marked commits. A claimed
 item becomes stale-claim after 2 completed CI cycles on newer heads or 3
 polls with CI idle and nothing new; that hands back `stale_claim` unless
 --take-over (pass it only when the user's own words in this run's request say
@@ -51,6 +60,11 @@ foreign commits twice, hands back `conflicting_fixer`. A thread that was
 resolved and is reopened after another fixer replied in it hands back
 `escalated`, and the item keeps `escalate: true` (never actionable) until it is
 addressed again.
+
+State is per clone: claims and self_subjects (the subjects of babysit's own
+👀) live under the git common dir, so run every poll, claim and remove-claim
+of a PR from the same clone, or a worktree of it (worktrees share the common
+dir). Run from another clone, babysit's own 👀 reads as someone else's.
 
 claim adds a 👀 reaction (content=eyes) to the thread's first comment, or to
 the PR for a check, and records it as babysit's own; it posts nothing else.
@@ -96,6 +110,9 @@ WORKING = re.compile(r"(?i)👀|\b(on it|working on (it|this|that)|i'?m working|
                      r"|looking into|taking (a look|this|it)|wip|in progress)\b")
 DONE = re.compile(r"(?i)\b(done|fixed|addressed|pushed|resolved|finished|completed)\b")
 MENTION = re.compile(r"(?i)(?<![\w@/])@(copilot|codex|claude)\b")
+AGENTS = {"copilot", "copilot-swe-agent", "copilot-swe-agent[bot]", "chatgpt-codex-connector",
+          "chatgpt-codex-connector[bot]", "codex", "claude", "claude[bot]"}
+SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 PASS = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 CLAIMED = ("claimed", "stale-claim")
 TOKENS = [re.compile(r"\bgh[pousr]_[A-Za-z0-9]{16,}"), re.compile(r"\bgithub_pat_[A-Za-z0-9_]{16,}"),
@@ -149,9 +166,14 @@ def is_bot(x):
     return a.get("__typename") == "Bot" or str(a.get("login") or "").endswith("[bot]")
 
 
+def is_agent(x):
+    """Is x's author a coding agent (Copilot, Codex, Claude) whose working reply is a claim?"""
+    return str(login(x) or "").lower() in AGENTS
+
+
 def is_working(c):
-    """Does comment c say its author is working on it? Bots' comments never do."""
-    return not is_bot(c) and bool(WORKING.search((c or {}).get("body") or ""))
+    """Does comment c say its author is working on it? Bots' comments never do, coding agents' do."""
+    return (not is_bot(c) or is_agent(c)) and bool(WORKING.search((c or {}).get("body") or ""))
 
 
 def own_comment(c, viewer, item=None):
@@ -248,17 +270,39 @@ def fetch_reactions(gh, host, endpoint):
     return [x for p in pages for x in p if isinstance(x, dict)]
 
 
+def unresolved_comments(threads):
+    """[comments] of each unresolved thread."""
+    return [[c for c in (node.get("comments") or {}).get("nodes") or [] if isinstance(c, dict)]
+            for node in threads or [] if isinstance(node, dict) and not node.get("isResolved")]
+
+
 def reaction_comments(threads):
-    """databaseIds of the comments whose 👀 matter: the first and last of each unresolved thread."""
+    """databaseIds of the comments whose 👀 matter: every comment of each unresolved thread."""
     out = []
-    for node in threads or []:
-        if not isinstance(node, dict) or node.get("isResolved"):
-            continue
-        nodes = [c for c in (node.get("comments") or {}).get("nodes") or [] if isinstance(c, dict)]
-        for c in nodes[:1] + nodes[-1:]:
+    for nodes in unresolved_comments(threads):
+        for c in nodes:
             if c.get("databaseId") not in out:
                 out.append(c.get("databaseId"))
     return out
+
+
+def fill_committers(gh, host, owner, repo, view, viewer):
+    """gh pr view's commits have no committer: read it with `gh api repos/O/R/commits/<sha>` where it
+    decides own work (a marker, and a first author who is known and not the viewer). Unread stays foreign."""
+    for c in view.get("commits") if isinstance(view.get("commits"), list) else []:
+        if not (viewer and isinstance(c, dict) and SHA.fullmatch(str(c.get("oid"))) and "committer" not in c):
+            continue
+        author = commit_author(c)
+        if author is None or author == viewer or not COMMIT_MARKER.search(commit_message(c)):
+            continue
+        r = gh("api", "--hostname", host, "--method", "GET", f"repos/{owner}/{repo}/commits/{c['oid']}")
+        try:
+            data = json.loads(r.stdout) if r.returncode == 0 else None
+        except ValueError:
+            data = None
+        committer = data.get("committer") if isinstance(data, dict) else None
+        if isinstance(committer, dict) and isinstance(committer.get("login"), str):
+            c["committer"] = {"login": committer["login"]}
 
 
 def fetch(pr, repo_arg=None, gh=default_gh):
@@ -266,6 +310,7 @@ def fetch(pr, repo_arg=None, gh=default_gh):
     host, owner, repo = repo_of(view)
     threads, viewer = fetch_threads(gh, host, owner, repo, pr)
     viewer = viewer or fetch_viewer(gh, host)
+    fill_committers(gh, host, owner, repo, view, viewer)
     pr_reactions = fetch_reactions(gh, host, f"repos/{owner}/{repo}/issues/{pr}/reactions")
     comment_reactions = {}
     for db_id in reaction_comments(threads):
@@ -421,22 +466,32 @@ def save(top, s):
 
 # ---- evaluation -----------------------------------------------------------
 
-def commit_logins(c):
-    """The logins behind a commit: its first author (co-authors from trailers
-    don't count) and its committer, when the data has one."""
+def commit_message(c):
+    return f"{c.get('messageHeadline') or ''}\n\n{c.get('messageBody') or ''}"
+
+
+def commit_author(c):
+    """The first author's login (co-authors from trailers don't count), or None
+    when GitHub links no account to the commit's author (an unlinked email)."""
     authors = [a for a in c.get("authors") or [] if isinstance(a, dict)]
+    return (authors[0].get("login") or None) if authors else None
+
+
+def commit_logins(c):
+    """The logins behind a commit: its first author and its committer, when the data has one."""
     committer = c.get("committer") if isinstance(c.get("committer"), dict) else {}
-    return {x for x in ((authors[0].get("login") if authors else None), committer.get("login")) if x}
+    return {x for x in (commit_author(c), committer.get("login")) if x}
 
 
 def parse_commits(raw, viewer=None):
-    """Commits with a marker are own only when the viewer wrote or committed them."""
+    """Commits with a marker are own when the viewer wrote or committed them, or when
+    no account is linked to the author (fail closed: it may be the viewer's)."""
     out = []
     for c in raw if isinstance(raw, list) else []:
         if not isinstance(c, dict) or not isinstance(c.get("oid"), str):
             continue
-        msg = f"{c.get('messageHeadline') or ''}\n\n{c.get('messageBody') or ''}"
-        mine = bool(viewer) and viewer in commit_logins(c)
+        msg = commit_message(c)
+        mine = bool(viewer) and (viewer in commit_logins(c) or commit_author(c) is None)
         marks = COMMIT_MARKER.findall(msg) if mine else []
         out.append({"oid": c["oid"], "message": msg, "date": c.get("committedDate"),
                     "login": next((a.get("login") for a in c.get("authors") or [] if isinstance(a, dict)
@@ -447,7 +502,7 @@ def parse_commits(raw, viewer=None):
 
 def is_babysit_commit(message):
     """Does a commit message carry babysit's marker? (state.py counts these as fix rounds when the
-    viewer wrote or committed them.)"""
+    viewer wrote or committed them, or no account is linked to them.)"""
     return any(skill == "babysit" for skill, _ in COMMIT_MARKER.findall(message or ""))
 
 
@@ -471,24 +526,34 @@ def check_states(rollup):
     return out
 
 
-def working_signals(view, reactions, commits, viewer, self_subjects, head_date):
+def unanswered_mentions(comments, viewer, commits, where):
+    """[(who, what, when)] for @copilot/@codex/@claude mentions in comments that
+    the tool hasn't answered later in the same list and no foreign commit followed."""
+    out = []
+    for i, c in enumerate(comments):
+        who, when = login(c), c.get("createdAt")
+        if own_comment(c, viewer) or any(not k["own"] and k["date"] and when and k["date"] > when for k in commits):
+            continue
+        for tool in sorted({m.lower() for m in MENTION.findall(c.get("body") or "")}):
+            if not any(tool in (login(x) or "").lower() for x in comments[i + 1:]):
+                out.append((who, f"asked @{tool} to work on {where}", when))
+    return out
+
+
+def working_signals(view, reactions, commits, viewer, self_subjects, head_date, threads=None):
     """[(who, what, when)] for other actors who say they're working right now."""
     comments = [c for c in view.get("comments") or [] if isinstance(c, dict)]
     out = []
     for i, c in enumerate(comments):
-        body, who, when = c.get("body") or "", login(c), c.get("createdAt")
-        if own_comment(c, viewer):
+        who, when = login(c), c.get("createdAt")
+        if own_comment(c, viewer) or not is_working(c):
             continue
-        later = comments[i + 1:]
-        foreign_commit_later = any(not k["own"] and k["date"] and when and k["date"] > when for k in commits)
-        if is_working(c):
-            done = any(login(x) == who and DONE.search(x.get("body") or "") for x in later)
-            if not done and not foreign_commit_later:
-                out.append((who, "said they're working on the PR", when))
-        for tool in {m.lower() for m in MENTION.findall(body)}:
-            answered = any(tool in (login(x) or "").lower() for x in later)
-            if not answered and not foreign_commit_later:
-                out.append((who, f"asked @{tool} to work on the PR", when))
+        done = any(login(x) == who and DONE.search(x.get("body") or "") for x in comments[i + 1:])
+        if not done and not any(not k["own"] and k["date"] and when and k["date"] > when for k in commits):
+            out.append((who, "said they're working on the PR", when))
+    out += unanswered_mentions(comments, viewer, commits, "the PR")
+    for nodes in unresolved_comments(threads):
+        out += unanswered_mentions(nodes, viewer, commits, "a review thread")
     for rx in reactions or []:
         if str(rx.get("content")).lower() != "eyes":
             continue
@@ -531,16 +596,21 @@ def thread_raw(node, ctx, st):
     if not comments:
         return "open", None, False
     reviewer, last = login(comments[0]), comments[-1]
-    if own_comment(last, ctx["viewer"], iid):
-        return "addressed", "babysit", True
     who, since = login(last), last.get("createdAt")
+    # A 👀 by anyone but the viewer newer than the viewer's or PR author's last word is a fresh claim.
+    newer_eyes = any(login(rx) != ctx["viewer"] and after(rx.get("created_at"), since)
+                     for c in comments for rx in eyes(c, ctx))
+    if own_comment(last, ctx["viewer"], iid) and not newer_eyes:
+        return "addressed", "babysit", True
     working = bool(who and who != reviewer and is_working(last))
     prev = st["items"].get(iid) or {}
     claimants = {login(rx) for c in comments for rx in eyes(c, ctx)}
     claimants |= {login(c) for c in comments[1:-1] if login(c) != reviewer and is_working(c)}
     if prev.get("state") in CLAIMED and not prev.get("own"):
         claimants.add(prev.get("claimant"))
-    if who and who != reviewer and not working and (who in (ctx["pr_author"], ctx["viewer"]) or who in claimants):
+    insider = who in (ctx["pr_author"], ctx["viewer"])
+    if (who and who != reviewer and not working and (insider or who in claimants)
+            and not (insider and newer_eyes)):
         return "addressed", who, False
     foreign = [(who, since)] if working else []
     for c in comments:
@@ -669,7 +739,7 @@ def evaluate(b, st, take_over=False, gh=None):
         reasons.append("reactions_unreadable: couldn't read every 👀 on the PR and its unresolved threads")
 
     head_date = commits[-1]["date"] if commits and commits[-1]["oid"] == head else None
-    signals = working_signals(view, reactions, commits, viewer, ctx["self_subjects"], head_date)
+    signals = working_signals(view, reactions, commits, viewer, ctx["self_subjects"], head_date, threads)
     stale_working = None
     w = st["working"]
     if signals:

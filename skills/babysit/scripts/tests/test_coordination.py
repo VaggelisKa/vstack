@@ -1,7 +1,9 @@
 """Tests for coordination.py against a fake gh on PATH and a real temp repo:
 settled and not settled, each item state for checks and threads, own vs
-foreign by marker and by who wrote it (forged markers), bots' "working"
-comments ignored, a thread with a second page of comments unreadable, who may
+foreign by marker and by who wrote it (forged markers, a marked commit with no
+linked author, a committer read over REST), bots' "working" comments ignored
+but coding agents' claiming, newer 👀 after the author's or viewer's answer,
+👀 on every thread comment, @mentions in thread replies, a thread with a second page of comments unreadable, who may
 answer a thread, 👀 read over REST across pages,
 stale claims by CI cycles and by quiet polls, take-over, conflicting_fixer, a
 reopened thread escalating, a head moved by update-branch, the claim and
@@ -62,6 +64,7 @@ class Coordination(unittest.TestCase):
         self.rollup = [check("test")]
         self.comments, self.threads, self.reactions, self.reviews = [], [], [], []
         self.reaction_pages, self.extra = None, []
+        self.author = "me"
         self.n = 0
 
     def tearDown(self):
@@ -76,7 +79,7 @@ class Coordination(unittest.TestCase):
                     self.assertRegex(endpoint, r"/reactions/[0-9]+$")
 
     def rules(self):
-        view = {"headRefOid": self.headsha, "url": "https://github.com/o/r/pull/42", "author": {"login": "me"},
+        view = {"headRefOid": self.headsha, "url": "https://github.com/o/r/pull/42", "author": {"login": self.author},
                 "commits": self.commits, "statusCheckRollup": self.rollup, "reviews": self.reviews,
                 "comments": self.comments}
         threads, eyes = [], []
@@ -183,7 +186,7 @@ class Coordination(unittest.TestCase):
     def test_thread_states(self):
         self.threads = [
             thread("T_open", comment("alice", "Rename this", 1)),
-            thread("T_bot", comment("alice", "Typo", 1), comment("Copilot", "I'm working on it", 2, bot=True)),
+            thread("T_bot", comment("alice", "Typo", 1), comment("deploy-bot", "I'm working on it", 2, bot=True)),
             thread("T_bot_rest", comment("alice", "Nit", 1), comment("ci[bot]", "on it", 2)),
             thread("T_eyes", comment("alice", "Off by one", 1, eyes="bob")),
             thread("T_resolved", comment("alice", "Nit", 1), resolved=True),
@@ -244,6 +247,92 @@ class Coordination(unittest.TestCase):
         out = self.settle()
         self.assertEqual((self.states(out)["check:lint"], out["own_fix_rounds"]), (("claimed", "mallory", False), 0))
 
+    def test_marked_commits_with_no_linked_author_are_not_foreign(self):
+        self.rollup = [check("lint", conclusion="FAILURE")]
+        self.settle()
+        for login in ("", None):
+            self.push("Fix lint\n\nvstack:babysit:check:lint", login=login)
+        self.push("Fix lint\n\nvstack:babysit:check:lint")
+        self.commits[-1]["authors"] = []
+        out = self.settle()
+        self.assertEqual((self.states(out)["check:lint"], out["own_fix_rounds"]), (("open", None, False), 3))
+        self.push("Tidy lint config", login="")
+        self.assertEqual(self.states(self.settle())["check:lint"], ("claimed", "someone", False))
+        self.assertEqual([a for a in self.gh.calls() if "--method" in a], [])
+
+    def test_committer_of_a_marked_commit_read_over_rest(self):
+        self.rollup = [check("lint", conclusion="FAILURE")]
+        self.settle()
+        theirs = self.push("Fix lint\n\nvstack:babysit:check:lint", login="mallory")
+        mine = self.push("Fix lint again\n\nvstack:babysit:check:lint", login="mallory")
+        self.push("Unmarked", login="mallory")
+        self.extra = [{"match": [f"repos/o/r/commits/{mine}"], "stdout": {"committer": {"login": "me"}}},
+                      {"match": [f"repos/o/r/commits/{theirs}"], "stdout": {"committer": {"login": "web-flow"}}}]
+        out = self.settle()
+        self.assertEqual((self.states(out)["check:lint"], out["own_fix_rounds"]), (("claimed", "mallory", False), 1))
+        reads = {a[-1] for a in self.gh.calls() if "--method" in a}
+        self.assertEqual(reads, {f"repos/o/r/commits/{theirs}", f"repos/o/r/commits/{mine}"})
+        self.assertTrue(all(a[:5] == ["api", "--hostname", "github.com", "--method", "GET"]
+                            for a in self.gh.calls() if "--method" in a))
+        self.extra = [{"match": [f"repos/o/r/commits/{mine}"], "code": 1, "stderr": "HTTP 502"}]
+        self.assertEqual(self.poll()["own_fix_rounds"], 0)
+
+    def test_newer_eyes_after_the_author_or_viewer_answer_keep_a_thread_claimed(self):
+        self.author = "pat"
+
+        def answered(tid, who, eyes_by, eyes_at, body="Because of the cache."):
+            first = comment("alice", "Why?", 1)
+            first["eyes"] = [[reaction(eyes_by, at(eyes_at))]]
+            return thread(tid, first, comment(who, body.replace("TID", tid), 3))
+
+        self.threads = [answered("T_viewer", "me", "bob", 4), answered("T_author", "pat", "carol", 4),
+                        answered("T_author_eyes", "pat", "pat", 4),
+                        answered("T_marked", "me", "bob", 4, "Fixed.\n<!-- vstack:babysit:thread:TID -->"),
+                        answered("T_old_eyes", "me", "bob", 2), answered("T_own_eyes", "me", "me", 4)]
+        out = self.settle()
+        self.assertEqual(self.states(out), {"thread:T_viewer": ("claimed", "bob", False),
+                                            "thread:T_author": ("claimed", "carol", False),
+                                            "thread:T_author_eyes": ("claimed", "pat", False),
+                                            "thread:T_marked": ("claimed", "bob", False),
+                                            "thread:T_old_eyes": ("addressed", "me", False),
+                                            "thread:T_own_eyes": ("addressed", "me", False)})
+
+    def test_eyes_on_any_comment_of_a_thread_count(self):
+        middle = comment("alice", "ping", 2, db=702, eyes="bob")
+        self.threads = [thread("T1", comment("alice", "Off by one", 1, db=701), middle,
+                               comment("alice", "again", 3, db=703))]
+        middle["eyes"] = [[reaction("bob", at(4))]]
+        out = self.settle()
+        self.assertEqual(self.states(out)["thread:T1"], ("claimed", "bob", False))
+        self.assertIn(["api", "--hostname", "github.com", "--paginate", "--slurp",
+                       "repos/o/r/pulls/comments/702/reactions?content=eyes&per_page=100"], self.gh.calls())
+
+    def test_mentions_in_thread_replies(self):
+        self.settle()
+        asked = thread("T1", comment("alice", "Off by one", 1), comment("carol", "@codex can you fix this?", 2))
+        done = thread("T2", comment("alice", "@claude look", 1), resolved=True)
+        self.threads = [asked, done]
+        self.assertEqual(self.poll()["settled_reasons"], ["working: carol asked @codex to work on a review thread"])
+        asked["comments"]["nodes"].append(comment("chatgpt-codex-connector[bot]", "Fixed in 1234567", 3))
+        self.assertTrue(self.poll()["settled"])
+        self.threads = [thread("T3", comment("me", "@copilot please\n<!-- vstack:babysit:thread:T3 -->", 1))]
+        self.assertTrue(self.poll()["settled"])
+
+    def test_coding_agents_working_replies_are_claims(self):
+        agents = [("Copilot", True), ("copilot-swe-agent[bot]", False), ("COPILOT-SWE-AGENT", True),
+                  ("chatgpt-codex-connector[bot]", False), ("Codex", False), ("claude[bot]", True), ("Claude", False)]
+        self.threads = [thread(f"T{i}", comment("alice", "Typo", 1), comment(who, "I'm working on it", 2, bot=bot))
+                        for i, (who, bot) in enumerate(agents)]
+        self.threads.append(thread("T_bot", comment("alice", "Typo", 1),
+                                   comment("renovate[bot]", "I'm working on it", 2, bot=True)))
+        out = self.settle()
+        self.assertEqual(self.states(out), {**{f"thread:T{i}": ("claimed", who, False) for i, (who, _) in enumerate(agents)},
+                                            "thread:T_bot": ("open", None, False)})
+        self.comments = [{"author": {"__typename": "Bot", "login": "copilot-swe-agent"}, "createdAt": at(5),
+                          "body": "I'm working on the failing tests"}]
+        self.assertEqual(self.poll()["settled_reasons"],
+                         ["working: copilot-swe-agent said they're working on the PR"])
+
     def test_a_thread_with_more_comments_is_unreadable(self):
         self.settle()
         long = thread("T1", comment("alice", "Off by one", 1))
@@ -278,9 +367,10 @@ class Coordination(unittest.TestCase):
         self.assertEqual(self.states(out)["thread:T1"], ("claimed", "bob", False))
         self.assertEqual(out["settled_reasons"], ["working: dave reacted 👀 on the PR after the last commit"])
         prefix = ["api", "--hostname", "github.com", "--paginate", "--slurp"]
-        self.assertEqual([a for a in self.gh.calls() if "reactions?" in a[-1]][-3:], [
+        self.assertEqual([a for a in self.gh.calls() if "reactions?" in a[-1]][-4:], [
             prefix + ["repos/o/r/issues/42/reactions?content=eyes&per_page=100"],
             prefix + ["repos/o/r/pulls/comments/501/reactions?content=eyes&per_page=100"],
+            prefix + ["repos/o/r/pulls/comments/502/reactions?content=eyes&per_page=100"],
             prefix + ["repos/o/r/pulls/comments/503/reactions?content=eyes&per_page=100"]])
         query = next(a for a in self.gh.calls() if "reviewThreads" in a[-1])[-1]
         self.assertNotIn("reactions", query)

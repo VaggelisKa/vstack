@@ -26,13 +26,14 @@ Exit 0 ok, 5 handback (`handback` is `{reason, detail, action}`), 2 usage
 "threads": [...], "pr_reactions": [...], "comment_reactions": {"<comment
 databaseId>": [...]}, "viewer": "login"}` and calls no gh.
 
-Threads come from GraphQL (with each comment's `databaseId`, no reactions).
-A thread whose comments run past one page (`comments.pageInfo.hasNextPage`)
-makes the threads unreadable (`threads_unreadable`, not settled).
+Threads come from GraphQL (with each comment's `databaseId`, no reactions),
+up to 50 comments per thread. A thread whose comments run past that page
+(`comments.pageInfo.hasNextPage`) makes the threads unreadable
+(`threads_unreadable`, not settled).
 👀 reactions come from REST, every page, with no cap:
 `gh api --paginate --slurp repos/O/R/issues/N/reactions?content=eyes&per_page=100`
 for the PR, and `repos/O/R/pulls/comments/<databaseId>/reactions?content=eyes&per_page=100`
-for the first and last comment of each unresolved thread.
+for every comment of each unresolved thread.
 
 ## Settled
 
@@ -45,10 +46,15 @@ All of:
 - no other actor is working: a comment saying so ("on it", "working on
   this", "WIP", 👀...) with no later "done" from them and no later commit, a
   👀 on the PR newer than the head commit, an `@copilot`/`@codex`/`@claude`
-  mention not yet answered by that tool, or a draft (`PENDING`) review by
-  someone other than the viewer. A requested reviewer who hasn't started
-  doesn't count. A bot's comment (`__typename` `Bot`, or a login ending in
-  `[bot]`) is never a "working" signal, on a thread or a check either. The
+  mention (in a PR comment, or any comment of an unresolved thread) not yet
+  answered there by that tool, or a draft (`PENDING`) review by someone other
+  than the viewer. A requested reviewer who hasn't started doesn't count. A
+  bot's comment (`__typename` `Bot`, or a login ending in `[bot]`) is never a
+  "working" signal, on a thread or a check either, except from these coding
+  agents (case-insensitive), whose "working" comment or reply is a claim:
+  `copilot`, `copilot-swe-agent`, `copilot-swe-agent[bot]`,
+  `chatgpt-codex-connector`, `chatgpt-codex-connector[bot]`, `codex`,
+  `claude`, `claude[bot]`. The
   viewer's comments carrying an own marker
   (`<!-- vstack:babysit:… -->`, `<!-- vstack:autonomous-merge:… -->`) are
   never working signals, mentions in them included;
@@ -65,7 +71,7 @@ Ids: `check:<name>` (a failing check, or one tracked before) and
 |---|---|---|
 | `open` | Failing, nobody on it | Last word is the reviewer's (or a third party's), nobody on it |
 | `claimed` | A foreign commit since it started failing names it, or a "working" comment names it | A 👀 on it since the last comment, a "working" reply, or a foreign commit since the last comment that touches its file or names its id |
-| `addressed` | Passes on the head (or gone after CI finished) | Resolved, or answered with no newer reviewer reply. Only the PR author, the viewer, or whoever claimed the thread (a 👀, an earlier "working" reply, or the claimant the last poll saw) answers; other bots' replies don't |
+| `addressed` | Passes on the head (or gone after CI finished) | Resolved, or answered with no newer reviewer reply. Only the PR author, the viewer, or whoever claimed the thread (a 👀, an earlier "working" reply, or the claimant the last poll saw) answers; other bots' replies don't. A 👀 by anyone but the viewer newer than the PR author's or viewer's answer keeps it `claimed` |
 | `stale-claim` | Claimed, and 2 CI cycles completed on newer heads, or 3 polls with CI idle and nothing new | Same |
 
 `claimed` with `own: true` is babysit's own claim (from `claim`); it's
@@ -93,12 +99,22 @@ the flag clears once the thread is addressed again.
 
 A marker counts only on the viewer's own work: a comment the viewer wrote
 (and on a thread, a babysit marker only for that thread's id), or a commit
-whose first author or committer login is the viewer. Anyone else's marker is
-foreign (a forged reply doesn't address a thread, and a 👀 or foreign claim on
-it still counts). Commits without a marker are foreign too, even from the same
-account. `own_fix_rounds` counts the viewer's commits with a babysit marker;
-autonomous-merge's fix-round cap counts the same (by `gh api` author or
-committer login), plus a backstop on every commit the viewer pushes.
+whose first author or committer login is the viewer, or whose author has no
+linked account (an unlinked email; it might be the viewer's, so it fails
+closed: own, never foreign). Anyone else's marker is foreign (a forged reply
+doesn't address a thread, and a 👀 or foreign claim on it still counts).
+Commits without a marker are foreign too, even from the same account.
+
+`gh pr view --json commits` has no committer. `poll` reads it with
+`gh api repos/O/R/commits/<sha>` only where it decides: a marked commit whose
+first author is someone else. If that read fails the commit stays foreign. An
+`--input` bundle may put `"committer": {"login": ...}` on a commit itself.
+
+`own_fix_rounds` counts the own commits with a babysit marker.
+autonomous-merge's fix-round cap counts the same by `gh api` identity (author
+or committer login, or an author or committer email that is the viewer's
+noreply address or in `gh api user/emails`; a commit with no linked author or
+committer counts too), plus a backstop on every such commit, marked or not.
 
 ## Handbacks
 
@@ -119,3 +135,9 @@ through a symlink: last head, poll count, babysit's claims, and per item its
 state, `claimed_since_head`, `ci_cycles_completed_since_claim`,
 `polls_without_progress` and transitions (with whether the commits behind each
 were own or foreign). Delete it to start over.
+
+The state is per clone. `claims` and `self_subjects` (the subjects of
+babysit's own 👀, so they aren't read as someone else's) live under the git
+common dir, so run every `poll`, `claim` and `remove-claim` for a PR from the
+same clone, or a worktree of it (worktrees share the common dir). From another
+clone, babysit's own 👀 looks like another fixer's claim.
