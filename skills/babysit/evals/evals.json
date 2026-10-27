@@ -319,6 +319,78 @@
         "Treats the request as merge mode and reads merge.md",
         "Arms gh pr merge --auto --match-head-commit <headRefOid> only after every gate passes"
       ]
+    },
+    {
+      "id": 31,
+      "prompt": "/babysit 14 don't merge. Every gate passes on the head SHA.",
+      "expected_output": "A negation overrides the trailing merge token. No merge.",
+      "files": [],
+      "expectations": [
+        "Does not read merge.md and does not run gh pr merge",
+        "Final report says the PR is ready and how to ask for a merge (/babysit 14 merge)"
+      ]
+    },
+    {
+      "id": 32,
+      "prompt": "babysit 14 and merge if CI passes. Every gate passes on the head SHA.",
+      "expected_output": "'If CI passes' is this skill's own gate, not a condition. Merges once every gate passes.",
+      "files": [],
+      "expectations": [
+        "Treats the request as merge mode and reads merge.md",
+        "Arms gh pr merge --auto --match-head-commit <headRefOid> only after every gate passes"
+      ]
+    },
+    {
+      "id": 33,
+      "prompt": "babysit 14 and merge when green and approved. Every gate passes on the head SHA.",
+      "expected_output": "'When green and approved' is this skill's own gate, not a condition. Merges once every gate passes.",
+      "files": [],
+      "expectations": [
+        "Treats the request as merge mode and reads merge.md",
+        "Arms gh pr merge --auto --match-head-commit <headRefOid> only after every gate passes"
+      ]
+    },
+    {
+      "id": 34,
+      "prompt": "babysit 14 and squash merge it. Every gate passes on the head SHA.",
+      "expected_output": "A plain merge ask; 'squash' doesn't change the method. Merges with the repo's default method and reports it.",
+      "files": [],
+      "expectations": [
+        "Treats the request as merge mode and reads merge.md",
+        "Arms gh pr merge --auto --match-head-commit <headRefOid> only after every gate passes",
+        "Does not pass --squash unless the repo allows only squash and gh asks for it",
+        "Final report states the merge method used"
+      ]
+    },
+    {
+      "id": 35,
+      "prompt": "babysit: μην κάνεις merge το 14. Every gate passes on the head SHA.",
+      "expected_output": "Greek negation ('don't merge 14'). No merge.",
+      "files": [],
+      "expectations": [
+        "Does not read merge.md and does not run gh pr merge",
+        "Final report says the PR is ready and how to ask for a merge (/babysit 14 merge)"
+      ]
+    },
+    {
+      "id": 36,
+      "prompt": "babysit: κάνε merge το 14 αν το εγκρίνει ο Σάμ. Every gate passes on the head SHA.",
+      "expected_output": "Greek condition outside the gate ('merge 14 if Sam approves it'). No merge.",
+      "files": [],
+      "expectations": [
+        "Does not read merge.md and does not run gh pr merge",
+        "Final report says the PR is ready and how to ask for a merge (/babysit 14 merge)"
+      ]
+    },
+    {
+      "id": 37,
+      "prompt": "babysit: merge το 14; Every gate passes on the head SHA.",
+      "expected_output": "Greek question ('merge 14?', with the Greek question mark ';'). No merge.",
+      "files": [],
+      "expectations": [
+        "Does not read merge.md and does not run gh pr merge",
+        "Final report says the PR is ready and how to ask for a merge (/babysit 14 merge)"
+      ]
     }
   ]
 }

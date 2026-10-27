@@ -234,6 +234,85 @@
         "Never runs gh pr merge",
         "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
       ]
+    },
+    {
+      "id": 22,
+      "prompt": "/autonomous-merge 14 --merge, actually don't. Every gate passes on the head SHA.",
+      "expected_output": "The negation overrides the --merge token. Stops at ready and does not merge.",
+      "files": [],
+      "expectations": [
+        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
+        "Never runs gh pr merge",
+        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+      ]
+    },
+    {
+      "id": 23,
+      "prompt": "autonomous-merge 14 and merge if CI passes. Every gate passes on the head SHA.",
+      "expected_output": "'If CI passes' is this skill's own gate, not a condition. Merges once every gate passes.",
+      "files": [],
+      "expectations": [
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge"
+      ]
+    },
+    {
+      "id": 24,
+      "prompt": "autonomous-merge 14 and merge when green and approved. Every gate passes on the head SHA.",
+      "expected_output": "'When green and approved' is this skill's own gate, not a condition. Merges once every gate passes.",
+      "files": [],
+      "expectations": [
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge"
+      ]
+    },
+    {
+      "id": 25,
+      "prompt": "autonomous-merge 14 and squash merge it. Every gate passes on the head SHA. The repo allows merge commits and squash.",
+      "expected_output": "A plain merge ask; 'squash' doesn't pick the method, gate.py does (squash here). Merges and reports the method.",
+      "files": [],
+      "expectations": [
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge",
+        "Does not pass its own method flag to gh; uses the method gate.py chose",
+        "Report states the merge method used (squash)"
+      ]
+    },
+    {
+      "id": 26,
+      "prompt": "autonomous-merge: μην κάνεις merge το 14. Every gate passes on the head SHA.",
+      "expected_output": "Greek negation ('don't merge 14'). Stops at ready and does not merge.",
+      "files": [],
+      "expectations": [
+        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
+        "Never runs gh pr merge",
+        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+      ]
+    },
+    {
+      "id": 27,
+      "prompt": "autonomous-merge: κάνε merge το 14 αν το εγκρίνει ο Σάμ. Every gate passes on the head SHA.",
+      "expected_output": "Greek condition outside the gate ('merge 14 if Sam approves it'). Stops at ready and does not merge.",
+      "files": [],
+      "expectations": [
+        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
+        "Never runs gh pr merge",
+        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+      ]
+    },
+    {
+      "id": 28,
+      "prompt": "autonomous-merge: merge το 14; Every gate passes on the head SHA.",
+      "expected_output": "Greek question ('merge 14?', with the Greek question mark ';'). Stops at ready and does not merge.",
+      "files": [],
+      "expectations": [
+        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
+        "Never runs gh pr merge",
+        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+      ]
     }
   ]
 }
