@@ -119,7 +119,8 @@ class Stubs:
         return [r for r in rows if cmd is None or r["cmd"] == cmd]
 
     def env(self, **extra):
-        return {**GIT_ENV, "PATH": str(self.dir), "STUB_DIR": str(self.dir), **extra}
+        return {**GIT_ENV, "PATH": str(self.dir), "STUB_DIR": str(self.dir), "VSTACK_POLL_DELAYS": "0,0,0,0",
+                "VSTACK_MERGE_POLL_DELAYS": "0,0,0", **extra}
 
 
 def run(script, *args, cwd, env):
@@ -183,9 +184,30 @@ def thread(resolved=False, bot=False, url="https://github.com/o/r/pull/42#discus
             "comments": {"pageInfo": {"hasNextPage": False}, "nodes": [{"author": author, "url": url}]}}
 
 
+def gh_review(state="APPROVED", login="bob", commit=None, bot=False):
+    return {"user": {"login": login, "type": "Bot" if bot else "User"}, "state": state, "commit_id": commit}
+
+
+def github_view(head, base, **over):
+    v = {"state": "OPEN", "isDraft": False, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+         "reviewDecision": "APPROVED", "headRefOid": head, "baseRefOid": base, "baseRefName": "main",
+         "author": {"login": "me"},
+         "statusCheckRollup": [{"__typename": "CheckRun", "name": "test", "status": "COMPLETED",
+                                "conclusion": "SUCCESS"}]}
+    v.update(over)
+    return v
+
+
+VIEW_MATCH = ["pr view 42 -R github.com/o/r --json state,isDraft,mergeable"]
+
+
 def github_rules(head, base, **over):
+    """Rules for a ready PR. An override may be a list of rules, tried in order
+    (give all but the last "once": True to answer a sequence of calls)."""
     rules = {
         "auth": gh_rule(["auth status --hostname github.com"], "github.com\n  Logged in to github.com account t\n"),
+        "reviews": gh_rule(["repos/o/r/pulls/42/reviews"], [[gh_review(commit=head)]]),
+        "rulesets": gh_rule(["repos/o/r/rules/branches/main"], []),
         "repo": gh_rule(["api --hostname github.com repos/o/r"],
                         {"permissions": {"push": True}, "allow_merge_commit": True, "allow_squash_merge": True,
                          "allow_rebase_merge": True}),
@@ -193,19 +215,17 @@ def github_rules(head, base, **over):
         "pr": gh_rule(["pr view 42 -R github.com/o/r --json number,url"],
                       {"number": 42, "url": "https://github.com/o/r/pull/42", "state": "OPEN", "isDraft": False,
                        "headRefName": "feature", "baseRefName": "main", "headRefOid": head, "baseRefOid": base}),
-        "view": gh_rule(["pr view 42 -R github.com/o/r --json state,isDraft,mergeable"],
-                        {"state": "OPEN", "isDraft": False, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
-                         "reviewDecision": "APPROVED", "headRefOid": head, "baseRefOid": base,
-                         "statusCheckRollup": [{"__typename": "CheckRun", "name": "test", "status": "COMPLETED",
-                                                "conclusion": "SUCCESS"}]}),
+        "view": gh_rule(VIEW_MATCH, github_view(head, base)),
         "checks": gh_rule(["pr checks 42 -R github.com/o/r --required"], [{"name": "test", "bucket": "pass"}]),
         "threads": gh_rule(["api graphql"], [threads_page(thread(resolved=True))]),
-        "after": gh_rule(["pr view 42 -R github.com/o/r --json state,autoMergeRequest"],
-                         {"state": "MERGED", "autoMergeRequest": None}),
+        "disable": gh_rule(["pr merge 42 -R github.com/o/r --disable-auto"], ""),
         "merge": gh_rule(["pr merge 42"], ""),
     }
     rules.update(over)
-    return [r for r in rules.values() if r is not None]
+    out = []
+    for r in rules.values():
+        out += r if isinstance(r, list) else [r] if r is not None else []
+    return out
 
 
 BB = "https://api.bitbucket.org/2.0/repositories/ws/r"
@@ -230,9 +250,6 @@ def bitbucket_rules(head, base, **over):
     rules = {
         "head": bb_rule(f"{BB}/commit/{head[:12]}", {"hash": head}),
         "base": bb_rule(f"{BB}/commit/{base[:12]}", {"hash": base}),
-        "branch": bb_rule(f"{BB}/refs/branches/main", {"name": "main", "default_merge_strategy": "merge_commit",
-                                                        "merge_strategies": ["merge_commit", "squash"]}),
-        "merge": bb_rule(f"{BB}/pullrequests/42/merge", {"state": "MERGED"}),
         "diffstat": bb_rule(f"{BB}/pullrequests/42/diffstat", {"values": [{"status": "modified"}]}),
         "statuses": bb_rule(f"{BB}/pullrequests/42/statuses", {"values": [{"name": "build", "state": "SUCCESSFUL"}]}),
         "tasks": bb_rule(f"{BB}/pullrequests/42/tasks", {"values": [{"state": "RESOLVED"}]}),

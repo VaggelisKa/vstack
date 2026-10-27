@@ -5,7 +5,8 @@ importlib (they run under python3 -I, so the script's folder isn't on sys.path).
 
 Nothing here prompts for or prints a credential: gh keeps its own token, and a
 Bitbucket token is read from the environment and handed to curl on stdin as a
-config file, never in argv.
+config file, never in argv. Bitbucket is only ever read (GET): autonomous-merge
+never merges there.
 """
 import importlib.util
 import json
@@ -22,8 +23,9 @@ OK, USAGE, INTERNAL, HANDBACK = 0, 2, 4, 5
 REASONS = (
     "no_cli", "auth_missing", "auth_expired", "insufficient_permission", "host_unsupported",
     "branch_protection", "checks_failing", "unresolved_threads", "changes_requested", "not_approved",
-    "conflicts", "draft", "not_open", "needs_review", "escalated", "cap_reached", "oscillation", "merge_failed",
-    "unknown",
+    "conflicts", "draft", "not_open", "needs_review", "escalated", "cap_reached", "oscillation", "no_progress",
+    "security_blocker", "ci_unreproducible", "conflict_judgement", "design_change", "scope_change",
+    "merge_unsupported_host", "merge_failed", "unknown",
 )
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -92,6 +94,8 @@ def main_wrapper(prog, main):
         print(f"{prog}: {one_line(e)}", file=sys.stderr)
         code = USAGE
     except Exception as e:
+        emit({"outcome": "handback", "reason": "unknown", "detail": f"{prog}: internal error: {type(e).__name__}",
+              "action": "Rerun; if it happens again, report it with the stderr line."})
         print(f"{prog}: internal error: {type(e).__name__}", file=sys.stderr)
         code = INTERNAL
     sys.exit(code)
@@ -273,23 +277,26 @@ def github_access(t):
 def bb_auth():
     token = os.environ.get("BITBUCKET_TOKEN")
     user, pw = os.environ.get("BITBUCKET_USERNAME"), os.environ.get("BITBUCKET_APP_PASSWORD")
+    for name, value in (("BITBUCKET_TOKEN", token), ("BITBUCKET_USERNAME", user), ("BITBUCKET_APP_PASSWORD", pw)):
+        if value and ("\r" in value or "\n" in value):
+            raise Handback("auth_missing", f"{name} contains a line break",
+                           f"Set {name} again without the line break, in your environment yourself, then rerun.")
     if token:
         return 'header = "Authorization: Bearer %s"\n' % token.replace("\\", "\\\\").replace('"', '\\"')
     if user and pw:
         cred = f"{user}:{pw}".replace("\\", "\\\\").replace('"', '\\"')
         return f'user = "{cred}"\n'
     raise Handback("auth_missing", "no Bitbucket credentials in the environment",
-                   "Set BITBUCKET_TOKEN (an access token with pull request read and write scope), or "
+                   "Set BITBUCKET_TOKEN (an access token with pull request and repository read scope), or "
                    "BITBUCKET_USERNAME and BITBUCKET_APP_PASSWORD, in your environment yourself, then rerun.")
 
 
 def bb_action():
-    return ("Give the token pull request read and write (and repository read) access yourself, or use an "
-            "account with write access, then rerun.")
+    return "Give the token pull request and repository read access yourself, then rerun."
 
 
-def bb_request(path, method="GET", body=None):
-    """(status, parsed JSON or None). path is under /2.0 or a full api.bitbucket.org URL."""
+def bb_request(path):
+    """(status, parsed JSON or None) for a GET. path is under /2.0 or a full api.bitbucket.org URL."""
     url = path if path.startswith(BB_API + "/") else f"{BB_API}/{path}"
     if not shutil.which("curl"):
         raise Handback("no_cli", "curl is not on PATH", "Install curl, then rerun.")
@@ -298,13 +305,6 @@ def bb_request(path, method="GET", body=None):
         out = os.path.join(d, "body")
         argv = ["curl", "-q", "-sS", "--max-time", "60", "--config", "-", "-o", out, "-w", "%{http_code}",
                 "-H", "Accept: application/json"]
-        if method != "GET":
-            argv += ["-X", method]
-        if body is not None:
-            data = os.path.join(d, "data")
-            with open(data, "w") as f:
-                json.dump(body, f)
-            argv += ["-H", "Content-Type: application/json", "--data-binary", f"@{data}"]
         r = run([*argv, url], stdin=config)
         if r.returncode != 0:
             raise Handback("unknown", f"curl exited {r.returncode}: {one_line(r.stderr, 300)}",

@@ -1,8 +1,10 @@
 """Tests for state.py in temp git repos with real review and babysit result
 files: init and resume, review rounds, finding fingerprints, fix rounds, the
-caps (3 review rounds, 6 fix rounds, 2 hours), the oscillation guard (a fixed
-finding coming back, a commit undoing a fix), stops and --continue, and the
-file's atomic, symlink-refusing writes.
+caps (3 review rounds, 6 fix rounds, 2 hours, from the constants only), the
+oscillation guard (a fixed finding coming back, a commit undoing a fix), no
+progress between rounds, security blockers, escalations, stops and --continue,
+the file's checks (caps, started_at, fix_rounds), and its atomic,
+symlink-refusing writes.
 
 Run from the repo root: python3 -m unittest discover -s skills/autonomous-merge/scripts/tests
 """
@@ -22,6 +24,10 @@ spec.loader.exec_module(state)
 
 MAJOR = finding()
 MINOR = finding(severity="minor", rule="design", summary="Name could be clearer", fid="C2")
+
+
+def majors(n):
+    return [finding(summary=f"Problem {chr(97 + i)}", fid=f"M{i}") for i in range(n)]
 
 
 class State(unittest.TestCase):
@@ -122,11 +128,60 @@ class State(unittest.TestCase):
 
     def test_rejected_finding_returning_is_not_oscillation(self):
         self.st("init")
-        fp = self.reviewed(self.head, MAJOR)["to_fix"][0]["fingerprint"]
+        other = finding(summary="Unchecked return value", fid="C3")
+        fp, other_fp = [f["fingerprint"] for f in self.reviewed(self.head, MAJOR, other)["to_fix"]]
         self.st("finding", "--fingerprint", fp, "--status", "rejected", "--reason", "spec says so: docs/x.md:3")
+        self.st("fix-round", "--head-sha", self.commit(), "--fixed", other_fp)
         out = self.reviewed(self.commit(), MAJOR)
         self.assertEqual(out["to_fix"], [])
         self.assertEqual(self.load()["findings"][0]["status"], "rejected")
+
+    def test_no_progress(self):
+        self.st("init")
+        fps = [f["fingerprint"] for f in self.reviewed(self.head, *majors(2))["to_fix"]]
+        self.st("fix-round", "--head-sha", self.commit(), "--fixed", fps[0])
+        head = self.commit()
+        write_result(REVIEW_WRITER, self.repo, 42, head, self.base,
+                     review(majors(2)[1], finding(summary="New problem", fid="N1")))
+        data = self.handback("no_progress", "record-review", "--head-sha", head, "--base-sha", self.base)
+        self.assertIn("round 1 had 2", data["detail"])
+        self.assertEqual(self.load()["stop"]["reason"], "no_progress")
+        self.handback("no_progress", "check", "--before", "fix")
+
+    def test_progress_and_a_clean_round_after_none_are_fine(self):
+        self.st("init")
+        fps = [f["fingerprint"] for f in self.reviewed(self.head, *majors(2))["to_fix"]]
+        self.st("fix-round", "--head-sha", self.commit(), "--fixed", fps[0])
+        self.assertEqual(self.reviewed(self.commit(), majors(2)[1])["round"], 2)
+
+    def test_security_blocker_hands_back_at_once(self):
+        for rule in ("security", "Data-Integrity"):
+            with self.subTest(rule):
+                self.st("reset")
+                self.st("init")
+                blocker = finding(severity="blocker", rule=rule, summary="SQL built from user input")
+                write_result(REVIEW_WRITER, self.repo, 42, self.head, self.base, review(blocker))
+                data = self.handback("security_blocker", "record-review", "--head-sha", self.head,
+                                     "--base-sha", self.base)
+                self.assertIn("SQL built from user input", data["detail"])
+                self.assertEqual(len(self.load()["rounds"]), 1)
+        self.st("reset")
+        self.st("init")
+        self.assertFalse(self.reviewed(self.head, finding(severity="blocker", rule="bug-hunt"))["clean"])
+
+    def test_escalate(self):
+        for reason in ("security_blocker", "ci_unreproducible", "conflict_judgement", "design_change",
+                       "scope_change", "escalated"):
+            with self.subTest(reason):
+                self.st("reset")
+                self.st("init")
+                data = self.handback(reason, "escalate", "--reason", reason, "--detail", "alice asks for a queue")
+                self.assertEqual(data["detail"], "alice asks for a queue")
+                self.assertEqual((self.load()["stop"]["outcome"], self.load()["stop"]["reason"]), ("handback", reason))
+                self.handback(reason, "check", "--before", "review")
+        self.st("init", "--continue")
+        self.st("escalate", "--reason", "cap_reached", "--detail", "x", code=2)
+        self.st("escalate", "--reason", "escalated", "--detail", " ", code=2)
 
     def test_oscillation_finding_returns_after_fix(self):
         self.st("init")
@@ -174,12 +229,11 @@ class State(unittest.TestCase):
         head = self.head
         for i in range(3):
             self.st("check", "--before", "review")
-            fp = self.reviewed(head, MAJOR)["to_fix"][0]["fingerprint"]
+            fp = self.reviewed(head, *majors(3)[i:])["to_fix"][0]["fingerprint"]
             if i < 2:
                 self.st("check", "--before", "fix")
                 head = self.commit()
                 self.st("fix-round", "--head-sha", head, "--fixed", fp)
-                self.edit(lambda s: [f.update(status="open") for f in s["findings"]])
         self.handback("cap_reached", "check", "--before", "review")
         self.assertEqual(self.load()["stop"]["reason"], "cap_reached")
         self.st("init", "--continue")
@@ -197,7 +251,9 @@ class State(unittest.TestCase):
     def test_fix_cap(self):
         self.st("init")
         self.reviewed(self.head)
-        self.edit(lambda s: s["counters"].update(fix_rounds=5))
+        self.edit(lambda s: (s["counters"].update(fix_rounds=5),
+                             s["fixes"].append({"round": 5, "source": "babysit", "head": self.head,
+                                                "commits": [self.head] * 5, "at": s["started_at"]})))
         self.st("check", "--before", "fix")
         self.assertEqual(self.st("fix-round", "--head-sha", self.commit())["fix_rounds_left"], 0)
         self.handback("cap_reached", "check", "--before", "fix")
@@ -265,7 +321,15 @@ class State(unittest.TestCase):
 
     def test_refuses_a_tampered_file(self):
         self.st("init")
+        future = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1))
         for name, fn in {"counters": lambda s: s["counters"].update(review_rounds=2),
+                         "caps raised": lambda s: s["caps"].update(review_rounds=30),
+                         "caps dropped": lambda s: s["caps"].pop("minutes"),
+                         "future start": lambda s: s.update(started_at=future.strftime("%Y-%m-%dT%H:%M:%SZ")),
+                         "fix rounds lowered": lambda s: s["counters"].update(fix_rounds=0) or s["fixes"].append(
+                             {"round": 1, "source": "review", "head": self.head, "commits": [self.head]}),
+                         "fix rounds without fixes": lambda s: s["counters"].update(fix_rounds=2),
+                         "bad fix": lambda s: s["fixes"].append({"source": "manual", "commits": []}),
                          "skill": lambda s: s.update(skill="babysit"),
                          "schema": lambda s: s.update(schema_version=2),
                          "missing": lambda s: s.pop("findings"),
@@ -314,7 +378,8 @@ class State(unittest.TestCase):
                             env={**GIT_ENV, "GIT_CEILING_DIRECTORIES": str(cwd.parent)})
         self.assertEqual(rc, 2, err)
         self.assertIn("not in a git repository", err)
-        for args in (["init", "--pr", "0"], ["init", "--pr", "abc"], ["finding", "--pr", "42", "--fingerprint", "XYZ",
+        for args in (["-h"], ["--help"], ["init", "-h"], ["init", "--pr", "42", "--help"],
+                     ["init", "--pr", "0"], ["init", "--pr", "abc"], ["finding", "--pr", "42", "--fingerprint", "XYZ",
                                                                        "--status", "rejected", "--reason", "r"],
                      ["fix-round", "--pr", "42", "--head-sha", "HEAD"], ["stop", "--pr", "42", "--outcome", "done"]):
             with self.subTest(args):

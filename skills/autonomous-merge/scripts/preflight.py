@@ -9,13 +9,14 @@ The host comes from the URL, or for a bare number from the repo's git remote
 the PR, and push permission (`permissions.push` from `gh api repos/{o}/{r}`, or
 `viewerPermission` WRITE, MAINTAIN or ADMIN). bitbucket.org needs `curl` and
 BITBUCKET_TOKEN (sent as a Bearer token) or BITBUCKET_USERNAME plus
-BITBUCKET_APP_PASSWORD, and checks the repo and PR can be read with them; merge
-permission can't be read up front there, so a 403 surfaces at merge time. Any
-other host is handed back as host_unsupported.
+BITBUCKET_APP_PASSWORD, and checks the repo and PR can be read with them;
+autonomous-merge never merges there (the gate hands a passing PR back as
+merge_unsupported_host), so merge permission isn't needed. Any other host is
+handed back as host_unsupported.
 
 Never prompts and never prints a token. Prints one JSON object on stdout:
 {"outcome": "ok", ...} (exit 0) or a handback (exit 5, see
-references/handbacks.md). Exit 2 usage, 4 internal error.
+references/handbacks.md). Exit 2 usage (also -h), 4 internal error.
 """
 import importlib.util
 import os
@@ -45,7 +46,7 @@ def bitbucket(t):
     src, dst = pr.get("source") or {}, pr.get("destination") or {}
     return {"head_ref": (src.get("branch") or {}).get("name"), "base_ref": (dst.get("branch") or {}).get("name"),
             "url": ((pr.get("links") or {}).get("html") or {}).get("href"), "draft": pr.get("draft") is True,
-            "merge_permission": "unknown until merge"}
+            "merge_permission": "not needed: you merge Bitbucket PRs yourself"}
 
 
 def main():

@@ -14,22 +14,37 @@ Usage: python3 -I state.py <command> --pr N [options]
                                  record the fix pushed after a review round
   record-babysit --head-sha H --base-sha B
                                  add babysit.json: threads, CI, its commits
+  escalate --reason CODE --detail TEXT
+                                 record an immediate handback and print it:
+                                 security_blocker, ci_unreproducible,
+                                 conflict_judgement, design_change,
+                                 scope_change or escalated
   stop --outcome merged|ready|handback [--reason CODE] [--detail TEXT]
   show                           print the state
   reset                          delete the state file
 
-Caps: 3 review rounds, 6 fix rounds (review fixes plus babysit's commits,
-counted along first parents), 2 hours from started_at. A finding that returns
-in a review after it was marked fixed, or a new commit that puts a file a
-recorded fix touched back to its content before that fix, is oscillation. A
-cap or oscillation records the stop and hands back. Once stopped, every
+`reset` and `init --continue` are for the user only: the model never runs them.
+
+A round is clean when review's merge_ok is true (Ship: no blocker, no major,
+no unreviewed area) and it has no blocker or major. Caps: 3 review rounds, 6
+fix rounds (review fixes plus babysit's commits, counted along first parents),
+2 hours from started_at. A finding that returns in a review after it was
+marked fixed, or a new commit that puts a file a recorded fix touched back to
+its content before that fix, is oscillation. A review round whose blocker plus
+major count isn't below the previous round's (when that one had any) is
+no_progress. A blocker from the security or data-integrity reviewer is
+security_blocker. Each records the stop and hands back. Once stopped, every
 command but show, stop, reset and init hands the stop back; `init --continue`
 clears a handback and starts a new 2-hour window, keeping counters and
 fingerprints. A "ready" stop is cleared by plain init.
 
+The caps are the constants below, never read from the file: a file whose caps
+differ, whose started_at is in the future, or whose fix_rounds doesn't match
+its fixes fails its checks.
+
 Prints JSON on stdout: {"outcome": "ok", ...} (exit 0) or a handback (exit 5,
-references/handbacks.md). Exit 2 usage (also a state file that fails its
-checks), 4 internal error. The file is a cache, written atomically, never
+references/handbacks.md). Exit 2 usage (also -h, and a state file that fails
+its checks), 4 internal error. The file is a cache, written atomically, never
 through a symlink; see references/state-schema.md.
 """
 import argparse
@@ -58,6 +73,9 @@ PR_ARG = re.compile(r"[1-9][0-9]{0,9}")
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 SEVERITIES = ("blocker", "major", "minor", "nit")
 OUTCOMES = ("merged", "ready", "handback")
+ESCALATIONS = ("security_blocker", "ci_unreproducible", "conflict_judgement", "design_change", "scope_change",
+               "escalated")
+SECURITY_RULES = ("security", "data-integrity")
 BABYSIT_READER = os.path.join(c.HERE, "..", "..", "babysit", "scripts", "read-result.py")
 KEYS = ("schema_version", "skill", "pr", "merge", "started_at", "updated_at", "caps", "counters", "last_head",
         "rounds", "findings", "fixes", "threads", "ci", "stop")
@@ -169,8 +187,11 @@ def problems(s, pr):
         return errs
     if s["schema_version"] != SCHEMA_VERSION or s["skill"] != SKILL or s["pr"] != pr:
         errs.append("not this skill's state for this PR, or a schema_version this doesn't read")
+    if s["caps"] != CAPS:
+        errs.append(f"caps: must be {json.dumps(CAPS)}")
     try:
-        parse_stamp(s["started_at"])
+        if parse_stamp(s["started_at"]) > now():
+            errs.append("started_at: in the future")
     except (TypeError, ValueError):
         errs.append("started_at: not a UTC time")
     counters = s["counters"]
@@ -186,6 +207,12 @@ def problems(s, pr):
         errs.append("stop: must be null or an object with an outcome")
     if not errs and len(s["rounds"]) != counters["review_rounds"]:
         errs.append("counters.review_rounds doesn't match rounds")
+    if not errs:
+        if not all(f.get("source") in ("review", "babysit") and isinstance(f.get("commits"), list) and f["commits"]
+                   and all(isinstance(x, str) and SHA.fullmatch(x) for x in f["commits"]) for f in s["fixes"]):
+            errs.append("fixes: each needs a source of review or babysit and its commits")
+        elif counters["fix_rounds"] != sum(1 if f["source"] == "review" else len(f["commits"]) for f in s["fixes"]):
+            errs.append("counters.fix_rounds doesn't match fixes")
     return errs
 
 
@@ -224,6 +251,18 @@ ACTIONS = {
                    "`init --continue` (new 2-hour window, same round counters) or `reset` to start over.",
     "oscillation": "A fix is being undone or a fixed finding came back: decide which version is right, "
                    "then rerun with `init --continue`.",
+    "no_progress": "The fixes aren't reducing the review's blockers and majors: look at the findings, fix or "
+                   "decide them by hand, then rerun with `init --continue`.",
+    "security_blocker": "Review the security or data-integrity blocker yourself and fix it (autonomous-merge "
+                        "doesn't), then rerun with `init --continue`.",
+    "ci_unreproducible": "Look at the failing check's logs and fix or rerun it yourself, then rerun with "
+                         "`init --continue`.",
+    "conflict_judgement": "Resolve the conflict with the base yourself, choosing which side wins, then rerun with "
+                          "`init --continue`.",
+    "design_change": "Decide on the requested design change and reply to it, then rerun with `init --continue`.",
+    "scope_change": "Decide whether the PR's scope should change and reply to it, then rerun with "
+                    "`init --continue`.",
+    "escalated": "Make the decision described in the detail, then rerun with `init --continue`.",
 }
 
 
@@ -248,7 +287,7 @@ def elapsed_minutes(s):
 
 
 def enforce_caps(top, s):
-    caps, n = s["caps"], s["counters"]
+    caps, n = CAPS, s["counters"]
     if n["fix_rounds"] > caps["fix_rounds"]:
         stop(top, s, "cap_reached", f"{n['fix_rounds']} fix rounds, over the cap of {caps['fix_rounds']}")
     if elapsed_minutes(s) >= caps["minutes"]:
@@ -337,10 +376,10 @@ def cmd_init(top, a):
 
 
 def summary(s):
-    left = max(0, s["caps"]["minutes"] - elapsed_minutes(s))
+    left = max(0, CAPS["minutes"] - elapsed_minutes(s))
     return {"pr": s["pr"], "merge": s["merge"], "started_at": s["started_at"], "minutes_left": int(left),
             "review_rounds": s["counters"]["review_rounds"], "fix_rounds": s["counters"]["fix_rounds"],
-            "fix_rounds_left": max(0, s["caps"]["fix_rounds"] - s["counters"]["fix_rounds"]),
+            "fix_rounds_left": max(0, CAPS["fix_rounds"] - s["counters"]["fix_rounds"]),
             "last_head": s["last_head"],
             "open_findings": [f for f in s["findings"] if f["status"] == "open"]}
 
@@ -348,13 +387,13 @@ def summary(s):
 def cmd_check(top, a):
     s = loaded(top, a.pr)
     enforce_caps(top, s)
-    caps, n = s["caps"], s["counters"]
+    caps, n = CAPS, s["counters"]
     if a.before == "review" and n["review_rounds"] >= caps["review_rounds"]:
         stop(top, s, "cap_reached", f"{n['review_rounds']} review rounds used, the cap is {caps['review_rounds']}")
     if a.before == "fix":
         if n["fix_rounds"] >= caps["fix_rounds"]:
             stop(top, s, "cap_reached", f"{n['fix_rounds']} fix rounds used, the cap is {caps['fix_rounds']}")
-        if s["rounds"] and not s["rounds"][-1]["merge_ok"] and n["review_rounds"] >= caps["review_rounds"]:
+        if s["rounds"] and not clean(s["rounds"][-1]) and n["review_rounds"] >= caps["review_rounds"]:
             stop(top, s, "cap_reached", f"review round {n['review_rounds']} still isn't clean and no review "
                                         f"round is left to check a fix")
     return {"outcome": "ok", **summary(s)}
@@ -383,9 +422,9 @@ def cmd_record_review(top, a):
         return {"outcome": "ok", "repeat": True, **round_report(s, s["rounds"][-1])}
     r = read_review(a.pr, a.head_sha, a.base_sha)
     enforce_caps(top, s)
-    if s["counters"]["review_rounds"] >= s["caps"]["review_rounds"]:
+    if s["counters"]["review_rounds"] >= CAPS["review_rounds"]:
         stop(top, s, "cap_reached", f"a review round {s['counters']['review_rounds'] + 1} is over the cap of "
-                                    f"{s['caps']['review_rounds']}")
+                                    f"{CAPS['review_rounds']}")
     commits = first_parent_commits(s["last_head"], a.head_sha) if s["last_head"] else []
     n = s["counters"]["review_rounds"] + 1
     counts = {k: 0 for k in SEVERITIES}
@@ -406,26 +445,44 @@ def cmd_record_review(top, a):
         if old["status"] == "fixed" and old["last_round"] < n:
             back.append(old)
         old.update(last_round=n, line=f["line"], severity=f["severity"])
+    prev = s["rounds"][-1] if s["rounds"] else None
     rnd = {"round": n, "head": a.head_sha, "base": a.base_sha, "status": r["status"], "verdict": r["verdict"],
            "counts": counts, "merge_ok": r["merge_ok"], "at": stamp()}
     s["rounds"].append(rnd)
     s["counters"]["review_rounds"] = n
     s["last_head"] = a.head_sha
+    security = [f for f in r["findings"] if f["severity"] == "blocker" and f["rule"].strip().lower() in SECURITY_RULES]
+    if security:
+        f = security[0]
+        stop(top, s, "security_blocker", f"round {n} has a {f['rule']} blocker: {f['file']}: {f['summary']}")
     if back:
         f = back[0]
         stop(top, s, "oscillation", f"finding {f['fingerprint']} ({f['file']}: {f['summary']}) came back in round "
                                     f"{n} after fix {str(f['commit'])[:12]}")
     guard_reverts(top, s, fix_commits(s), commits)
+    before = serious((prev or {}).get("counts"))
+    if before and not clean(rnd) and serious(counts) >= before:
+        stop(top, s, "no_progress", f"review round {n} has {serious(counts)} blocker(s) and major(s), round {n - 1} "
+                                    f"had {before}: the fixes didn't reduce them")
     save(top, s)
     return {"outcome": "ok", "repeat": False, **round_report(s, rnd)}
 
 
+def serious(counts):
+    counts = counts if isinstance(counts, dict) else {}
+    return sum(counts.get(k) or 0 for k in ("blocker", "major"))
+
+
+def clean(rnd):
+    return rnd.get("merge_ok") is True and serious(rnd.get("counts")) == 0
+
+
 def round_report(s, rnd):
-    return {"round": rnd["round"], "clean": rnd["merge_ok"], "verdict": rnd["verdict"], "counts": rnd["counts"],
+    return {"round": rnd["round"], "clean": clean(rnd), "verdict": rnd["verdict"], "counts": rnd["counts"],
             "to_fix": [f for f in s["findings"] if f["status"] == "open" and f["last_round"] == rnd["round"]],
             "deferred": [f for f in s["findings"] if f["status"] == "deferred"],
-            "review_rounds_left": s["caps"]["review_rounds"] - s["counters"]["review_rounds"],
-            "fix_rounds_left": max(0, s["caps"]["fix_rounds"] - s["counters"]["fix_rounds"])}
+            "review_rounds_left": CAPS["review_rounds"] - s["counters"]["review_rounds"],
+            "fix_rounds_left": max(0, CAPS["fix_rounds"] - s["counters"]["fix_rounds"])}
 
 
 def find(s, fp):
@@ -495,6 +552,13 @@ def cmd_record_babysit(top, a):
     return {"outcome": "ok", "babysit_status": b["status"], "new_commits": len(commits), **summary(s)}
 
 
+def cmd_escalate(top, a):
+    s = loaded(top, a.pr)
+    if not c.one_line(a.detail):
+        raise c.Usage("--detail can't be empty")
+    stop(top, s, a.reason, a.detail)
+
+
 def cmd_stop(top, a):
     s = load(top, a.pr)
     if s is None:
@@ -530,11 +594,11 @@ def cmd_reset(top, a):
 
 
 def args():
-    ap = argparse.ArgumentParser(prog="state.py")
+    ap = argparse.ArgumentParser(prog="state.py", add_help=False)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def add(name, fn):
-        p = sub.add_parser(name)
+        p = sub.add_parser(name, add_help=False)
         p.add_argument("--pr", required=True)
         p.set_defaults(fn=fn)
         return p
@@ -556,6 +620,9 @@ def args():
     p = add("record-babysit", cmd_record_babysit)
     p.add_argument("--head-sha", required=True)
     p.add_argument("--base-sha", required=True)
+    p = add("escalate", cmd_escalate)
+    p.add_argument("--reason", choices=ESCALATIONS, required=True)
+    p.add_argument("--detail", required=True)
     p = add("stop", cmd_stop)
     p.add_argument("--outcome", choices=OUTCOMES, required=True)
     p.add_argument("--reason")

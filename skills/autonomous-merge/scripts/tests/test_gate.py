@@ -1,8 +1,10 @@
 """Tests for gate.py against fake gh and curl on PATH and a real temp repo with
-review's result file: ready, one test per handback reason, the merge call's
-exact arguments (--auto, the method, --match-head-commit, never --admin), merge
-errors handed back with gh's message, Bitbucket ready, merge and handbacks, and
-no token in output.
+review's result file: ready, one test per handback reason, approvals that must
+be fresh and not the author's, re-polling unknown mergeability, the merge call's
+exact arguments (--auto, the method, --match-head-commit) only after every
+check passes, polling until merged with --disable-auto on any change, merge
+errors handed back with gh's message, never --admin, a push or a dismissal,
+Bitbucket handbacks and never a Bitbucket merge, and no token in output.
 
 Run from the repo root: python3 -m unittest discover -s skills/autonomous-merge/scripts/tests
 """
@@ -10,8 +12,9 @@ import json
 import os
 import unittest
 
-from helpers import (BB, REVIEW_WRITER, SHIP, Stubs, bb_pr, bb_rule, bitbucket_rules, finding, gh_rule,
-                     github_rules, pr_repo, review, run, thread, threads_page, write_result)
+from helpers import (BB, REVIEW_WRITER, SHIP, VIEW_MATCH, Stubs, bb_pr, bb_rule, bitbucket_rules, finding,
+                     gh_review, gh_rule, github_rules, github_view, pr_repo, review, run, thread, threads_page,
+                     write_result)
 
 TOKEN = "bbtok_s3cr3t_VALUE_1234567890"
 BB_URL = "https://bitbucket.org/ws/r/pull-requests/42"
@@ -23,13 +26,28 @@ class Gate(unittest.TestCase):
         self.stubs = Stubs()
         write_result(REVIEW_WRITER, self.repo, 42, self.head, self.base, SHIP)
 
-    def view(self, **over):
-        v = {"state": "OPEN", "isDraft": False, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
-             "reviewDecision": "APPROVED", "headRefOid": self.head, "baseRefOid": self.base,
-             "statusCheckRollup": [{"__typename": "CheckRun", "name": "test", "status": "COMPLETED",
-                                    "conclusion": "SUCCESS"}]}
-        v.update(over)
-        return gh_rule(["pr view 42 -R github.com/o/r --json state,isDraft,mergeable"], v)
+    def tearDown(self):
+        for call in self.stubs.calls():
+            argv = call["argv"]
+            self.assertFalse({"--admin", "--force", "--force-with-lease", "push", "dismiss"} & set(argv), argv)
+            self.assertFalse(any("dismissals" in a or "-X" == a for a in argv), argv)
+            self.assertNotEqual(call["cmd"], "git", argv)
+
+    def view(self, *seq, **over):
+        """The gh pr view rule; with seq, one answer per call in order, the last repeating."""
+        views = [github_view(self.head, self.base, **v) for v in seq] or [github_view(self.head, self.base, **over)]
+        rules = [gh_rule(VIEW_MATCH, v) for v in views]
+        return [{**r, "once": True} for r in rules[:-1]] + rules[-1:]
+
+    def merged(self, *before):
+        """Views for --merge: open for the gate, then each of before, then merged."""
+        return self.view({}, *before, {"state": "MERGED"})
+
+    def reviews(self, *rvs):
+        return gh_rule(["repos/o/r/pulls/42/reviews"], [list(rvs)])
+
+    def disables(self):
+        return [c["argv"] for c in self.stubs.calls("gh") if "--disable-auto" in c["argv"]]
 
     def gate(self, *args, rules=None, env=None, **over):
         self.stubs.set(rules or github_rules(self.head, self.base, **over))
@@ -45,7 +63,8 @@ class Gate(unittest.TestCase):
         return data
 
     def merges(self):
-        return [c["argv"] for c in self.stubs.calls("gh") if c["argv"][:2] == ["pr", "merge"]]
+        return [c["argv"] for c in self.stubs.calls("gh") if c["argv"][:2] == ["pr", "merge"]
+                and "--disable-auto" not in c["argv"]]
 
     def test_ready(self):
         code, data, out, err = self.gate()
@@ -55,14 +74,66 @@ class Gate(unittest.TestCase):
         self.assertEqual(self.merges(), [])
 
     def test_merge_args(self):
-        code, data, out, err = self.gate("--merge")
+        code, data, out, err = self.gate("--merge", view=self.merged())
         self.assertEqual(code, 0, err)
         self.assertEqual((data["outcome"], data["method"]), ("merged", "squash"))
         self.assertEqual(self.merges(), [["pr", "merge", "42", "-R", "github.com/o/r", "--auto", "--squash",
                                           "--match-head-commit", self.head]])
-        argv = [a for c in self.stubs.calls() for a in c["argv"]]
-        self.assertNotIn("--admin", argv)
-        self.assertFalse(any(c["cmd"] == "git" or "push" in c["argv"] for c in self.stubs.calls()))
+        self.assertEqual(self.disables(), [])
+
+    def test_merge_polls_until_merged(self):
+        code, data, out, err = self.gate("--merge", view=self.merged({}, {"mergeStateStatus": "UNKNOWN"}))
+        self.assertEqual((code, data["outcome"]), (0, "merged"), err)
+        views = [c for c in self.stubs.calls("gh") if "state,isDraft,mergeable" in " ".join(c["argv"])]
+        self.assertEqual(len(views), 4)
+        self.assertEqual(self.disables(), [])
+
+    def test_merge_head_change_disables_auto(self):
+        moved = {"headRefOid": "f" * 40}
+        code, data, out, err = self.gate("--merge", view=self.merged(moved))
+        self.assertEqual((code, data["reason"]), (5, "needs_review"), (out, err))
+        self.assertIn("auto-merge disabled", data["detail"])
+        self.assertEqual(self.disables(), [["pr", "merge", "42", "-R", "github.com/o/r", "--disable-auto"]])
+        self.assertEqual(len(self.merges()), 1)
+        self.stubs.clear()
+        code, data, out, err = self.gate("--merge", view=self.merged({"baseRefOid": "e" * 40}))
+        self.assertEqual((code, data["reason"], len(self.disables())), (5, "needs_review", 1), (out, err))
+
+    def test_merge_new_block_disables_auto(self):
+        threads = [{**gh_rule(["api graphql"], [threads_page(thread(resolved=True))]), "once": True},
+                   gh_rule(["api graphql"], [threads_page(thread())])]
+        code, data, out, err = self.gate("--merge", view=self.merged({}), threads=threads)
+        self.assertEqual((code, data["reason"]), (5, "unresolved_threads"), (out, err))
+        self.assertEqual(len(self.disables()), 1)
+        for name, over in {"changes": {"reviews": [{**self.reviews(gh_review(commit=self.head)), "once": True},
+                                                   self.reviews(gh_review(commit=self.head),
+                                                                gh_review("CHANGES_REQUESTED", "carol"))]},
+                           "checks": {"checks": [{**gh_rule(["pr checks"], [{"name": "test", "bucket": "pass"}]),
+                                                  "once": True},
+                                                 gh_rule(["pr checks"], [{"name": "test", "bucket": "fail"}], 1)]},
+                           "blocked": {"view": self.merged({"mergeStateStatus": "BLOCKED"})}}.items():
+            with self.subTest(name):
+                self.stubs.clear()
+                code, data, out, err = self.gate("--merge", **{"view": self.merged({}), **over})
+                self.assertEqual(code, 5, (out, err))
+                self.assertEqual(len(self.disables()), 1, data)
+
+    def test_merge_timeout_and_unreadable_pr_disable_auto(self):
+        code, data, out, err = self.gate("--merge", view=self.view({}))
+        self.assertEqual((code, data["reason"], len(self.disables())), (5, "merge_failed", 1), (out, err))
+        self.stubs.clear()
+        gone = [self.view({}, {})[0], gh_rule(VIEW_MATCH, "", 1, "HTTP 502")]
+        code, data, out, err = self.gate("--merge", view=gone)
+        self.assertEqual((code, data["outcome"], data["reason"]), (5, "handback", "unknown"), (out, err))
+        self.assertIn("reading PR 42 back failed", data["detail"])
+        self.assertEqual(len(self.disables()), 1)
+
+    def test_disable_auto_failure_is_reported(self):
+        code, data, out, err = self.gate("--merge", view=self.merged({"headRefOid": "f" * 40}),
+                                         disable=gh_rule(["--disable-auto"], "", 1, "HTTP 502"))
+        self.assertEqual((code, data["reason"]), (5, "needs_review"), (out, err))
+        self.assertIn("couldn't disable auto-merge", data["detail"])
+        self.assertIn("--disable-auto", data["action"])
 
     def test_merge_method(self):
         def repo(**allow):
@@ -75,14 +146,9 @@ class Gate(unittest.TestCase):
         for allow, method in cases:
             with self.subTest(allow=allow):
                 self.stubs.clear()
-                code, data, out, err = self.gate("--merge", repo=repo(**allow))
+                code, data, out, err = self.gate("--merge", repo=repo(**allow), view=self.merged())
                 self.assertEqual((code, data["method"]), (0, method), err)
                 self.assertIn(f"--{method}", self.merges()[0])
-
-    def test_auto_merge_enabled(self):
-        after = gh_rule(["--json state,autoMergeRequest"], {"state": "OPEN", "autoMergeRequest": {"enabledAt": "x"}})
-        code, data, _, err = self.gate("--merge", after=after)
-        self.assertEqual((code, data["outcome"]), (0, "auto_merge_enabled"), err)
 
     def test_merge_errors_handed_back_with_gh_message(self):
         cases = {"insufficient_permission": "GraphQL: user does not have permission to merge (mergePullRequest)",
@@ -95,7 +161,7 @@ class Gate(unittest.TestCase):
                 code, data, out, err = run("gate.py", "42", "--merge", cwd=self.repo, env=self.stubs.env())
                 self.assertEqual((code, data["reason"]), (5, reason), (out, err))
                 self.assertIn(msg.split(":")[0][:20], data["detail"])
-                self.assertEqual(sum(1 for c in self.stubs.calls("gh") if c["argv"][:2] == ["pr", "merge"]), 1)
+                self.assertEqual((len(self.merges()), self.disables()), (1, []))
                 self.stubs.clear()
 
     def test_not_open(self):
@@ -113,9 +179,38 @@ class Gate(unittest.TestCase):
 
     def test_changes_requested(self):
         self.handback("changes_requested", "--merge", view=self.view(reviewDecision="CHANGES_REQUESTED"))
+        standing = self.reviews(gh_review("CHANGES_REQUESTED", "carol"), gh_review("COMMENTED", "carol"),
+                                gh_review(commit=self.head))
+        self.assertIn("carol", self.handback("changes_requested", reviews=standing)["detail"])
+        cleared = self.reviews(gh_review("CHANGES_REQUESTED", "carol"), gh_review(login="carol", commit=self.head))
+        self.assertEqual(self.gate(reviews=cleared)[0], 0)
+        bot = self.reviews(gh_review("CHANGES_REQUESTED", "lint-bot", bot=True), gh_review(commit=self.head))
+        self.assertEqual(self.gate(reviews=bot)[0], 0)
+        self.assertIn("couldn't read", self.handback(
+            "changes_requested", reviews=gh_rule(["pulls/42/reviews"], "", 1, "HTTP 502"))["detail"])
 
     def test_not_approved(self):
-        self.handback("not_approved", "--merge", view=self.view(reviewDecision="REVIEW_REQUIRED"))
+        self.handback("not_approved", "--merge", view=self.view(reviewDecision="REVIEW_REQUIRED"),
+                      reviews=self.reviews())
+        stale = self.reviews(gh_review(commit=self.base))
+        self.assertIn("stale", self.handback("not_approved", "--merge", reviews=stale)["detail"])
+        own = self.reviews(gh_review(login="me", commit=self.head))
+        self.handback("not_approved", reviews=own)
+        withdrawn = self.reviews(gh_review(commit=self.head), gh_review("DISMISSED"))
+        self.handback("not_approved", reviews=withdrawn)
+
+    def test_approval_only_when_required(self):
+        none = self.view(reviewDecision=None)
+        self.assertEqual(self.gate(view=none, reviews=self.reviews())[0], 0)
+        self.assertEqual(self.gate(view=none, reviews=self.reviews(gh_review(commit=self.base)))[0], 0)
+        ruleset = gh_rule(["rules/branches/main"], [{"type": "pull_request",
+                                                     "parameters": {"required_approving_review_count": 2}}])
+        data = self.handback("not_approved", view=none, rulesets=ruleset)
+        self.assertIn("2 approval(s)", data["detail"])
+        two = self.reviews(gh_review(commit=self.head), gh_review(login="dan", commit=self.head))
+        self.assertEqual(self.gate(view=none, rulesets=ruleset, reviews=two)[0], 0)
+        unreadable = gh_rule(["rules/branches/main"], "", 1, "HTTP 403")
+        self.assertEqual(self.gate(view=none, reviews=self.reviews(), rulesets=unreadable)[0], 0)
 
     def test_checks_failing(self):
         checks = gh_rule(["pr checks"], [{"name": "test", "bucket": "fail"}, {"name": "lint", "bucket": "pass"}], 1)
@@ -150,8 +245,26 @@ class Gate(unittest.TestCase):
         self.handback("branch_protection", "--merge", view=self.view(mergeStateStatus="BLOCKED"))
         self.assertIn("behind", self.handback("branch_protection", view=self.view(mergeStateStatus="BEHIND"))["detail"])
 
+    def view_calls(self):
+        return [c for c in self.stubs.calls("gh") if "state,isDraft,mergeable" in " ".join(c["argv"])]
+
     def test_unknown_mergeability(self):
-        self.handback("unknown", "--merge", view=self.view(mergeable="UNKNOWN", mergeStateStatus="UNKNOWN"))
+        data = self.handback("unknown", "--merge", view=self.view(mergeable="UNKNOWN", mergeStateStatus="UNKNOWN"))
+        self.assertIn("after re-polling", data["detail"])
+        self.assertEqual(len(self.view_calls()), 5)
+
+    def test_unknown_mergeability_recovers(self):
+        unknown = {"mergeable": "UNKNOWN", "mergeStateStatus": "UNKNOWN"}
+        code, data, out, err = self.gate(view=self.view(unknown, unknown, {}))
+        self.assertEqual((code, data["outcome"]), (0, "ready"), (out, err))
+        self.assertEqual(len(self.view_calls()), 3)
+
+    def test_poll_delays_validated(self):
+        for bad in ("x", "-1", "61", "nan"):
+            with self.subTest(bad):
+                self.stubs.clear()
+                code, _, out, err = self.gate(env=self.stubs.env(VSTACK_POLL_DELAYS=bad))
+                self.assertEqual(code, 2, (out, err))
 
     def test_first_block_wins_and_the_rest_are_listed(self):
         data = self.handback("draft", view=self.view(isDraft=True, reviewDecision="CHANGES_REQUESTED"))
@@ -193,7 +306,7 @@ class Gate(unittest.TestCase):
 
     def test_usage(self):
         self.stubs.set([])
-        for args in (["--admin"], [], ["42", "--force"]):
+        for args in (["--admin"], [], ["42", "--force"], ["-h"], ["--help"], ["42", "-h"]):
             with self.subTest(args):
                 self.assertEqual(run("gate.py", *args, cwd=self.repo, env=self.stubs.env())[0], 2)
         self.assertEqual(self.stubs.calls(), [])
@@ -205,54 +318,35 @@ class BitbucketGate(unittest.TestCase):
         self.stubs = Stubs()
         write_result(REVIEW_WRITER, self.repo, 42, self.head, self.base, SHIP)
 
+    def tearDown(self):
+        for call in self.stubs.calls("curl"):
+            self.assertFalse({"-X", "POST", "--data-binary", "--data", "-d"} & set(call["argv"]), call["argv"])
+            self.assertFalse(call["argv"][-1].endswith("/merge"), call["argv"])
+
     def gate(self, *args, env=None, **over):
         self.stubs.set(bitbucket_rules(self.head, self.base, **over))
         return run("gate.py", BB_URL, *args, cwd=self.repo, env=env or self.stubs.env(BITBUCKET_TOKEN=TOKEN))
 
-    def posts(self):
-        return [c for c in self.stubs.calls("curl") if "POST" in c["argv"]]
-
     def handback(self, reason, *args, **over):
         code, data, out, err = self.gate(*args, **over)
         self.assertEqual((code, data["reason"]), (5, reason), (out, err))
-        self.assertEqual(self.posts(), [])
         return data
 
     def pr(self, **over):
         return bb_rule(f"{BB}/pullrequests/42", bb_pr(self.head, self.base, **over))
 
-    def test_ready(self):
-        code, data, out, err = self.gate()
-        self.assertEqual(code, 0, err)
-        self.assertEqual((data["outcome"], data["head_sha"], data["base_sha"]), ("ready", self.head, self.base))
-        self.assertEqual(self.posts(), [])
-
-    def test_merge(self):
-        code, data, out, err = self.gate("--merge")
-        self.assertEqual((code, data["outcome"], data["method"]), (0, "merged", "merge_commit"), err)
-        [post] = self.posts()
-        self.assertTrue(post["argv"][-1].endswith("/pullrequests/42/merge"))
-        body = post["argv"][post["argv"].index("--data-binary") + 1]
-        self.assertTrue(body.startswith("@"))
-        for c in self.stubs.calls("curl"):
-            self.assertNotIn(TOKEN, " ".join(c["argv"]))
-
-    def test_merge_strategy_fallback(self):
-        branch = bb_rule(f"{BB}/refs/branches/main", {"name": "main"})
-        self.assertEqual(self.gate("--merge", branch=branch)[1]["method"], "squash")
-        branch = bb_rule(f"{BB}/refs/branches/main", {}, 404)
-        self.assertEqual(self.gate("--merge", branch=branch)[1]["method"], "squash")
-
-    def test_merge_refused(self):
-        cases = {"insufficient_permission": (403, "You don't have write access"),
-                 "branch_protection": (400, "Merge checks failed: 2 approvals needed"),
-                 "merge_failed": (500, "Something went wrong")}
-        for reason, (http, msg) in cases.items():
-            with self.subTest(reason):
-                code, data, out, err = self.gate("--merge", merge=bb_rule(f"{BB}/pullrequests/42/merge",
-                                                                          {"error": {"message": msg}}, http))
-                self.assertEqual((code, data["reason"]), (5, reason), (out, err))
-                self.assertIn(msg, data["detail"])
+    def test_never_merges(self):
+        for args in ([], ["--merge"]):
+            with self.subTest(args):
+                self.stubs.clear()
+                data = self.handback("merge_unsupported_host", *args)
+                self.assertIn("ready to merge", data["detail"])
+                self.assertIn("can't be pinned to a head commit", data["detail"])
+                self.assertIn("Merge it yourself in Bitbucket", data["action"])
+                self.assertIn(self.head[:12], data["action"])
+                calls = self.stubs.calls("curl")
+                self.assertTrue(calls)
+                self.assertFalse(any("/merge" in c["argv"][-1] for c in calls))
 
     def test_handbacks(self):
         self.handback("not_open", "--merge", pr=self.pr(state="DECLINED"))
@@ -272,6 +366,21 @@ class BitbucketGate(unittest.TestCase):
         self.handback("auth_missing", "--merge", env=self.stubs.env())
         self.handback("auth_expired", "--merge", repo=bb_rule(BB, {}, 401), pr=bb_rule(f"{BB}/pullrequests/42", {}, 401))
 
+    def test_no_build_status_hands_back(self):
+        data = self.handback("checks_failing", "--merge",
+                             statuses=bb_rule(f"{BB}/pullrequests/42/statuses", {"values": []}))
+        self.assertIn("no build status", data["detail"])
+
+    def test_line_breaks_in_credentials_refused(self):
+        for env in ({"BITBUCKET_TOKEN": "abc\ndef"}, {"BITBUCKET_TOKEN": "abc\rheader = x"},
+                    {"BITBUCKET_USERNAME": "me\n", "BITBUCKET_APP_PASSWORD": "pw"},
+                    {"BITBUCKET_USERNAME": "me", "BITBUCKET_APP_PASSWORD": "p\rw"}):
+            with self.subTest(env):
+                self.stubs.clear()
+                data = self.handback("auth_missing", env=self.stubs.env(**env))
+                self.assertIn("line break", data["detail"])
+                self.assertEqual(self.stubs.calls("curl"), [])
+
     def test_needs_review(self):
         write_result(REVIEW_WRITER, self.repo, 42, self.head, self.base, review(finding(severity="blocker")))
         self.handback("needs_review", "--merge")
@@ -286,25 +395,15 @@ class BitbucketGate(unittest.TestCase):
         self.assertEqual((code, data["reason"]), (5, "checks_failing"), err)
         self.assertIn("b (failed)", data["detail"])
 
-    def test_head_moved_before_merge(self):
-        first = {**self.pr(), "once": True}
-        moved = bb_rule(f"{BB}/pullrequests/42", bb_pr("f" * 40, self.base))
-        self.stubs.set([bb_rule(f"{BB}/commit/{'f' * 12}", {"hash": "f" * 40}),
-                        *bitbucket_rules(self.head, self.base, pr=None, repo=None), first, moved,
-                        bb_rule(BB, {"full_name": "ws/r"})])
-        code, data, out, err = run("gate.py", BB_URL, "--merge", cwd=self.repo,
-                                   env=self.stubs.env(BITBUCKET_TOKEN=TOKEN))
-        self.assertEqual((code, data["reason"]), (5, "merge_failed"), (out, err))
-        self.assertIn("head moved", data["detail"])
-        self.assertEqual(self.posts(), [])
-
     def test_token_never_printed(self):
-        leak = bb_rule(f"{BB}/pullrequests/42/merge", {"error": {"message": f"bad token {TOKEN}"}}, 500,
+        leak = bb_rule(f"{BB}/pullrequests/42/statuses", {"error": {"message": f"bad token {TOKEN}"}}, 500,
                        stderr=f"Authorization: Bearer {TOKEN}")
-        code, data, out, err = self.gate("--merge", merge=leak)
+        code, data, out, err = self.gate("--merge", statuses=leak)
         self.assertEqual(code, 5)
         self.assertNotIn(TOKEN, out + err)
         self.assertIn("[redacted]", data["detail"])
+        for c in self.stubs.calls("curl"):
+            self.assertNotIn(TOKEN, " ".join(c["argv"]))
 
 
 if __name__ == "__main__":

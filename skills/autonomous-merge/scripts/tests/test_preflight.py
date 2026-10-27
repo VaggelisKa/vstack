@@ -4,9 +4,12 @@ the URL and the git remote, and no token ever in output or argv.
 
 Run from the repo root: python3 -m unittest discover -s skills/autonomous-merge/scripts/tests
 """
+import json
+import subprocess
+import sys
 import unittest
 
-from helpers import (BB, Stubs, bb_pr, bb_rule, bitbucket_rules, gh_rule, git, github_rules, pr_repo, run,
+from helpers import (BB, SCRIPTS, Stubs, bb_pr, bb_rule, bitbucket_rules, gh_rule, git, github_rules, pr_repo, run,
                      tmpdir)
 
 TOKEN = "bbtok_s3cr3t_VALUE_1234567890"
@@ -95,8 +98,21 @@ class Preflight(unittest.TestCase):
         repo, _, _ = pr_repo(remote=None)
         self.handback("unknown", cwd=repo)
 
+    def test_internal_error_prints_an_unknown_handback_first(self):
+        code = ("import importlib.util, sys; s = importlib.util.spec_from_file_location('c', sys.argv[1]); "
+                "c = importlib.util.module_from_spec(s); s.loader.exec_module(c); "
+                "c.main_wrapper('x', lambda: {}['boom'])")
+        r = subprocess.run([sys.executable, "-I", "-c", code, str(SCRIPTS / "common.py")], capture_output=True)
+        self.assertEqual(r.returncode, 4)
+        first = r.stdout.decode().splitlines()[0]
+        self.assertEqual(json.loads(first), {"outcome": "handback", "reason": "unknown",
+                                             "detail": "x: internal error: KeyError",
+                                             "action": "Rerun; if it happens again, report it with the stderr line."})
+        self.assertIn("internal error", r.stderr.decode())
+
     def test_usage(self):
-        for arg in ["--admin", "abc", "https://github.com/o/r/issues/42", "ftp://github.com/o/r/pull/1"]:
+        for arg in ["--admin", "abc", "https://github.com/o/r/issues/42", "ftp://github.com/o/r/pull/1", "-h",
+                    "--help"]:
             with self.subTest(arg):
                 code, _, out, err = self.go(arg=arg)
                 self.assertEqual(code, 2, (out, err))

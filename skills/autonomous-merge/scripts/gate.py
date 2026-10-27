@@ -1,5 +1,5 @@
 """The merge gate: fresh live checks of a PR right before merging, and the merge
-itself only with --merge.
+itself only with --merge, and only on GitHub.
 
 Usage: python3 -I gate.py <pr-number-or-url> [--merge]
 
@@ -9,30 +9,49 @@ file it reads is review's result, through review's read-result.py, and only to
 require a review whose head and base match the live PR and whose merge_ok is
 true; the file can't make a blocked PR pass.
 
-GitHub blocks: closed or merged, draft, conflicts, changes requested, review
-required, a required check not passing (all checks, if the required ones can't
-be read), any unresolved review thread (a human's stays until a human resolves
-it), mergeStateStatus BLOCKED or BEHIND, unknown mergeability, and no clean
-review on this head. With --merge it runs
+GitHub blocks: closed or merged, draft, conflicts, changes requested (by
+reviewDecision, or by any human reviewer whose latest approving, dismissed or
+changes-requested review is CHANGES_REQUESTED), a missing approval, a required
+check not passing (all checks, if the required ones can't be read), any
+unresolved review thread (a human's stays until a human resolves it),
+mergeStateStatus BLOCKED or BEHIND, unknown mergeability (re-polled first, after
+each delay in VSTACK_POLL_DELAYS, comma-separated seconds, default 2,4,8,16),
+and no clean review on this head. An approval is needed only when the repo
+requires one (reviewDecision REVIEW_REQUIRED, or a ruleset's
+required_approving_review_count) or reviewDecision is APPROVED; then it must be
+an APPROVED review by someone other than the author on the current head (an
+approval of an older commit is stale and doesn't count). With no review
+requirement, branch protection decides.
+
+With --merge, and only once every block above is clear, it runs
 `gh pr merge <n> -R <host/o/r> --auto --<method> --match-head-commit <head>`,
 where method is the only one the repo allows, else squash if allowed (also when
-the repo's settings can't be read), else merge. Never --admin, never a push.
+the repo's settings can't be read), else merge. GitHub fires an auto-merge
+later without checking again, so the gate then polls (after each delay in
+VSTACK_MERGE_POLL_DELAYS, default about 5 minutes in total) until the PR is
+merged, re-running every check each time; on a head or base change, any new
+block, an unreadable PR or the time running out it runs
+`gh pr merge <n> -R <host/o/r> --disable-auto` and hands back. Never --admin,
+never a push, never a review dismissal.
 
 Bitbucket Cloud blocks: not OPEN, draft, a changes-requested participant, no
-approval, a build status that isn't SUCCESSFUL, a merge conflict in the
+approval, no build status or one that isn't SUCCESSFUL, a merge conflict in the
 diffstat, an unresolved task or inline comment, and no clean review on this
-head. With --merge it re-reads the head and POSTs /pullrequests/{id}/merge with
-the destination branch's default_merge_strategy (else squash).
+head. It never merges, with or without --merge: a PR that passes is handed back
+as merge_unsupported_host, for the user to merge (Bitbucket's merge API can't
+be pinned to a head commit, there's no babysit gate, and merge permission only
+shows at merge time). It only reads.
 
-Prints one JSON object: {"outcome": "ready" | "merged" | "auto_merge_enabled" |
-"merge_pending", ...} (exit 0) or a handback (exit 5) naming the first block in
-the order above, with the rest in its detail. Exit 2 usage, 4 internal error.
+Prints one JSON object: {"outcome": "ready" | "merged", ...} (exit 0) or a
+handback (exit 5) naming the first block in the order above, with the rest in
+its detail. Exit 2 usage (also -h), 4 internal error.
 """
 import argparse
 import importlib.util
 import json
 import os
 import re
+import time
 import urllib.parse
 
 _spec = importlib.util.spec_from_file_location(
@@ -45,8 +64,11 @@ PASS = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 BUCKET = {"pass": "passing", "skipping": "passing", "pending": "pending", "fail": "failing", "cancel": "failing"}
 METHODS = (("merge", "allow_merge_commit"), ("squash", "allow_squash_merge"), ("rebase", "allow_rebase_merge"))
 BB_CONFLICT = {"merge conflict", "local deleted", "remote deleted"}
-BB_STRATEGIES = {"merge_commit", "squash", "fast_forward", "squash_fast_forward", "rebase_fast_forward",
-                 "rebase_merge"}
+POLL_DELAYS = (2, 4, 8, 16)
+MERGE_POLL_DELAYS = (5, 10, 15) + (30,) * 9
+VERDICTS = ("APPROVED", "CHANGES_REQUESTED", "DISMISSED")
+VIEW_FIELDS = ("state,isDraft,mergeable,mergeStateStatus,reviewDecision,headRefOid,baseRefOid,baseRefName,author,"
+               "statusCheckRollup")
 
 THREADS_QUERY = """
 query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
@@ -65,12 +87,14 @@ class Blocks:
     def add(self, reason, detail, action):
         self.items.append((reason, detail, action))
 
-    def raise_first(self):
-        if not self.items:
-            return
+    def handback(self):
         reason, detail, action = self.items[0]
         rest = [f"{r}: {d}" for r, d, _ in self.items[1:]]
-        raise c.Handback(reason, detail + (f"; also {'; '.join(rest)}" if rest else ""), action)
+        return c.Handback(reason, detail + (f"; also {'; '.join(rest)}" if rest else ""), action)
+
+    def raise_first(self):
+        if self.items:
+            raise self.handback()
 
 
 def review_block(blocks, pr, head, base):
@@ -167,19 +191,123 @@ def github_merge_error(r, t):
     return c.Handback("merge_failed", f"gh pr merge failed: {err}", "Read gh's message above, fix the cause, rerun.")
 
 
-def github_gate(t, do_merge):
-    repo, _ = c.github_access(t)
-    r = c.gh("pr", "view", str(t["pr"]), "-R", c.gh_repo(t), "--json",
-             "state,isDraft,mergeable,mergeStateStatus,reviewDecision,headRefOid,baseRefOid,statusCheckRollup")
+def env_delays(name, default, most):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        delays = tuple(float(x) for x in raw.split(",") if x.strip())
+    except ValueError:
+        delays = None
+    if delays is None or not all(0 <= d <= most for d in delays):
+        raise c.Usage(f"{name} must be comma-separated seconds, each from 0 to {most}")
+    return delays
+
+
+def mergeability_unknown(view):
+    return view.get("mergeable") == "UNKNOWN" or view.get("mergeStateStatus") == "UNKNOWN"
+
+
+def github_view(t, delays=None, sleep=time.sleep):
+    """gh pr view, re-read after each delay while an open PR's mergeability is UNKNOWN."""
+    delays = env_delays("VSTACK_POLL_DELAYS", POLL_DELAYS, 60) if delays is None else delays
+    for i in range(len(delays) + 1):
+        r = c.gh("pr", "view", str(t["pr"]), "-R", c.gh_repo(t), "--json", VIEW_FIELDS)
+        if r.returncode != 0:
+            raise c.gh_api_error(r, t, f"reading PR {t['pr']}")
+        view = c.gh_json(r, "gh pr view")
+        if view.get("state") != "OPEN" or not mergeability_unknown(view) or i == len(delays):
+            return view
+        sleep(delays[i])
+
+
+def github_reviews(t):
+    """Every review on the PR, oldest first, or None if they can't all be read."""
+    r = c.gh("api", "--hostname", t["hostname"], "--paginate", "--slurp",
+             f"repos/{t['owner']}/{t['repo']}/pulls/{t['pr']}/reviews?per_page=100")
     if r.returncode != 0:
-        raise c.gh_api_error(r, t, f"reading PR {t['pr']}")
-    view = c.gh_json(r, "gh pr view")
+        return None
+    try:
+        pages = json.loads(r.stdout)
+    except ValueError:
+        return None
+    if not (isinstance(pages, list) and all(isinstance(p, list) for p in pages)):
+        return None
+    reviews = [rv for p in pages for rv in p]
+    return reviews if all(isinstance(rv, dict) and isinstance(rv.get("user") or {}, dict) for rv in reviews) else None
+
+
+def latest_verdicts(reviews):
+    """{login: latest approving, dismissed or changes-requested review}: a later
+    comment-only review doesn't clear an earlier verdict."""
+    latest = {}
+    for rv in reviews:
+        if rv.get("state") in VERDICTS:
+            latest[(rv.get("user") or {}).get("login") or "?"] = rv
+    return latest
+
+
+def changes_requested_by(reviews):
+    return sorted(u for u, rv in latest_verdicts(reviews).items()
+                  if rv["state"] == "CHANGES_REQUESTED" and (rv.get("user") or {}).get("type") != "Bot")
+
+
+def fresh_approvers(reviews, head, author):
+    return sorted(u for u, rv in latest_verdicts(reviews).items()
+                  if rv["state"] == "APPROVED" and rv.get("commit_id") == head and u != author)
+
+
+def required_approvals(t, branch):
+    """The highest required_approving_review_count among the base branch's
+    rulesets, or 0 (also when they can't be read: branch protection still holds)."""
+    if not branch:
+        return 0
+    r = c.gh("api", "--hostname", t["hostname"],
+             f"repos/{t['owner']}/{t['repo']}/rules/branches/{urllib.parse.quote(branch, safe='')}")
+    try:
+        rules = json.loads(r.stdout) if r.returncode == 0 else []
+    except ValueError:
+        return 0
+    counts = [(x.get("parameters") or {}).get("required_approving_review_count") for x in rules
+              if isinstance(x, dict) and x.get("type") == "pull_request"] if isinstance(rules, list) else []
+    return max([n for n in counts if isinstance(n, int) and not isinstance(n, bool)] + [0])
+
+
+def open_shas(t, view):
     head, base = view.get("headRefOid"), view.get("baseRefOid")
     if view.get("state") != "OPEN":
         raise c.Handback("not_open", f"PR {t['pr']} is {str(view.get('state')).lower()}",
                          "Nothing to merge; reopen the PR if that's wrong.")
     if not (isinstance(head, str) and SHA.fullmatch(head) and isinstance(base, str) and SHA.fullmatch(base)):
         raise c.Handback("unknown", "gh gave no full head or base SHA", "Rerun the gate.")
+    return head, base
+
+
+def approval_block(blocks, t, view, reviews, head):
+    decision = view.get("reviewDecision")
+    if reviews is None:
+        blocks.add("changes_requested", "couldn't read every review, so treating one as requesting changes",
+                   "Check the PR's reviews by hand, then rerun.")
+        return
+    requesters = changes_requested_by(reviews)
+    if decision == "CHANGES_REQUESTED" or requesters:
+        who = f" ({', '.join(requesters[:10])})" if requesters else ""
+        blocks.add("changes_requested", f"a reviewer requested changes{who}",
+                   "Get that reviewer to re-review or dismiss their review, then rerun.")
+    need = required_approvals(t, view.get("baseRefName"))
+    if decision not in ("REVIEW_REQUIRED", "APPROVED") and not need:
+        return
+    want = max(1, need)
+    fresh = fresh_approvers(reviews, head, (view.get("author") or {}).get("login"))
+    if len(fresh) < want:
+        stale = " (approvals of older commits are stale and don't count)" if any(
+            rv["state"] == "APPROVED" for rv in latest_verdicts(reviews).values()) else ""
+        blocks.add("not_approved", f"{want} approval(s) of head {head[:12]} by someone other than the author "
+                                   f"needed, found {len(fresh)}{stale}",
+                   "Get an approving review on the current head, then rerun.")
+
+
+def github_blocks(t, view, head, base, settled=True):
     blocks = Blocks()
     if view.get("isDraft"):
         blocks.add("draft", f"PR {t['pr']} is a draft",
@@ -187,13 +315,7 @@ def github_gate(t, do_merge):
     if view.get("mergeable") == "CONFLICTING" or view.get("mergeStateStatus") == "DIRTY":
         blocks.add("conflicts", "the PR conflicts with its base",
                    "Resolve the conflicts with the base branch, then rerun.")
-    decision = view.get("reviewDecision")
-    if decision == "CHANGES_REQUESTED":
-        blocks.add("changes_requested", "a reviewer requested changes",
-                   "Get that reviewer to re-review or dismiss their review, then rerun.")
-    elif decision == "REVIEW_REQUIRED":
-        blocks.add("not_approved", "an approving review is required and missing",
-                   "Get an approving review on the current head, then rerun.")
+    approval_block(blocks, t, view, github_reviews(t), head)
     checks, from_protection = github_checks(t, view)
     bad = [f"{n} ({s})" for n, s in checks if s != "passing"]
     if bad:
@@ -207,10 +329,65 @@ def github_gate(t, do_merge):
         blocks.add("branch_protection", f"branch protection: the PR is {why} (mergeStateStatus {status})",
                    "Check what the base branch's protection rules still need (approvals, checks, an up-to-date "
                    "branch via babysit); never bypass them. Then rerun.")
-    if view.get("mergeable") == "UNKNOWN" or status == "UNKNOWN":
-        blocks.add("unknown", "GitHub hasn't finished computing mergeability", "Rerun the gate in a minute.")
+    if settled and mergeability_unknown(view):
+        blocks.add("unknown", "GitHub still hadn't computed mergeability after re-polling",
+                   "Rerun the gate in a minute.")
     review_block(blocks, t["pr"], head, base)
-    blocks.raise_first()
+    return blocks
+
+
+def disable_auto(t, h):
+    """Turn the queued auto-merge off, then return the handback h saying so."""
+    r = c.gh("pr", "merge", str(t["pr"]), "-R", c.gh_repo(t), "--disable-auto")
+    if r.returncode == 0:
+        return c.Handback(h.reason, f"{h.detail}; auto-merge disabled", h.action)
+    err = c.one_line(r.stderr + r.stdout, 200) or f"gh exited {r.returncode}"
+    return c.Handback(h.reason, f"{h.detail}; couldn't disable auto-merge ({err})",
+                      f"First turn auto-merge off yourself (`gh pr merge {t['pr']} -R {c.gh_repo(t)} "
+                      f"--disable-auto`). Then: {h.action}")
+
+
+def wait_for_merge(t, head, base, delays, sleep=time.sleep):
+    """Poll the auto-merge just enabled until the PR is merged, re-running every
+    check; any change or new block turns auto-merge off and hands back."""
+    for i in range(len(delays) + 1):
+        if i:
+            sleep(delays[i - 1])
+        r = c.gh("pr", "view", str(t["pr"]), "-R", c.gh_repo(t), "--json", VIEW_FIELDS)
+        try:
+            view = json.loads(r.stdout) if r.returncode == 0 else None
+        except ValueError:
+            view = None
+        if not isinstance(view, dict):
+            err = c.one_line(r.stderr, 200) or "not JSON"
+            raise disable_auto(t, c.Handback("unknown", f"auto-merge was requested, but reading PR {t['pr']} back "
+                                                        f"failed (gh exited {r.returncode}: {err})",
+                                             "Check on GitHub whether the PR merged, then rerun the gate."))
+        if view.get("state") == "MERGED":
+            return
+        if view.get("state") != "OPEN":
+            raise disable_auto(t, c.Handback("not_open", f"PR {t['pr']} was {str(view.get('state')).lower()} "
+                                                         "while auto-merge was pending", "Nothing to merge."))
+        now = (view.get("headRefOid"), view.get("baseRefOid"))
+        if now != (head, base):
+            raise disable_auto(t, c.Handback(
+                "needs_review", f"the head or base moved while auto-merge was pending (head {head[:12]} -> "
+                                f"{str(now[0])[:12]}, base {base[:12]} -> {str(now[1])[:12]})",
+                "Run the review loop on the new head and base, then the gate again."))
+        blocks = github_blocks(t, view, head, base, settled=False)
+        if blocks.items:
+            raise disable_auto(t, blocks.handback())
+    raise disable_auto(t, c.Handback("merge_failed", f"auto-merge was enabled but PR {t['pr']} hadn't merged after "
+                                                     f"{int(sum(delays))}s",
+                                     "See what GitHub is waiting for on the PR, then rerun the gate with --merge."))
+
+
+def github_gate(t, do_merge):
+    repo, _ = c.github_access(t)
+    view = github_view(t)
+    head, base = open_shas(t, view)
+    merge_delays = env_delays("VSTACK_MERGE_POLL_DELAYS", MERGE_POLL_DELAYS, 600) if do_merge else ()
+    github_blocks(t, view, head, base).raise_first()
     out = {"host": "github", "pr": t["pr"], "head_sha": head, "base_sha": base}
     if not do_merge:
         return {"outcome": "ready", **out}
@@ -219,11 +396,8 @@ def github_gate(t, do_merge):
              "--match-head-commit", head)
     if r.returncode != 0:
         raise github_merge_error(r, t)
-    r = c.gh("pr", "view", str(t["pr"]), "-R", c.gh_repo(t), "--json", "state,autoMergeRequest")
-    after = c.gh_json(r, "gh pr view") if r.returncode == 0 else {}
-    outcome = ("merged" if after.get("state") == "MERGED" else
-               "auto_merge_enabled" if after.get("autoMergeRequest") else "merge_requested")
-    return {"outcome": outcome, "method": method, **out}
+    wait_for_merge(t, head, base, merge_delays)
+    return {"outcome": "merged", "method": method, **out}
 
 
 def full_sha(t, commit, what):
@@ -238,21 +412,7 @@ def full_sha(t, commit, what):
     return full
 
 
-def bb_strategy(t, branch):
-    try:
-        b = c.bb_get(f"{c.bb_base(t)}/refs/branches/{urllib.parse.quote(branch, safe='')}", "reading the base branch")
-    except c.Handback:
-        return "squash"
-    default = b.get("default_merge_strategy")
-    allowed = [s for s in b.get("merge_strategies") or [] if s in BB_STRATEGIES]
-    if default in BB_STRATEGIES and (not allowed or default in allowed):
-        return default
-    if not allowed or "squash" in allowed:
-        return "squash"
-    return allowed[0]
-
-
-def bitbucket_gate(t, do_merge):
+def bitbucket_gate(t):
     _, pr = c.bitbucket_access(t)
     if pr.get("state") != "OPEN":
         raise c.Handback("not_open", f"PR {t['pr']} is {str(pr.get('state')).lower()}",
@@ -280,6 +440,9 @@ def bitbucket_gate(t, do_merge):
     if bad:
         blocks.add("checks_failing", f"{len(bad)} build(s) not successful: {', '.join(bad[:10])}",
                    "Fix or rerun the failing builds and wait for running ones, then rerun.")
+    elif not statuses:
+        blocks.add("checks_failing", "no build status on the PR, so nothing shows its CI passed",
+                   "Check the PR's builds by hand (or set up CI for it), then rerun.")
     tasks = [x for x in c.bb_pages(f"{prefix}/tasks", "reading tasks") if x.get("state") == "UNRESOLVED"]
     comments = [x for x in c.bb_pages(f"{prefix}/comments", "reading comments")
                 if x.get("inline") and not x.get("parent") and not x.get("deleted") and not x.get("resolution")]
@@ -288,40 +451,23 @@ def bitbucket_gate(t, do_merge):
                    "A human must resolve the open tasks and comments (autonomous-merge only replies), then rerun.")
     review_block(blocks, t["pr"], head, base)
     blocks.raise_first()
-    out = {"host": "bitbucket", "pr": t["pr"], "head_sha": head, "base_sha": base}
-    if not do_merge:
-        return {"outcome": "ready", **out}
-    strategy = bb_strategy(t, (dst.get("branch") or {}).get("name") or "")
-    now = c.bb_get(prefix, f"re-reading PR {t['pr']}")
-    if full_sha(t, (now.get("source") or {}).get("commit"), "head") != head:
-        raise c.Handback("merge_failed", "the head moved after the gate's checks", "Rerun the gate on the new head.")
-    status, data = c.bb_request(f"{prefix}/merge", method="POST", body={"merge_strategy": strategy})
-    if status == 200:
-        return {"outcome": "merged", "method": strategy, **out}
-    if status == 202:
-        return {"outcome": "merge_pending", "method": strategy, **out}
-    msg = c.bb_error(data) or f"HTTP {status}"
-    if status == 401:
-        raise c.Handback("auth_expired", f"merge: Bitbucket rejected the credentials ({msg})",
-                         "Create a new token or app password, set it in your environment yourself, then rerun.")
-    if status == 403:
-        raise c.Handback("insufficient_permission", f"merge refused: {msg}", c.bb_action())
-    if "check" in msg.lower() or "restriction" in msg.lower():
-        raise c.Handback("branch_protection", f"merge refused by merge checks: {msg}",
-                         "See what the branch's merge checks still need; don't bypass them. Then rerun.")
-    raise c.Handback("merge_failed", f"merge failed: HTTP {status} {msg}", "Read Bitbucket's message, fix it, rerun.")
+    raise c.Handback("merge_unsupported_host",
+                     f"PR {t['pr']} passed every gate check on head {head} and is ready to merge, but autonomous-merge "
+                     "never merges on Bitbucket: its merge API can't be pinned to a head commit, there's no babysit "
+                     "gate, and merge permission only shows at merge time",
+                     f"Merge it yourself in Bitbucket, after checking the head is still {head[:12]}.")
 
 
 def main():
-    ap = argparse.ArgumentParser(prog="gate.py")
+    ap = argparse.ArgumentParser(prog="gate.py", add_help=False)
     ap.add_argument("pr")
     ap.add_argument("--merge", action="store_true")
     try:
         a = ap.parse_args()
-    except SystemExit as e:
-        return c.USAGE if e.code else c.OK
+    except SystemExit:
+        return c.USAGE
     t = c.parse_target(a.pr)
-    out = github_gate(t, a.merge) if t["host"] == "github" else bitbucket_gate(t, a.merge)
+    out = github_gate(t, a.merge) if t["host"] == "github" else bitbucket_gate(t)
     c.emit(out)
     return c.OK
 

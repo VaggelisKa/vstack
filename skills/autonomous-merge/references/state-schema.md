@@ -5,9 +5,12 @@
 outside the tree, shared by every worktree. Each write goes to a temp file in
 the same folder and is renamed over the old one; a symlinked `vstack`, `<pr>`
 folder or state file is refused. On load the file is checked (keys, types,
-`counters.review_rounds` equal to the number of rounds); a file that fails is
-refused with exit 2, so fix it or run `state.py reset --pr N`. It's a cache
-for resuming, not an attestation: the gate never reads it.
+`caps` equal to state.py's constants, `started_at` not in the future,
+`counters.review_rounds` equal to the number of rounds, `counters.fix_rounds`
+equal to the fixes it lists); a file that fails is refused with exit 2, for
+the user to fix or `state.py reset --pr N`. The caps are always state.py's
+constants, never the file's. It's a cache for resuming, not an attestation:
+the gate never reads it.
 
 ```json
 {
@@ -35,7 +38,8 @@ for resuming, not an attestation: the gate never reads it.
 | `merge` | Whether this invocation had `--merge`; set again by every `init` |
 | `started_at` | Start of the 2-hour window; `init --continue` restarts it |
 | `counters.review_rounds` | Review rounds recorded; a 4th is refused |
-| `counters.fix_rounds` | Review fix rounds (one per `fix-round`) plus babysit's commits (first-parent, so `gh pr update-branch` counts once); over 6 stops the run |
+| `caps` | Always `{"review_rounds": 3, "fix_rounds": 6, "minutes": 120}`; any other value fails the checks |
+| `counters.fix_rounds` | Review fix rounds (one per `fix-round`) plus babysit's commits (first-parent, so `gh pr update-branch` counts once); must equal that sum over `fixes`; over 6 stops the run |
 | `last_head` | The head last recorded; the next fix or babysit record counts commits from here |
 | `rounds[]` | One per reviewed head and base: review's `status`, `verdict`, severity counts and `merge_ok` |
 | `findings[].fingerprint` | First 16 hex of SHA-256 over file, lower-cased rule, and the summary lower-cased with digit runs as `#` and punctuation and spacing collapsed |
@@ -51,7 +55,14 @@ for resuming, not an attestation: the gate never reads it.
 changed back to that file's content before the fix (a revert, whole or of that
 file).
 
+**No progress.** `record-review` stops the run (`no_progress`) when the
+previous round had blockers or majors and this one, not clean, has at least as
+many. It also stops at once (`security_blocker`) on a blocker whose rule is
+`security` or `data-integrity`.
+
 **Resume.** A new session runs `init` and continues from `counters`,
 `last_head` and the open findings. After a `ready` stop, `init` clears it (say,
 to rerun with `--merge`); after a handback, only `init --continue` does, and it
 keeps the counters and fingerprints. After `merged`, nothing resumes.
+`init --continue` and `reset` are the user's commands; the model never runs
+them.
