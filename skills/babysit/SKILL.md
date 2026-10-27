@@ -35,7 +35,7 @@ request itself (`$babysit 14`, "babysit PR 14 and merge when green").
   negation ("don't merge"), question ("merge?"), other condition ("merge if
   Sam approves"), or merge as a noun ("merge conflict", "merge queue", "merge
   commit") is no merge, and so is "land it" or "take it all the way".
-  Negations, questions and conditions override everything, including a
+  Negations, questions and other conditions override everything, including a
   trailing merge/--merge token. These rules apply in every language (including each language's question mark, e.g. Greek `;`); if unsure
   of the language, no merge. When in doubt, no merge; say in the final report
   how to ask for one (`/babysit <pr> merge`).

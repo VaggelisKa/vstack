@@ -29,7 +29,7 @@ gate criteria (green, CI passes, checks pass, approved) is not a condition:
 word anywhere else doesn't count. Any negation ("don't merge"), question
 ("merge?"), other condition ("merge if Sam approves"), or merge as a noun
 ("merge conflict", "merge queue", "merge commit") is no merge, and so are
-"land it" and "take PR 42 all the way". Negations, questions and conditions
+"land it" and "take PR 42 all the way". Negations, questions and other conditions
 override everything, including a trailing merge/--merge token. These rules
 apply in every language (including each language's question mark, e.g. Greek `;`); if unsure of the language, no merge. When in doubt,
 no merge; the report then says how to ask for one
@@ -95,8 +95,10 @@ result for the PR already exists; only the user decides to start fresh.)
    (the gate merges), by name, or read `$SKILL_DIR/../babysit/SKILL.md`. Tell it to stop
    within `minutes_left` and to use at most `fix_rounds_left` fix rounds (from
    `state.py check`), and to follow **Triage**. Then
-   `state.py record-babysit --pr N --head-sha … --base-sha …` (it counts only
-   babysit's marked commits as fix rounds, never another fixer's). If babysit handed
+   `state.py record-babysit --pr N --head-sha … --base-sha …` (it counts as
+   fix rounds only babysit-marked commits you wrote or committed, by GitHub
+   login, never another fixer's; any 12+ commits of yours in the run stop it
+   as `cap_reached`). If babysit handed
    back or failed, escalate with the matching reason below (else `escalated`)
    and its `last_action`. If it pushed, the review no longer matches the head:
    go back to step 3. That includes `gh pr update-branch`: its merge from base
@@ -108,7 +110,9 @@ result for the PR already exists; only the user decides to start fresh.)
    `gate.py <pr> --merge` right away (allow it 10 minutes). It enables
    `gh pr merge --auto --match-head-commit <head>` only after every check
    passes, then polls for at most 8 minutes until the PR merges, re-running
-   every check; on a head or base change, any new block, the deadline, an
+   every check and babysit's coordination (a new claim or working signal from
+   another fixer, such as a 👀 on the PR, is `claimed_items`); on a head or
+   base change, any new block, the deadline, an
    internal error, Ctrl-C or SIGTERM it turns auto-merge off
    (`gh pr merge --disable-auto`) and hands back. `merged` is done:
    `state.py stop --pr N --outcome merged`.

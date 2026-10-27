@@ -30,10 +30,15 @@ or babysit.json already exists for the PR, unless --fresh.
 
 A round is clean when review's merge_ok is true (Ship: no blocker, no major,
 no unreviewed area) and it has no blocker or major. Caps: 3 review rounds, 6
-fix rounds (review fixes plus babysit's own commits, the first-parent commits
-with a `vstack:babysit:<item>` marker line; another fixer's commits and merges
-from the base don't count),
-2 hours from started_at. A finding that returns in a review after it was
+fix rounds (review fixes plus babysit's own commits: the first-parent commits
+whose GitHub author or committer is the viewer (`gh api user`) and that carry a
+`vstack:babysit:<item>` marker line; a marker on anyone else's commit is
+foreign, and another fixer's commits and merges from the base don't count),
+2 hours from started_at. A backstop also stops the run (cap_reached) once the
+viewer has pushed more than MAX_VIEWER_COMMITS (12) commits to the PR in the
+run, marked or not: every commit fix-round records, and the viewer's commits
+record-babysit and record-review see (GitHub only; identity from
+`gh api repos/O/R/commits/<sha>`). A finding that returns in a review after it was
 marked fixed, or a new commit that puts a file a recorded fix touched back to
 its content before that fix, is oscillation. A review round whose blocker plus
 major count isn't below the previous round's (when that one had any) is
@@ -74,6 +79,7 @@ _spec.loader.exec_module(c)
 SKILL = "autonomous-merge"
 SCHEMA_VERSION = 1
 CAPS = {"review_rounds": 3, "fix_rounds": 6, "minutes": 120}
+MAX_VIEWER_COMMITS = 12  # backstop: commits the viewer may push to the PR in one run, fix rounds or not
 MAX_BYTES = 4 * 1024 * 1024
 SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 FP = re.compile(r"[0-9a-f]{16}")
@@ -215,6 +221,9 @@ def problems(s, pr):
         errs.append("last_head: must be a full SHA or null")
     if s["stop"] is not None and not (isinstance(s["stop"], dict) and s["stop"].get("outcome") in OUTCOMES):
         errs.append("stop: must be null or an object with an outcome")
+    if "viewer_commits" in s and not (isinstance(s["viewer_commits"], list) and all(
+            isinstance(x, str) and SHA.fullmatch(x) for x in s["viewer_commits"])):
+        errs.append("viewer_commits: must be a list of full SHAs")
     if not errs and len(s["rounds"]) != counters["review_rounds"]:
         errs.append("counters.review_rounds doesn't match rounds")
     if not errs:
@@ -253,7 +262,8 @@ def new_state(pr, merge):
     t = stamp()
     return {"schema_version": SCHEMA_VERSION, "skill": SKILL, "pr": pr, "merge": merge, "started_at": t,
             "updated_at": t, "caps": dict(CAPS), "counters": {"review_rounds": 0, "fix_rounds": 0},
-            "last_head": None, "rounds": [], "findings": [], "fixes": [], "threads": [], "ci": [], "stop": None}
+            "last_head": None, "rounds": [], "findings": [], "fixes": [], "threads": [], "ci": [], "stop": None,
+            "viewer_commits": []}
 
 
 ACTIONS = {
@@ -300,6 +310,10 @@ def enforce_caps(top, s):
     caps, n = CAPS, s["counters"]
     if n["fix_rounds"] > caps["fix_rounds"]:
         stop(top, s, "cap_reached", f"{n['fix_rounds']} fix rounds, over the cap of {caps['fix_rounds']}")
+    pushed = len(s.get("viewer_commits") or [])
+    if pushed > MAX_VIEWER_COMMITS:
+        stop(top, s, "cap_reached", f"you pushed {pushed} commits to the PR in this run, over the backstop of "
+                                    f"{MAX_VIEWER_COMMITS}")
     if elapsed_minutes(s) >= caps["minutes"]:
         stop(top, s, "cap_reached", f"{caps['minutes']} minutes have passed since {s['started_at']}")
 
@@ -357,8 +371,40 @@ def reverted(prior, commits):
     return None
 
 
+def viewer_commits(pr, commits):
+    """The commits whose GitHub author or committer is the viewer (`gh api user`),
+    read with `gh api repos/O/R/commits/<sha>`; None when the PR isn't on GitHub."""
+    if not commits:
+        return []
+    t = c.parse_target(str(pr))
+    if t["host"] != "github":
+        return None
+    r = c.gh("api", "--hostname", t["hostname"], "user")
+    if r.returncode != 0:
+        raise c.gh_api_error(r, t, "reading the viewer")
+    user = c.gh_json(r, "gh api user")
+    me = user.get("login") if isinstance(user, dict) else None
+    if not isinstance(me, str) or not me:
+        raise c.Handback("unknown", "gh api user gave no login", "Check `gh auth status`, then rerun.")
+    mine = []
+    for sha in commits:
+        r = c.gh("api", "--hostname", t["hostname"], f"repos/{t['owner']}/{t['repo']}/commits/{sha}")
+        if r.returncode != 0:
+            raise c.gh_api_error(r, t, f"reading commit {sha[:12]}")
+        data = c.gh_json(r, "gh api commits")
+        if isinstance(data, dict) and me in {(data.get(k) or {}).get("login") for k in ("author", "committer")
+                                             if isinstance(data.get(k), dict)}:
+            mine.append(sha)
+    return mine
+
+
+def add_viewer_commits(s, shas):
+    seen = s.setdefault("viewer_commits", [])
+    seen += [x for x in shas if x not in seen]
+
+
 def babysit_commits(commits):
-    """The commits babysit marked as its own (coordination.py's marker)."""
+    """The commits among `commits` (the viewer's) with babysit's marker (coordination.py's)."""
     if not commits:
         return []
     if not os.path.exists(COORDINATION):
@@ -433,6 +479,7 @@ def summary(s):
     return {"pr": s["pr"], "merge": s["merge"], "started_at": s["started_at"], "minutes_left": int(left),
             "review_rounds": s["counters"]["review_rounds"], "fix_rounds": s["counters"]["fix_rounds"],
             "fix_rounds_left": max(0, CAPS["fix_rounds"] - s["counters"]["fix_rounds"]),
+            "viewer_commits": len(s.get("viewer_commits") or []),
             "last_head": s["last_head"],
             "open_findings": [f for f in s["findings"] if f["status"] == "open"]}
 
@@ -446,6 +493,9 @@ def cmd_check(top, a):
     if a.before == "fix":
         if n["fix_rounds"] >= caps["fix_rounds"]:
             stop(top, s, "cap_reached", f"{n['fix_rounds']} fix rounds used, the cap is {caps['fix_rounds']}")
+        if len(s.get("viewer_commits") or []) >= MAX_VIEWER_COMMITS:
+            stop(top, s, "cap_reached", f"you pushed {len(s['viewer_commits'])} commits to the PR in this run, "
+                                        f"the backstop is {MAX_VIEWER_COMMITS}")
         if s["rounds"] and not clean(s["rounds"][-1]) and n["review_rounds"] >= caps["review_rounds"]:
             stop(top, s, "cap_reached", f"review round {n['review_rounds']} still isn't clean and no review "
                                         f"round is left to check a fix")
@@ -474,11 +524,12 @@ def cmd_record_review(top, a):
     if s["rounds"] and s["rounds"][-1]["head"] == a.head_sha and s["rounds"][-1]["base"] == a.base_sha:
         return {"outcome": "ok", "repeat": True, **round_report(s, s["rounds"][-1])}
     r = read_review(a.pr, a.head_sha, a.base_sha)
+    commits = first_parent_commits(s["last_head"], a.head_sha) if s["last_head"] else []
+    add_viewer_commits(s, viewer_commits(a.pr, commits) or [])
     enforce_caps(top, s)
     if s["counters"]["review_rounds"] >= CAPS["review_rounds"]:
         stop(top, s, "cap_reached", f"a review round {s['counters']['review_rounds'] + 1} is over the cap of "
                                     f"{CAPS['review_rounds']}")
-    commits = first_parent_commits(s["last_head"], a.head_sha) if s["last_head"] else []
     n = s["counters"]["review_rounds"] + 1
     counts = {k: 0 for k in SEVERITIES}
     by_fp = {f["fingerprint"]: f for f in s["findings"]}
@@ -566,6 +617,7 @@ def cmd_fix_round(top, a):
     s["counters"]["fix_rounds"] += 1
     s["fixes"].append({"round": s["counters"]["fix_rounds"], "source": "review", "head": a.head_sha,
                        "commits": commits, "at": stamp()})
+    add_viewer_commits(s, commits)
     for f in fixed:
         f.update(status="fixed", commit=commits[-1], reason=None)
     guard_reverts(top, s, prior, commits)
@@ -589,7 +641,11 @@ def cmd_record_babysit(top, a):
     except reader.Unusable as e:
         raise c.Usage(f"no usable babysit.json: {c.one_line(e, 300)}")
     commits = first_parent_commits(s["last_head"], a.head_sha)
-    own = babysit_commits(commits)
+    mine = viewer_commits(a.pr, commits)
+    if mine is None:
+        raise c.Usage("record-babysit is for GitHub PRs only (babysit doesn't run on other hosts)")
+    own = babysit_commits(mine)
+    add_viewer_commits(s, mine)
     prior = fix_commits(s)
     if own:
         s["counters"]["fix_rounds"] += len(own)
@@ -604,7 +660,7 @@ def cmd_record_babysit(top, a):
     enforce_caps(top, s)
     save(top, s)
     return {"outcome": "ok", "babysit_status": b["status"], "new_commits": len(commits), "babysit_commits": len(own),
-            **summary(s)}
+            "your_commits": len(mine), **summary(s)}
 
 
 def cmd_escalate(top, a):

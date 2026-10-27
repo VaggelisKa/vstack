@@ -2,7 +2,8 @@
 review's result file: ready, one test per handback reason, approvals that must
 be fresh and not the author's, re-polling unknown mergeability, the merge call's
 exact arguments (--auto, the method, --match-head-commit) only after every
-check passes, polling until merged with --disable-auto on any change, the
+check passes, polling until merged with --disable-auto on any change (a
+foreign 👀 on the PR after arming included: claimed_items), the
 deadline, Ctrl-C, SIGTERM or an internal error (merged if the PR just landed),
 bot approvals not counting, paginated rulesets that block when unreadable, merge
 errors handed back with gh's message, never --admin, a push or a dismissal,
@@ -132,6 +133,16 @@ class Gate(unittest.TestCase):
                 code, data, out, err = self.gate("--merge", **{"view": self.merged({}), **over})
                 self.assertEqual(code, 5, (out, err))
                 self.assertEqual(len(self.disables()), 1, data)
+
+    def test_merge_foreign_claim_after_arming_disables_auto(self):
+        eyes = {"id": 7, "content": "eyes", "user": {"login": "bob"}, "created_at": "2026-10-27T11:00:00Z"}
+        rx = [{**gh_rule(["issues/42/reactions"], [[]]), "once": True}, gh_rule(["issues/42/reactions"], [[eyes]])]
+        code, data, out, err = self.gate("--merge", view=self.view({}, {}), pr_reactions=rx)
+        self.assertEqual((code, data["reason"]), (5, "claimed_items"), (out, err))
+        self.assertIn("the PR (bob reacted 👀 on the PR after the last commit)", data["detail"])
+        self.assertIn("auto-merge disabled", data["detail"])
+        self.assertEqual(len(self.merges()), 1)
+        self.assertEqual(self.disables(), [["pr", "merge", "42", "-R", "github.com/o/r", "--disable-auto"]])
 
     def test_merge_timeout_and_unreadable_pr_disable_auto(self):
         code, data, out, err = self.gate("--merge", view=self.view({}))
@@ -460,7 +471,8 @@ class MergeWait(unittest.TestCase):
     def setUp(self):
         self.calls, self.now, self.slept = [], 0.0, []
         self.signals = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
-        for target, name, fake in ((gate.c, "gh", self.gh), (gate, "github_blocks", lambda *a, **k: gate.Blocks())):
+        for target, name, fake in ((gate.c, "gh", self.gh), (gate, "github_blocks", lambda *a, **k: gate.Blocks()),
+                                   (gate, "coordination_block", lambda *a, **k: None)):
             p = mock.patch.object(target, name, fake)
             p.start()
             self.addCleanup(p.stop)

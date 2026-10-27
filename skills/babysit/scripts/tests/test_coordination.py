@@ -1,6 +1,8 @@
 """Tests for coordination.py against a fake gh on PATH and a real temp repo:
 settled and not settled, each item state for checks and threads, own vs
-foreign by marker, who may answer a thread, 👀 read over REST across pages,
+foreign by marker and by who wrote it (forged markers), bots' "working"
+comments ignored, a thread with a second page of comments unreadable, who may
+answer a thread, 👀 read over REST across pages,
 stale claims by CI cycles and by quiet polls, take-over, conflicting_fixer, a
 reopened thread escalating, a head moved by update-branch, the claim and
 remove-claim subcommands' exact gh calls, --input, the state file, usage
@@ -182,6 +184,7 @@ class Coordination(unittest.TestCase):
         self.threads = [
             thread("T_open", comment("alice", "Rename this", 1)),
             thread("T_bot", comment("alice", "Typo", 1), comment("Copilot", "I'm working on it", 2, bot=True)),
+            thread("T_bot_rest", comment("alice", "Nit", 1), comment("ci[bot]", "on it", 2)),
             thread("T_eyes", comment("alice", "Off by one", 1, eyes="bob")),
             thread("T_resolved", comment("alice", "Nit", 1), resolved=True),
             thread("T_answered", comment("alice", "Why?", 1), comment("me", "Because of the cache.", 2)),
@@ -195,15 +198,60 @@ class Coordination(unittest.TestCase):
         out = self.settle()
         self.assertEqual(self.states(out), {
             "thread:T_open": ("open", None, False),
-            "thread:T_bot": ("claimed", "Copilot", False),
+            "thread:T_bot": ("open", None, False),
+            "thread:T_bot_rest": ("open", None, False),
             "thread:T_eyes": ("claimed", "bob", False),
             "thread:T_resolved": ("addressed", None, False),
             "thread:T_answered": ("addressed", "me", False),
             "thread:T_own": ("addressed", "babysit", True),
             "thread:T_pushback": ("open", None, False),
             "thread:T_touch": ("claimed", "copilot-swe-agent", False)})
-        self.assertEqual((out["claimed_count"], out["actionable"]), (3, ["thread:T_open", "thread:T_pushback"]))
+        self.assertEqual((out["claimed_count"], out["actionable"]),
+                         (2, ["thread:T_open", "thread:T_bot", "thread:T_bot_rest", "thread:T_pushback"]))
         self.assertEqual({i["kind"] for i in out["items"]}, {"thread"})
+
+    def test_bots_working_comments_are_not_signals(self):
+        self.settle()
+        for author in ({"login": "github-actions[bot]"}, {"__typename": "Bot", "login": "deploy-bot"}):
+            with self.subTest(author):
+                self.comments = [{"author": author, "body": "Deploy in progress, on it", "createdAt": at(5)}]
+                self.assertTrue(self.poll()["settled"])
+        self.rollup = [check("lint", conclusion="FAILURE")]
+        self.comments = [{"author": {"login": "lint[bot]"}, "body": "Working on lint", "createdAt": at(5)}]
+        self.poll()
+        self.assertEqual(self.states(self.poll())["check:lint"], ("open", None, False))
+
+    def test_forged_comment_markers_are_not_own(self):
+        self.threads = [
+            thread("T_forged", comment("alice", "Off by one", 1, eyes="bob"),
+                   comment("mallory", "Fixed.\n<!-- vstack:babysit:thread:T_forged -->", 2)),
+            thread("T_other", comment("alice", "Typo", 1),
+                   comment("me", "Fixed.\n<!-- vstack:babysit:thread:T_elsewhere -->", 2)),
+            thread("T_mine", comment("alice", "Nit", 1), comment("me", "Done.\n<!-- vstack:babysit:thread:T_mine -->", 2)),
+        ]
+        out = self.settle()
+        self.assertEqual(self.states(out), {"thread:T_forged": ("claimed", "bob", False),
+                                            "thread:T_other": ("addressed", "me", False),
+                                            "thread:T_mine": ("addressed", "babysit", True)})
+        self.comments = [{"author": {"login": "mallory"}, "createdAt": at(5),
+                          "body": "on it\n<!-- vstack:babysit:report -->"}]
+        self.assertEqual(self.poll()["settled_reasons"], ["working: mallory said they're working on the PR"])
+
+    def test_forged_commit_markers_are_foreign(self):
+        self.rollup = [check("lint", conclusion="FAILURE")]
+        self.settle()
+        self.push("Fix lint\n\nvstack:babysit:check:lint", login="mallory")
+        out = self.settle()
+        self.assertEqual((self.states(out)["check:lint"], out["own_fix_rounds"]), (("claimed", "mallory", False), 0))
+
+    def test_a_thread_with_more_comments_is_unreadable(self):
+        self.settle()
+        long = thread("T1", comment("alice", "Off by one", 1))
+        long["comments"]["pageInfo"]["hasNextPage"] = True
+        self.threads = [long]
+        out = self.poll()
+        self.assertEqual((out["settled"], out["settled_reasons"], out["items"]),
+                         (False, ["threads_unreadable: couldn't read every review thread"], []))
 
     def test_only_the_author_viewer_or_claimant_answers_a_thread(self):
         self.threads = [

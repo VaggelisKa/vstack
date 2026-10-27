@@ -36,7 +36,10 @@ the repo's settings can't be read), else merge. GitHub fires an auto-merge
 later without checking again, so the gate then polls (after each delay in
 VSTACK_MERGE_POLL_DELAYS, default about 5 minutes in total, and for at most
 VSTACK_MERGE_DEADLINE seconds, default and most 480, which also caps each gh
-call's timeout) until the PR is merged, re-running every check each time. From
+call's timeout) until the PR is merged, re-running every check each time,
+coordination included (settled isn't needed then, but a coordination handback,
+a claimed item or another actor's working signal, such as a new 👀 on the PR,
+hands back as claimed_items or the coordination reason). From
 the merge call on, every other way out (a head or base change, any new block,
 an unreadable PR, the delays or the deadline running out, an internal error,
 Ctrl-C or SIGTERM) runs `gh pr merge <n> -R <host/o/r> --disable-auto` and
@@ -365,9 +368,11 @@ def github_blocks(t, view, head, base, settled=True):
     return blocks
 
 
-def coordination_block(blocks, t):
+def coordination_block(blocks, t, armed=False):
     """Before arming: the PR must be settled, with no claimed item (babysit's
-    coordination.py, run as one more poll)."""
+    coordination.py, run as one more poll). Once auto-merge is armed, settled
+    isn't needed, but a coordination handback, a claimed item or another
+    actor's working signal on the PR still blocks."""
     try:
         coord = c.load_module("vstack_babysit_coordination", c.COORDINATION)
         res = coord.poll(t["pr"], coord.fetch(t["pr"], c.gh_repo(t), gh=c.gh), gh=c.gh)
@@ -378,11 +383,13 @@ def coordination_block(blocks, t):
     if res["handback"]:
         hb = res["handback"]
         blocks.add(hb["reason"], hb["detail"], hb["action"])
-    if not res["settled"]:
+    if not res["settled"] and not armed:
         blocks.add("not_settled", "the PR isn't settled: " + "; ".join(res["settled_reasons"]),
                    "Let babysit keep polling until checks finish and nobody else is working on the PR, "
                    "then rerun the gate.")
     claimed = [f"{i['id']} ({i['claimant']})" for i in res["items"] if i["state"] in ("claimed", "stale-claim")]
+    if armed:
+        claimed += [f"the PR ({r[len('working: '):]})" for r in res["settled_reasons"] if r.startswith("working: ")]
     if claimed:
         blocks.add("claimed_items", f"{len(claimed)} item(s) still claimed by a fixer: {', '.join(claimed[:10])}",
                    "Wait for those fixers to finish (babysit tracks them), then rerun the gate.")
@@ -457,6 +464,7 @@ def poll_merged(t, head, base):
                                          f"{str(now[0])[:12]}, base {base[:12]} -> {str(now[1])[:12]})",
                          "Run the review loop on the new head and base, then the gate again.")
     blocks = github_blocks(t, view, head, base, settled=False)
+    coordination_block(blocks, t, armed=True)
     if blocks.items:
         raise blocks.handback()
     return False

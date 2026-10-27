@@ -36,11 +36,11 @@ handback.
 | `conflict_judgement` | state escalate | A conflict with the base that needs a choice between both sides | Resolve it |
 | `design_change` | state escalate | A reviewer asked for a design change | Decide and reply |
 | `scope_change` | state escalate | A request to change the PR's scope | Decide and reply |
-| `cap_reached` | state | 3 review rounds, 6 fix rounds or 2 hours used | Finish by hand, `init --continue` or `reset` |
+| `cap_reached` | state | 3 review rounds, 6 fix rounds or 2 hours used, or the viewer pushed more than 12 commits in the run | Finish by hand, `init --continue` or `reset` |
 | `oscillation` | state | A fixed finding came back, or a commit put a file back to how it was before a fix | Decide which version is right |
 | `no_progress` | state | A review round didn't reduce the blocker plus major count | Fix or decide the findings by hand |
 | `not_settled` | gate | babysit's coordination says the PR isn't settled: checks still running, a new head since babysit last looked (or babysit never looked), or another actor still working | Let babysit keep polling, then rerun |
-| `claimed_items` | gate | A failing check or thread is claimed by another fixer (or by babysit) and not addressed yet | Wait for them to finish, then rerun |
+| `claimed_items` | gate | A failing check or thread is claimed by another fixer (or by babysit) and not addressed yet; or, while auto-merge is pending, another actor's working signal on the PR (a new 👀, an "on it") | Wait for them to finish, then rerun |
 | `conflicting_fixer` | gate, babysit | A check fixed by one fixer broke again after the other's commit (or after foreign commits twice) | Pick one fixer and pause the other |
 | `stale_claim` | gate, babysit | Another fixer claimed an item and went quiet (2 CI cycles or 3 polls) | Fix it yourself, or rerun babysit asking it to take over |
 | `merge_unsupported_host` | gate | A Bitbucket PR passed every check; autonomous-merge never merges there (no head-pinned merge, no babysit gate, merge permission only known at merge time) | Merge it yourself in Bitbucket |

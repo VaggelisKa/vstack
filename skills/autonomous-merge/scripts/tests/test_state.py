@@ -3,7 +3,9 @@ files: init and resume, review rounds, finding fingerprints, fix rounds, the
 caps (3 review rounds, 6 fix rounds, 2 hours, from the constants only), the
 oscillation guard (a fixed finding coming back, a commit undoing a fix), no
 progress between rounds, security blockers, escalations, stops and --continue,
-the file's checks (caps, started_at, fix_rounds), and its atomic,
+fix rounds and the 12-commit backstop counted by the viewer's GitHub identity
+(a fake gh answers `gh api user` and each commit's author and committer), the
+file's checks (caps, started_at, fix_rounds, viewer_commits), and its atomic,
 symlink-refusing writes.
 
 Run from the repo root: python3 -m unittest discover -s skills/autonomous-merge/scripts/tests
@@ -15,8 +17,8 @@ import os
 import pathlib
 import unittest
 
-from helpers import (BABYSIT_WRITER, GIT_ENV, REVIEW_WRITER, SCRIPTS, SHIP, babysit, commit_all, finding, pr_repo,
-                     review, run, tmpdir, write_result)
+from helpers import (BABYSIT_WRITER, GIT_ENV, REVIEW_WRITER, SCRIPTS, SHIP, Stubs, babysit, commit_all, finding,
+                     gh_rule, pr_repo, review, run, tmpdir, write_result)
 
 spec = importlib.util.spec_from_file_location("am_state", SCRIPTS / "state.py")
 state = importlib.util.module_from_spec(spec)
@@ -37,9 +39,20 @@ class State(unittest.TestCase):
         self.vstack = os.path.join(self.gitdir, "vstack")
         self.path = os.path.join(self.vstack, "42", "autonomous-merge.json")
         self.n = 0
+        self.stubs = Stubs(tools=("gh",))
+        self.logins = {}
+
+    def gh_rules(self):
+        """gh api user is "me"; a commit is authored by "me" unless self.logins says (author, committer)."""
+        def who(author, committer):
+            return {"author": {"login": author}, "committer": {"login": committer}}
+        return [gh_rule(["api --hostname github.com user"], {"login": "me"}),
+                *[gh_rule([f"repos/o/r/commits/{sha}"], who(*ac)) for sha, ac in self.logins.items()],
+                gh_rule(["repos/o/r/commits/"], who("me", "web-flow"))]
 
     def st(self, *args, code=0, cwd=None):
-        rc, data, out, err = run("state.py", *args, "--pr", 42, cwd=cwd or self.repo, env=GIT_ENV)
+        self.stubs.set(self.gh_rules())
+        rc, data, out, err = run("state.py", *args, "--pr", 42, cwd=cwd or self.repo, env=self.stubs.env())
         self.assertEqual(rc, code, (out, err))
         return data if data is not None else err
 
@@ -295,11 +308,42 @@ class State(unittest.TestCase):
         self.commit(marker="vstack:autonomous-merge:0123456789abcdef")
         self.commit(marker="see vstack:babysit:check:test")
         own = self.commit(marker="vstack:babysit:check:test\nvstack:babysit:thread:PRRT_1")
+        forged = self.commit(marker="vstack:babysit:check:test")
+        self.logins[forged] = ("mallory", "web-flow")
+        committed = self.commit(marker="vstack:babysit:check:test")
+        self.logins[committed] = ("mallory", "me")
         head = self.commit()
         write_result(BABYSIT_WRITER, self.repo, 42, head, self.base, babysit())
         out = self.st("record-babysit", "--head-sha", head, "--base-sha", self.base)
-        self.assertEqual((out["new_commits"], out["babysit_commits"], out["fix_rounds"]), (5, 1, 1))
-        self.assertEqual(self.load()["fixes"][-1]["commits"], [own])
+        self.assertEqual((out["new_commits"], out["babysit_commits"], out["your_commits"], out["fix_rounds"]),
+                         (7, 2, 6, 2))
+        self.assertEqual(self.load()["fixes"][-1]["commits"], [own, committed])
+        calls = [c["argv"] for c in self.stubs.calls("gh")]
+        self.assertEqual(calls[0], ["api", "--hostname", "github.com", "user"])
+        self.assertEqual(len(calls), 8)
+        self.assertTrue(all(c[:3] == ["api", "--hostname", "github.com"] and c[3].startswith("repos/o/r/commits/")
+                            for c in calls[1:]), calls)
+        self.assertNotIn(forged, self.load()["viewer_commits"])
+
+    def test_viewer_commit_backstop(self):
+        self.st("init")
+        self.reviewed(self.head)
+        for i in range(3):
+            self.logins[self.commit()] = ("mallory", "web-flow")
+        heads = [self.commit() for _ in range(12)]
+        write_result(BABYSIT_WRITER, self.repo, 42, heads[-1], self.base, babysit())
+        out = self.st("record-babysit", "--head-sha", heads[-1], "--base-sha", self.base)
+        self.assertEqual((out["new_commits"], out["your_commits"], out["viewer_commits"], out["fix_rounds"]),
+                         (15, 12, 12, 0))
+        self.assertIn("backstop is 12", self.handback("cap_reached", "check", "--before", "fix")["detail"])
+        self.st("init", "--continue")
+        self.handback("cap_reached", "fix-round", "--head-sha", self.commit())
+        self.assertEqual(len(self.load()["viewer_commits"]), 13)
+        self.st("init", "--continue")
+        head = self.commit()
+        write_result(REVIEW_WRITER, self.repo, 42, head, self.base, SHIP)
+        data = self.handback("cap_reached", "record-review", "--head-sha", head, "--base-sha", self.base)
+        self.assertIn("pushed 14 commits", data["detail"])
 
     def test_record_babysit(self):
         self.st("init")
@@ -362,7 +406,8 @@ class State(unittest.TestCase):
                          "skill": lambda s: s.update(skill="babysit"),
                          "schema": lambda s: s.update(schema_version=2),
                          "missing": lambda s: s.pop("findings"),
-                         "head": lambda s: s.update(last_head="HEAD")}.items():
+                         "head": lambda s: s.update(last_head="HEAD"),
+                         "viewer commits": lambda s: s.update(viewer_commits=["HEAD"])}.items():
             with self.subTest(name):
                 self.st("reset")
                 self.st("init")

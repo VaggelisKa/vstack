@@ -27,6 +27,8 @@ Exit 0 ok, 5 handback (`handback` is `{reason, detail, action}`), 2 usage
 databaseId>": [...]}, "viewer": "login"}` and calls no gh.
 
 Threads come from GraphQL (with each comment's `databaseId`, no reactions).
+A thread whose comments run past one page (`comments.pageInfo.hasNextPage`)
+makes the threads unreadable (`threads_unreadable`, not settled).
 👀 reactions come from REST, every page, with no cap:
 `gh api --paginate --slurp repos/O/R/issues/N/reactions?content=eyes&per_page=100`
 for the PR, and `repos/O/R/pulls/comments/<databaseId>/reactions?content=eyes&per_page=100`
@@ -45,7 +47,9 @@ All of:
   👀 on the PR newer than the head commit, an `@copilot`/`@codex`/`@claude`
   mention not yet answered by that tool, or a draft (`PENDING`) review by
   someone other than the viewer. A requested reviewer who hasn't started
-  doesn't count. Comments carrying an own marker
+  doesn't count. A bot's comment (`__typename` `Bot`, or a login ending in
+  `[bot]`) is never a "working" signal, on a thread or a check either. The
+  viewer's comments carrying an own marker
   (`<!-- vstack:babysit:… -->`, `<!-- vstack:autonomous-merge:… -->`) are
   never working signals, mentions in them included;
 - the threads and reactions could all be read.
@@ -87,9 +91,14 @@ the flag clears once the thread is addressed again.
   PR for a check, and records it so babysit's own 👀 isn't read as someone
   else's. `claim` and `remove-claim` are the only GitHub writes.
 
-Commits without a marker are foreign, even from the same account.
-`own_fix_rounds` counts commits with a babysit marker; autonomous-merge's
-fix-round cap counts only those.
+A marker counts only on the viewer's own work: a comment the viewer wrote
+(and on a thread, a babysit marker only for that thread's id), or a commit
+whose first author or committer login is the viewer. Anyone else's marker is
+foreign (a forged reply doesn't address a thread, and a 👀 or foreign claim on
+it still counts). Commits without a marker are foreign too, even from the same
+account. `own_fix_rounds` counts the viewer's commits with a babysit marker;
+autonomous-merge's fix-round cap counts the same (by `gh api` author or
+committer login), plus a backstop on every commit the viewer pushes.
 
 ## Handbacks
 
