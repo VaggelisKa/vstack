@@ -83,6 +83,8 @@ result for the PR already exists; only the user decides to start fresh.)
       plain `vstack:autonomous-merge:<fp>` line per finding, so babysit's
       coordination sees it as ours), run the repo's tests, lint and type
       checks, push to the PR's branch (never `--force`), then
+      `python3 -I "$SKILL_DIR/../babysit/scripts/coordination.py" pushed --pr N --sha <new head>`
+      (so coordination reads the commit as ours even if GitHub links no account to its author) and
       `state.py fix-round --pr N --head-sha <new head> --fixed <fp>…`.
 
    state.py hands back by itself on 3 review rounds, 6 fix rounds or 2 hours;

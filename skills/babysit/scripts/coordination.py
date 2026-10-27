@@ -6,6 +6,7 @@ Usage: python3 -I coordination.py poll --pr N [-R [HOST/]OWNER/REPO] [--input FI
        python3 -I coordination.py claim --pr N --item ID [-R [HOST/]OWNER/REPO]
        python3 -I coordination.py remove-claim --pr N --item ID [-R [HOST/]OWNER/REPO]
        python3 -I coordination.py markers --item ID
+       python3 -I coordination.py pushed --pr N --sha SHA
 
 poll reads the PR with gh (`gh pr view --json headRefOid,commits,...`, the
 review threads over GraphQL with up to 50 comments each, and every page of the
@@ -45,8 +46,10 @@ review fixes use `vstack:autonomous-merge:<fingerprint>`, also own). A marker
 counts only on the viewer's own work: a comment by the viewer (a babysit marker
 only for the item being evaluated), or a commit whose first author or
 committer is the viewer, or whose author has no linked account (an unlinked
-email: it may be the viewer's, so it fails closed as own, never foreign);
-anyone else's marker is foreign. gh pr view's commits have no committer, so
+email) and that is tied to this clone: its SHA was recorded with `pushed`, or
+its author email is this repo's `git config user.email` and the commit is in
+the local object store. Any other unlinked marked commit, and anyone else's
+marker, is foreign. gh pr view's commits have no committer, so
 poll reads it with `gh api repos/O/R/commits/<sha>` for a marked commit whose
 first author is someone else (unreadable stays foreign); an --input bundle may
 give commits a "committer": {"login"} itself. own_fix_rounds counts the own
@@ -61,10 +64,11 @@ resolved and is reopened after another fixer replied in it hands back
 `escalated`, and the item keeps `escalate: true` (never actionable) until it is
 addressed again.
 
-State is per clone: claims and self_subjects (the subjects of babysit's own
-👀) live under the git common dir, so run every poll, claim and remove-claim
-of a PR from the same clone, or a worktree of it (worktrees share the common
-dir). Run from another clone, babysit's own 👀 reads as someone else's.
+State is per clone: claims, self_subjects (the subjects of babysit's own
+👀) and pushed live under the git common dir, so run every poll, claim,
+remove-claim and pushed of a PR from the same clone, or a worktree of it
+(worktrees share the common dir). Run from another clone, babysit's own 👀
+and unlinked marked commits read as someone else's.
 
 claim adds a 👀 reaction (content=eyes) to the thread's first comment, or to
 the PR for a check, and records it as babysit's own; it posts nothing else.
@@ -73,7 +77,10 @@ lost is listed in lost_claims. remove-claim deletes the viewer's own 👀 on the
 item's subject (REST DELETE .../reactions/<id>; kept, with only the record
 dropped, while another check claim still uses the PR's 👀) and forgets the
 claim. claim and remove-claim are the only GitHub writes.
-markers prints the comment and commit markers for an item.
+markers prints the comment and commit markers for an item. pushed records the
+SHA (40 or 64 hex) of an own fix commit just pushed in the state's `pushed`
+list (the last MAX_PUSHED kept), so poll reads it as own even when GitHub
+links no account to its author; it touches nothing on GitHub.
 
 Never prints a token. Exits 0 ok, 5 handback, 2 usage (also -h, or a state
 file that fails its checks), 4 internal error (after printing an `unknown`
@@ -97,6 +104,7 @@ STATE_FILE = "coordination.json"
 STALE_CYCLES = 2
 STALE_POLLS = 3
 MAX_TRANSITIONS = 20
+MAX_PUSHED = 500
 MAX_BYTES = 4 * 1024 * 1024
 MAX_PR = 2**31 - 1
 PR_ARG = re.compile(r"[1-9][0-9]{0,9}")
@@ -394,7 +402,7 @@ def pr_dir(top, pr, create):
 
 def new_state(pr):
     return {"schema_version": SCHEMA_VERSION, "pr": pr, "last_head": None, "polls": 0, "items": {}, "claims": {},
-            "self_subjects": [], "working": {}, "files": {}}
+            "self_subjects": [], "working": {}, "files": {}, "pushed": []}
 
 
 def problems(s, pr):
@@ -409,6 +417,8 @@ def problems(s, pr):
         errs.append("last_head: must be a SHA or null")
     if not errs and not all(isinstance(v, dict) for v in s["items"].values()):
         errs.append("items: must map ids to objects")
+    if not errs and not all(isinstance(x, str) and SHA.fullmatch(x) for x in s["pushed"]):
+        errs.append("pushed: must list commit SHAs")
     return errs
 
 
@@ -436,6 +446,8 @@ def load(top, pr):
         s = json.loads(data.decode("utf-8")) if len(data) <= MAX_BYTES else None
     except (ValueError, RecursionError):
         s = None
+    if isinstance(s, dict):
+        s.setdefault("pushed", [])  # optional in older files
     errs = problems(s, pr) if s is not None else ["not valid JSON, or too big"]
     if errs:
         raise Usage(f"{shown} fails its checks ({'; '.join(errs[:5])}); delete it to start over")
@@ -483,15 +495,50 @@ def commit_logins(c):
     return {x for x in (commit_author(c), committer.get("login")) if x}
 
 
-def parse_commits(raw, viewer=None):
-    """Commits with a marker are own when the viewer wrote or committed them, or when
-    no account is linked to the author (fail closed: it may be the viewer's)."""
+def local_git(*args):
+    """A git command's CompletedProcess in the current clone, or None if git can't run."""
+    try:
+        return subprocess.run(["git", *args], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                              env={**os.environ, "LC_ALL": "C"})
+    except OSError:
+        return None
+
+
+def tied_to_clone(pushed):
+    """tied(c) for parse_commits: is commit c, whose author has no linked account, this clone's?
+    Yes when its SHA is in `pushed`, or when its first author email is this repo's
+    `git config user.email` and the commit is in the local object store."""
+    pushed, email = set(pushed or ()), []
+
+    def tied(c):
+        oid = c.get("oid")
+        if oid in pushed:
+            return True
+        if not SHA.fullmatch(str(oid)):
+            return False
+        if not email:
+            r = local_git("config", "--get", "user.email")
+            email.append(r.stdout.strip().lower() if r is not None and r.returncode == 0 else "")
+        authors = [a for a in c.get("authors") or [] if isinstance(a, dict)]
+        theirs = str((authors[0].get("email") if authors else None) or "").strip().lower()
+        if not email[0] or theirs != email[0]:
+            return False
+        r = local_git("cat-file", "-e", f"{oid}^{{commit}}")
+        return r is not None and r.returncode == 0
+
+    return tied
+
+
+def parse_commits(raw, viewer=None, tied=None):
+    """Commits with a marker are own when the viewer wrote or committed them, or when no
+    account is linked to the author and tied(commit) says it's this clone's; else foreign."""
     out = []
     for c in raw if isinstance(raw, list) else []:
         if not isinstance(c, dict) or not isinstance(c.get("oid"), str):
             continue
         msg = commit_message(c)
-        mine = bool(viewer) and (viewer in commit_logins(c) or commit_author(c) is None)
+        mine = bool(viewer) and COMMIT_MARKER.search(msg) is not None and (
+            viewer in commit_logins(c) or (commit_author(c) is None and tied is not None and tied(c)))
         marks = COMMIT_MARKER.findall(msg) if mine else []
         out.append({"oid": c["oid"], "message": msg, "date": c.get("committedDate"),
                     "login": next((a.get("login") for a in c.get("authors") or [] if isinstance(a, dict)
@@ -713,7 +760,7 @@ def evaluate(b, st, take_over=False, gh=None):
     head = view.get("headRefOid")
     if not isinstance(head, str) or not head:
         raise Internal("gh gave no head SHA")
-    commits = parse_commits(view.get("commits"), b.get("viewer"))
+    commits = parse_commits(view.get("commits"), b.get("viewer"), tied_to_clone(st["pushed"]))
     index = {k["oid"]: i for i, k in enumerate(commits)}
     prev_head = st["last_head"]
     checks = check_states(view.get("statusCheckRollup"))
@@ -896,6 +943,16 @@ def remove_claim(pr, item, repo_arg=None, gh=default_gh):
     return {"removed": item, "endpoint": endpoint, "deleted_reactions": deleted, "kept_for": kept_for}
 
 
+def record_pushed(pr, sha):
+    """Record an own fix commit just pushed, so poll reads it as own even with no account linked to its author."""
+    top = common_dir()
+    st = load(top, pr)
+    if sha not in st["pushed"]:
+        st["pushed"] = (st["pushed"] + [sha])[-MAX_PUSHED:]
+    save(top, st)
+    return {"pr": pr, "pushed": sha, "recorded": len(st["pushed"])}
+
+
 def read_bundle(src):
     try:
         if src == "-":
@@ -937,6 +994,9 @@ def parse_args(argv):
         p.add_argument("-R", "--repo")
     p = sub.add_parser("markers", add_help=False)
     p.add_argument("--item", required=True)
+    p = sub.add_parser("pushed", add_help=False)
+    p.add_argument("--pr", required=True)
+    p.add_argument("--sha", required=True)
     try:
         a = ap.parse_args(argv)
     except SystemExit:
@@ -949,6 +1009,8 @@ def parse_args(argv):
         raise Usage("--item must be check:<name> or thread:<threadId>")
     if getattr(a, "repo", None) is not None and not REPO_ARG.fullmatch(a.repo):
         raise Usage("-R must be OWNER/REPO or HOST/OWNER/REPO")
+    if getattr(a, "sha", None) is not None and not SHA.fullmatch(a.sha):
+        raise Usage("--sha must be a full commit SHA: 40 or 64 lowercase hex digits")
     return a
 
 
@@ -960,6 +1022,8 @@ def main(argv):
         return claim(a.pr, a.item, a.repo), OK
     if a.cmd == "remove-claim":
         return remove_claim(a.pr, a.item, a.repo), OK
+    if a.cmd == "pushed":
+        return record_pushed(a.pr, a.sha), OK
     top = common_dir()
     bundle = read_bundle(a.input) if a.input else fetch(a.pr, a.repo)
     out = poll(a.pr, bundle, a.take_over, None if a.input else default_gh, top)

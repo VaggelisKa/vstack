@@ -9,6 +9,7 @@ coordination.py poll --pr N [-R [HOST/]OWNER/REPO] [--input FILE|-] [--take-over
 coordination.py claim --pr N --item ID [-R ...]
 coordination.py remove-claim --pr N --item ID [-R ...]
 coordination.py markers --item ID
+coordination.py pushed --pr N --sha SHA
 ```
 
 `poll` prints:
@@ -100,10 +101,18 @@ the flag clears once the thread is addressed again.
 A marker counts only on the viewer's own work: a comment the viewer wrote
 (and on a thread, a babysit marker only for that thread's id), or a commit
 whose first author or committer login is the viewer, or whose author has no
-linked account (an unlinked email; it might be the viewer's, so it fails
-closed: own, never foreign). Anyone else's marker is foreign (a forged reply
-doesn't address a thread, and a 👀 or foreign claim on it still counts).
+linked account (an unlinked email) and that is tied to this clone: its SHA was
+recorded with `pushed`, or its author email is this repo's `git config
+user.email` and the commit is in the local object store. Any other unlinked
+marked commit is foreign (another clone's or user's fixer can't pass as own).
+Anyone else's marker is foreign (a forged reply doesn't address a thread,
+and a 👀 or foreign claim on it still counts).
 Commits without a marker are foreign too, even from the same account.
+
+`pushed --pr N --sha SHA` (a full 40 or 64 hex SHA) adds the SHA of an own fix
+commit just pushed to the state file's `pushed` list (last 500 kept; atomic
+write, nothing on GitHub). Run it from the clone that pushed, right after each
+push of your own marked fix commit.
 
 `gh pr view --json commits` has no committer. `poll` reads it with
 `gh api repos/O/R/commits/<sha>` only where it decides: a marked commit whose
@@ -111,7 +120,7 @@ first author is someone else. If that read fails the commit stays foreign. An
 `--input` bundle may put `"committer": {"login": ...}` on a commit itself.
 
 `own_fix_rounds` counts the own commits with a babysit marker.
-autonomous-merge's fix-round cap counts the same by `gh api` identity (author
+autonomous-merge's fix-round cap counts babysit-marked commits by its own `gh api` identity rule (author
 or committer login, or an author or committer email that is the viewer's
 noreply address or in `gh api user/emails`; a commit with no linked author or
 committer counts too), plus a backstop on every such commit, marked or not.
@@ -131,13 +140,15 @@ take over.
 ## State
 
 `<git-common-dir>/vstack/<pr>/coordination.json`, written atomically, never
-through a symlink: last head, poll count, babysit's claims, and per item its
+through a symlink: last head, poll count, babysit's claims, the `pushed` SHAs
+(optional in older files, read as empty), and per item its
 state, `claimed_since_head`, `ci_cycles_completed_since_claim`,
 `polls_without_progress` and transitions (with whether the commits behind each
 were own or foreign). Delete it to start over.
 
-The state is per clone. `claims` and `self_subjects` (the subjects of
-babysit's own 👀, so they aren't read as someone else's) live under the git
-common dir, so run every `poll`, `claim` and `remove-claim` for a PR from the
-same clone, or a worktree of it (worktrees share the common dir). From another
-clone, babysit's own 👀 looks like another fixer's claim.
+The state is per clone. `claims`, `self_subjects` (the subjects of
+babysit's own 👀, so they aren't read as someone else's) and `pushed` live
+under the git common dir, so run every `poll`, `claim`, `remove-claim` and
+`pushed` for a PR from the same clone, or a worktree of it (worktrees share the
+common dir). From another clone, babysit's own 👀 looks like another fixer's
+claim, and its unlinked marked commits look like another fixer's commits.

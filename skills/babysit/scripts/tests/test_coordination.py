@@ -1,13 +1,15 @@
 """Tests for coordination.py against a fake gh on PATH and a real temp repo:
 settled and not settled, each item state for checks and threads, own vs
 foreign by marker and by who wrote it (forged markers, a marked commit with no
-linked author, a committer read over REST), bots' "working" comments ignored
+linked author: own only when recorded with `pushed` or by the local email and
+object store, a committer read over REST, two clones' unlinked fixers
+conflicting), bots' "working" comments ignored
 but coding agents' claiming, newer 👀 after the author's or viewer's answer,
 👀 on every thread comment, @mentions in thread replies, a thread with a second page of comments unreadable, who may
 answer a thread, 👀 read over REST across pages,
 stale claims by CI cycles and by quiet polls, take-over, conflicting_fixer, a
 reopened thread escalating, a head moved by update-branch, the claim and
-remove-claim subcommands' exact gh calls, --input, the state file, usage
+remove-claim subcommands' exact gh calls, the pushed subcommand, --input, the state file, usage
 errors and no token in output.
 
 Run from the repo root: python3 -m unittest discover -s skills/babysit/scripts/tests
@@ -247,18 +249,117 @@ class Coordination(unittest.TestCase):
         out = self.settle()
         self.assertEqual((self.states(out)["check:lint"], out["own_fix_rounds"]), (("claimed", "mallory", False), 0))
 
-    def test_marked_commits_with_no_linked_author_are_not_foreign(self):
+    def unlinked(self, msg, email=None, real_file=None):
+        """Push a commit whose author has no linked account (gh gives a null login and the email)."""
+        sha = self.push(msg, login=None, real_file=real_file)
+        self.commits[-1]["authors"] = [{"login": None, "email": email}] if email else []
+        return sha
+
+    def test_unlinked_marked_commit_recorded_with_pushed_is_own(self):
         self.rollup = [check("lint", conclusion="FAILURE")]
         self.settle()
-        for login in ("", None):
-            self.push("Fix lint\n\nvstack:babysit:check:lint", login=login)
-        self.push("Fix lint\n\nvstack:babysit:check:lint")
-        self.commits[-1]["authors"] = []
+        sha = self.unlinked("Fix lint\n\nvstack:babysit:check:lint", email="laptop@example.com")
+        rc, out, err = self.cmd("pushed", "--pr", 42, "--sha", sha)
+        self.assertEqual((rc, out), (0, {"pr": 42, "pushed": sha, "recorded": 1}), err)
         out = self.settle()
-        self.assertEqual((self.states(out)["check:lint"], out["own_fix_rounds"]), (("open", None, False), 3))
-        self.push("Tidy lint config", login="")
+        self.assertEqual((self.states(out)["check:lint"], out["own_fix_rounds"]), (("open", None, False), 1))
+        self.assertEqual(self.state_file()["pushed"], [sha])
+
+    def test_unlinked_marked_commit_by_local_email_and_object_is_own(self):
+        git(self.repo, "config", "user.email", "Me@Example.com")
+        self.rollup = [check("lint", conclusion="FAILURE")]
+        self.settle()
+        self.unlinked("Fix lint\n\nvstack:babysit:check:lint", email="me@example.com", real_file="src/lint.py")
+        out = self.settle()
+        self.assertEqual((self.states(out)["check:lint"], out["own_fix_rounds"]), (("open", None, False), 1))
+        self.assertEqual(self.state_file()["pushed"], [])
+
+    def test_unlinked_marked_commit_tied_to_neither_is_foreign(self):
+        git(self.repo, "config", "user.email", "me@example.com")
+        cases = [("the local email, but not in the local object store", "me@example.com", None),
+                 ("in the local object store, but another email", "them@example.com", "src/lint.py"),
+                 ("no email at all", None, "src/lint.py")]
+        for why, email, real_file in cases:
+            with self.subTest(why):
+                self.setUp()
+                git(self.repo, "config", "user.email", "me@example.com")
+                self.rollup = [check("lint", conclusion="FAILURE")]
+                self.settle()
+                self.unlinked("Fix lint\n\nvstack:babysit:check:lint", email=email, real_file=real_file)
+                out = self.settle()
+                self.assertEqual((self.states(out)["check:lint"], out["own_fix_rounds"]),
+                                 (("claimed", "someone", False), 0))
+        self.unlinked("Tidy lint config", email="me@example.com", real_file="src/lint.py")
         self.assertEqual(self.states(self.settle())["check:lint"], ("claimed", "someone", False))
         self.assertEqual([a for a in self.gh.calls() if "--method" in a], [])
+
+    def test_unlinked_marked_commit_with_no_viewer_is_foreign(self):
+        sha = self.unlinked("Fix lint\n\nvstack:babysit:check:lint", email="x@example.com")
+        self.cmd("pushed", "--pr", 42, "--sha", sha)
+        bundle = {"view": {"headRefOid": sha, "commits": self.commits, "statusCheckRollup": [check("test")],
+                           "comments": [], "reviews": []}, "threads": [], "pr_reactions": [], "comment_reactions": {}}
+        rc, out, err = self.cmd("poll", "--pr", 42, "--input", "-", stdin=json.dumps(bundle))
+        self.assertEqual((rc, out["own_fix_rounds"]), (0, 0), err)
+
+    def test_pushed_subcommand(self):
+        sha1, sha256 = "a" * 40, "b" * 64
+        for sha in ("a" * 39, "a" * 41, "a" * 63, "A" * 40, "g" * 40, "--" + "a" * 38, f" {sha1}", ""):
+            with self.subTest(sha):
+                self.assertEqual(self.cmd("pushed", "--pr", 42, "--sha", sha)[0], 2)
+        for args in (["pushed", "--pr", 42], ["pushed", "--sha", sha1], ["pushed", "--pr", "0", "--sha", sha1]):
+            with self.subTest(args):
+                self.assertEqual(self.cmd(*args)[0], 2)
+        self.assertFalse(os.path.exists(os.path.join(os.path.realpath(self.repo / ".git"), "vstack")))
+        self.assertEqual(self.cmd("pushed", "--pr", 42, "--sha", sha1, cwd=tmpdir())[0], 2)
+        self.assertEqual(self.cmd("pushed", "--pr", 42, "--sha", sha1)[:2],
+                         (0, {"pr": 42, "pushed": sha1, "recorded": 1}))
+        self.assertEqual(self.cmd("pushed", "--pr", 42, "--sha", sha256)[1]["recorded"], 2)
+        self.assertEqual(self.cmd("pushed", "--pr", 42, "--sha", sha1)[1]["recorded"], 2)
+        self.settle()
+        st = self.state_file()
+        self.assertEqual((st["pushed"], st["polls"]), ([sha1, sha256], 2))
+        d = os.path.join(os.path.realpath(self.repo / ".git"), "vstack", "42")
+        self.assertEqual(sorted(os.listdir(d)), ["coordination.json"])
+        self.assertEqual(self.gh.calls()[0][:2], ["pr", "view"])
+        with open(os.path.join(d, "coordination.json"), "w") as f:
+            json.dump({**st, "pushed": ["not a sha"]}, f)
+        rc, _, err = self.cmd("pushed", "--pr", 42, "--sha", sha1)
+        self.assertEqual(rc, 2)
+        self.assertIn("pushed: must list commit SHAs", err)
+        del st["pushed"]
+        with open(os.path.join(d, "coordination.json"), "w") as f:
+            json.dump(st, f)
+        self.assertEqual(self.poll()["settled"], True)
+        self.assertEqual(self.state_file()["pushed"], [])
+
+    def test_two_instances_unlinked_fixers_undoing_each_other(self):
+        """Instance A (this clone, the viewer) and instance B (another clone, another user) both push
+        babysit-marked fixes for check:lint from emails GitHub links to no account."""
+        git(self.repo, "config", "user.email", "a@example.com")
+        other = tmpdir() / "other"
+        git(self.repo, "clone", "-q", str(self.repo), str(other))
+        git(other, "config", "user.email", "b@example.com")
+        self.rollup = [check("lint", conclusion="FAILURE")]
+        self.settle()
+        ours = self.unlinked("Fix lint\n\nvstack:babysit:check:lint", email="a@example.com", real_file="src/lint.py")
+        self.assertEqual(self.cmd("pushed", "--pr", 42, "--sha", ours)[0], 0)
+        self.rollup = [check("lint")]
+        out = self.settle()
+        self.assertEqual((self.states(out)["check:lint"], out["own_fix_rounds"]), (("addressed", None, True), 1))
+        (other / "src/lint.py").write_text("b\n")
+        theirs = commit_all(other, "Fix lint\n\nvstack:babysit:check:lint")
+        self.assertNotEqual(git(self.repo, "cat-file", "-e", f"{theirs}^{{commit}}", check=False).returncode, 0)
+        self.n += 1
+        self.commits.append({**commit(theirs, "Fix lint\n\nvstack:babysit:check:lint", None, self.n),
+                             "authors": [{"login": None, "email": "b@example.com"}]})
+        self.headsha = theirs
+        self.rollup = [check("lint", conclusion="FAILURE")]
+        out = self.poll(code=5)
+        self.assertEqual((out["handback"]["reason"], out["own_fix_rounds"]), ("conflicting_fixer", 1))
+        self.assertIn("check:lint", out["handback"]["detail"])
+        item = self.state_file()["items"]["check:lint"]
+        self.assertEqual((item["addressed_by"], item["transitions"][-1]["from"], item["transitions"][-1]["to"],
+                          item["transitions"][-1]["by"]), ("own", "addressed", "open", "foreign"))
 
     def test_committer_of_a_marked_commit_read_over_rest(self):
         self.rollup = [check("lint", conclusion="FAILURE")]

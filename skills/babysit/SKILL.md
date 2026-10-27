@@ -148,7 +148,9 @@ whether the PR is `settled`, each failing check and thread as `open`,
   (adds 👀, nothing else). Mark the work: `<!-- vstack:babysit:<id> -->` in each
   reply about it, and a plain `vstack:babysit:<id>` line per item in the fix's
   commit message (`coordination.py markers --item <id>` prints both). Unmarked
-  work counts as another fixer's.
+  work counts as another fixer's. Right after each push of your own fix
+  commit, record it: `coordination.py pushed --pr <number> --sha <its SHA>`
+  (else a commit GitHub links to no account reads as another fixer's).
 - For each id in `lost_claims` (another fixer claimed it first), run
   `coordination.py remove-claim --pr <number> --item <id>` (removes only your
   own 👀) and leave the item alone.
