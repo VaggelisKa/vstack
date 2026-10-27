@@ -10,6 +10,7 @@ there are no symlinks; the manifests just point at the repo root.
 .claude-plugin/marketplace.json   # Claude Code marketplace, one entry, source "./"
 .codex-plugin/plugin.json         # Codex plugin manifest (name, version, metadata)
 plugin.json                       # Antigravity plugin manifest (name and description only)
+gemini-extension.json             # Gemini CLI extension manifest (name, version, description; skills/ is scanned automatically)
 .agents/plugins/marketplace.json  # Codex marketplace, one entry, source.path "./"
 skills/
   <skill-name>/
@@ -48,4 +49,4 @@ separately as a personal skill (for Claude Code, copy it to
 
 ## Releasing
 
-Codex caches installs by the `version` in `.codex-plugin/plugin.json`, so bump it when releasing changes. If an update doesn't show up, remove and re-add the plugin (`codex plugin remove vstack@vaggeliska`, then `codex plugin add vstack@vaggeliska`).
+Codex caches installs by the `version` in `.codex-plugin/plugin.json`, so bump it when releasing changes, and keep `gemini-extension.json` at the same version (Gemini CLI updates by comparing it). If an update doesn't show up, remove and re-add the plugin (`codex plugin remove vstack@vaggeliska`, then `codex plugin add vstack@vaggeliska`).
