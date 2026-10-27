@@ -79,6 +79,29 @@ def clean(arg):
     if os.path.realpath(os.path.dirname(path)) != root():
         fail("refusing: parent is not the repo toplevel (or the current directory outside a repo)")
 
+    def make_writable(d):
+        # fchmod on an fd opened with O_NOFOLLOW|O_DIRECTORY, so a symlink swapped
+        # in meanwhile is never followed. A directory we can't open (mode 000)
+        # gets a lstat-checked chmod instead.
+        try:
+            fd = os.open(d, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY)
+        except PermissionError:
+            try:
+                st = os.lstat(d)
+                if stat.S_ISDIR(st.st_mode):
+                    os.chmod(d, stat.S_IMODE(st.st_mode) | stat.S_IRWXU)
+            except OSError:
+                pass
+            return
+        except OSError:
+            return
+        try:
+            os.fchmod(fd, stat.S_IMODE(os.fstat(fd).st_mode) | stat.S_IRWXU)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+
     tried = set()
 
     def retry(func, p, _):
@@ -91,12 +114,7 @@ def clean(arg):
         tried.add(p)
         for d in (os.path.dirname(p), p):
             if d == path or d.startswith(path + os.sep):
-                try:
-                    st = os.lstat(d)
-                    if not stat.S_ISLNK(st.st_mode):
-                        os.chmod(d, stat.S_IMODE(st.st_mode) | stat.S_IRWXU)
-                except OSError:
-                    pass
+                make_writable(d)
         try:
             if func in (os.rmdir, os.unlink, os.remove):
                 func(p)

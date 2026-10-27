@@ -136,8 +136,8 @@ diff, anything you were pointed to); leave it empty if you read everything.
 Fill these honestly: a gap you report gets re-checked, a gap you hide doesn't.
 
 Completion: set done, the last field, to exactly "REVIEWED {{id}}", and only
-once you have worked through every file in your list (or skipped as your lens
-allows, with a "skipped: <reason>" note). If you could not read
+once you have worked through every file in your list (or, for ui-live only,
+skipped with a "skipped: <reason>" note). If you could not read
 the diff or your files, list them in coverage.unreadable, report no findings
 about what you could not read, and leave done empty. Never invent findings.
 
@@ -344,9 +344,9 @@ python3 -I "$C" skeptic --id C2 - < "$SESSION/C2.json"   # or pipe a subagent's 
 
 It prints one line, `{"status": ..., "reasons": [...], "missing": [...]}`, and
 exits 0 `ok`, 1 `partial` (valid and finished, but the reviewer reported
-partial coverage: use it, don't retry; a coverage note starting `skipped:`
-means skipped instead, see SKILL.md), 3 `retry` (steps 1-4 failed: re-run
-once, inline), 2 (usage error) or 4 (internal error: the exception type on
+partial coverage: use it, don't retry; for a ui-live reviewer only, a
+coverage note starting `skipped:` means skipped instead, see SKILL.md), 3
+`retry` (steps 1-4 failed: re-run once, inline), 2 (usage error) or 4 (internal error: the exception type on
 stderr, nothing on stdout). Any exit but 0, 1 or 3, or the script not
 running, is a coordinator error: treat it as `retry` (one inline re-run, then
 no verdict), never as covered, and report it as "check failed (exit N)". The

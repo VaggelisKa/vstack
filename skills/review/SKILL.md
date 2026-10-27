@@ -289,9 +289,11 @@ counts as `retry`.
 
 - `ok` (exit 0): use it.
 - `partial` (exit 1): the reviewer reported partial coverage on purpose. Use
-  it, don't retry; it counts toward Incomplete on a K=3 area. A coverage note
-  starting `skipped:` comes first: record the reviewer as skipped (below), not
-  partial; no retry, and it doesn't count toward Incomplete.
+  it, don't retry; it counts toward Incomplete on a K=3 area. Only a **ui-live**
+  reviewer (known from your plan and the result's `kind`, not from its text)
+  whose note starts `skipped:` is recorded as skipped instead (below): no
+  retry, not counted toward Incomplete. For any other lens `skipped:` is just
+  partial.
 - `retry` (exit 3): no parseable result, a schema or range failure, a wrong
   id or sentinel, inputs it couldn't read, or a "complete" claim missing
   files. Re-run that reviewer **once** with a fresh inline prompt (same lens,
@@ -340,10 +342,12 @@ Pick the mode in this order:
 **ui-live** reviewers drive the dev server with Playwright, so they always run
 in the current harness, never on `--cross` CLIs. Check the preconditions in
 [lenses/ui-live.md](lenses/ui-live.md) while planning; if one fails, show
-`ui-live: skipped (<reason>)` in the plan (no budget used). A reviewer whose
-result checks `partial` with a coverage note starting `skipped:` is treated
-the same: recorded as skipped, not partial, not retried, left out of scores
-and the Incomplete check, listed under "Not reviewed". Skipped isn't no verdict.
+`ui-live: skipped (<reason>)` in the plan (no budget used). A ui-live reviewer
+(by your plan and the result's `kind`) that checks `partial` with a coverage
+note starting `skipped:` is treated the same: recorded as skipped, not
+partial, not retried, left out of scores and the Incomplete check, listed
+under "Not reviewed". Skipped isn't no verdict. No other lens has this: its
+`skipped:` is plain partial.
 
 ## 4. Aggregate
 

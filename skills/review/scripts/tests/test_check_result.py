@@ -287,7 +287,11 @@ class SkillText(unittest.TestCase):
         lens = re.sub(r"\s+", " ", (SKILL / "lenses/ui-live.md").read_text())
         self.assertIn('`done: "REVIEWED <your id>"`', lens)
         skill = re.sub(r"\s+", " ", (SKILL / "SKILL.md").read_text())
-        self.assertIn("A coverage note starting `skipped:` comes first", skill)
+        self.assertIn("Only a **ui-live** reviewer", skill)
+        self.assertIn("For any other lens `skipped:` is just partial", skill)
+        self.assertNotIn("A coverage note starting `skipped:` comes first", skill)
+        contract = re.sub(r"\s+", " ", (SKILL / "references/reviewer-contract.md").read_text())
+        self.assertIn("for ui-live only, skipped", contract)
 
 
 if __name__ == "__main__":
