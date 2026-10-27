@@ -221,18 +221,22 @@ repos:
 python3 -m unittest discover -s skills/remove-comments/scripts/tests
 ```
 
-That runs 164 tests in about 35 to 45 seconds. Four skip unless pointed at
-tools outside the repo: three (the TypeScript cross-check, a trusted
-`RC_TS_ROOT` being used, and the JS fuzz) need `RC_TS_ROOT` naming a
-directory whose `node_modules` has `typescript`, and the Sass oracle needs
-`RC_SASS_ROOT` (or `RC_TS_ROOT`) whose `node_modules` has `sass`:
+That runs 181 tests in about 45 seconds, about 55 with all the tools below.
+Six skip unless pointed at tools outside the repo: three (the TypeScript
+cross-check, a trusted `RC_TS_ROOT` being used, and the JS fuzz) need
+`RC_TS_ROOT` naming a directory whose `node_modules` has `typescript`, the
+Sass oracle needs `RC_SASS_ROOT` (or `RC_TS_ROOT`) whose `node_modules` has
+`sass`, and the two Less oracles need `RC_LESS_ROOT` (or `RC_TS_ROOT`) whose
+`node_modules` has `less`:
 
 ```bash
 RC_TS_ROOT=/path/with/node_modules RC_SASS_ROOT=/path/with/node_modules \
+  RC_LESS_ROOT=/path/with/node_modules \
   python3 -m unittest discover -s skills/remove-comments/scripts/tests
 ```
 
-With both set (TypeScript 5.9.3, sass 1.106.1, node 24) all 164 pass. The C
+With all three set (TypeScript 5.9.3, sass 1.106.1, less 4.9.1, node 24) all
+181 pass. The C
 tests used gcc 14 in C mode (`-std=gnu2x`, no C++ front end installed); the
 Go test used gofmt from Go 1.27. Tests whose tool is missing skip.
 
@@ -287,7 +291,7 @@ They cover:
   children, HTML inline comments, a shell comment after a `\` continuation,
   Python comments and docstrings, a docstring followed by `; code`; a
   multi-line comment in a `#define` (also on a continuation line, and two of
-  them) replaced by one space so the directive stays one line; CSS and Less
+  them) replaced by one space so the directive stays one line; CSS
   comments between tokens (`.a/* c */.b` becomes `.a.b`, not `.a .b`;
   `#id/**/.c`, `a/**/:hover`, a multi-line one) and `1/**/.5px`, which no
   comment-free text can keep as two tokens, refused; SCSS comments, which
@@ -296,8 +300,8 @@ They cover:
   `1px+/**/2px`, `1/**/.5px`, two comments in a row, a multi-line one), the
   comment before a negative number (`$x/**/-1`, a subtraction, which
   `$x -1` and `$x-1` aren't) protected, and, with `RC_SASS_ROOT`, Sass
-  compiling every case to the same CSS before and after; the cross-checks
-  run before writing, so an edit a fooled scanner passed (`edit` and
+  compiling every case to the same CSS before and after; Less comments
+  (below); the cross-checks run before writing, so an edit a fooled scanner passed (`edit` and
   `compare` patched) is refused when Python's `ast` or `node --check`
   disagrees and no file changes; an escaped space before
   a shell comment kept; a JS `//` comment ending at U+2028; blank-line
@@ -306,7 +310,12 @@ They cover:
   (indentation kept, a multi-line run, a CRLF file, a docstring) and 15
   invalid rewrites (two with U+2028/U+2029) refused with no file changed; missing, unknown, protected and reasonless decisions refused; a
   docstring that is the only statement can't be deleted; a stale file skipped,
-  a second apply reporting "file changed since list"; `--dry-run`; `restore`
+  a second apply reporting "file changed since list", a file changed while
+  the cross-checks ran (after planning, before writing) left as the other
+  writer left it and reported "file changed while apply was checking it; not
+  written" while the other file is written; the summary counting edited files
+  as cross-checked ok, syntax-only (weak) and no independent check, as verify
+  does (Python and Rust: 1, 0, 1), with and without `--dry-run`; `--dry-run`; `restore`
   to the snapshot and back to the applied state; the `report` sections;
 - `verify`: comment and whitespace changes pass in JS, Python, YAML and
   shell; it exits 1 when a code token changes, string content changes, a `#`
@@ -316,7 +325,8 @@ They cover:
   (the `#define SUM` newline), or CSS gains or loses whitespace between two
   tokens (`.a.b` vs `.a .b` both ways, `1.5px`, `1 .5px`, `ab`), where an
   SCSS comment counts as whitespace (`.a/**/.b` to `.a.b` fails, to `.a .b`
-  passes; Less and CSS the other way round); docstring
+  passes; CSS the other way round) and removing a protected Less comment
+  fails (`.a/* c */.b` to `.a .b`, `.a-b /**/.c` to `.a-b.c`); docstring
   changes are reported separately and fail only with `--strict`; a scan
   error exits 2; the snapshot mode vs `--base HEAD`;
 - `verify` cross-checks: Python `ast` ok; `gcc -E` ok on a real edit,
@@ -340,10 +350,40 @@ They cover:
   and `CPATH` set to the repo; `RC_TS_ROOT` inside the repo refused ("RC_TS_ROOT
   is inside the repo"), and an `RC_TS_ROOT` outside it whose `typescript` is
   a symlink back into the repo refused; an `RC_TS_ROOT` outside the repo used
-  (`typescript: ok`); the environment checkers get (`NODE_OPTIONS`,
-  `NODE_PATH`, `LD_PRELOAD`, `GCC_*`, `CPATH`, `C_INCLUDE_PATH`,
-  `CPLUS_INCLUDE_PATH`, `GOFLAGS`, `GOROOT`, `TS_NODE_*` removed, PATH reduced
-  to absolute directories outside the repo);
+  (`typescript: ok`); the environment checkers get: only `HOME`, locale,
+  `TERM`, temp-dir and npm-prefix variables (and their Windows
+  counterparts), so `NODE_OPTIONS`, `NODE_PATH`, `LD_PRELOAD`, `GCC_*`,
+  `CPATH`, `GOFLAGS`, `PYTHONPATH`, `BASH_ENV`, `RC_TS_ROOT` and any
+  unknown variable are dropped, checked both on the dict and in a child's
+  environment, PATH reduced to absolute directories outside the repo, and
+  `npm root -g` giving the same answer as with the full environment;
+- checker limits: each checker runs in a session of its own with
+  `RLIMIT_AS` 4 GiB, `RLIMIT_CPU` 30 s and `RLIMIT_FSIZE` 16 MiB on its output
+  files; a C file with `#include "/dev/zero"` through verify's gcc
+  cross-check ends in about a second as "skipped", never "ok", with the
+  children's peak memory under the cap; a tool that starts a background
+  `sleep` and then sleeps itself returns nothing after a 1 s timeout and the
+  background child is gone; a 5 GiB allocation fails with `MemoryError`;
+  output over the cap is refused; a cap the system refuses (`setrlimit`
+  raising) is left out instead of failing the run; stdin still reaches the
+  tool;
+- Less: a comment lessc could read differently stays protected: one that
+  touches code (`.a-b /**/.c`, which lessc compiles to `.a-b.c`; `1 /**/-2`,
+  which is `-1`; `@x -/**/ 1` and `@x -// c` + newline + `1`, which are lists
+  where `@x - 1` is 2; a comment at the start of a line before `-2` or `.c`;
+  `.@{n} /**/.c`; a multi-line one), one inside parentheses or brackets
+  (`:not( // c` + newline + `.b)`, which lessc copies into the CSS;
+  `:extend(.b all /**/ )`, which then extends nothing) and one between an
+  `@name` and its `:` or `(` (`@x /**/ : 3` is an at-rule); delete and
+  rewrite of them are refused through the CLI; own-line comments, trailing
+  ones after whitespace, `.a /* c */ {`, comments between declarations
+  (also `x:y;/* c */z:w`), after `{`, at the start of the file and `//`
+  comments after whitespace are deleted (17 golden cases); with
+  `RC_LESS_ROOT`, lessc compiles every golden case to the same CSS before
+  and after, every protected case to different CSS without its comment, and
+  a fuzz inserting nine comment forms at every position of nine stylesheets
+  (about 2,500 edits that delete something) finds no difference (comments
+  lessc copies through and whitespace are left out of the comparison);
 - seeded fuzz (fixed seeds, small N): random C lines with comments, every
   comment deleted, compared with `gcc -E -P -dD` output whenever verify's token
   check passes (the same test finds 2 mismatches in the previous version of
@@ -436,8 +476,24 @@ the scripts and not repeated since:
 >   `.jsx` are "skipped" and `.js` gets only `node --check`, reported as
 >   `weak`. Go gets a `weak` `gofmt -e`; C#, Java, Kotlin, Swift, Rust,
 >   Scala, Dart, shell, YAML, TOML, Dockerfile, CSS, SCSS, Less and HTML have
->   no cross-check, so apply's pre-write cross-check only guards Python, C,
->   JS/TS and Go.
+>   no cross-check (lessc and sass are only test oracles), so apply's
+>   pre-write cross-check only guards Python, C, JS/TS and Go.
+> - Less: comments that touch code, sit inside `( )` or `[ ]`, or sit
+>   between an `@name` and its `:` or `(` are protected, never deleted, even
+>   where lessc would compile the same CSS without them (`a:not( /* c */
+>   .b)`, `.m(1, // c` + newline + `2)`). The rule was derived from less 4.9's
+>   parser (it tests the single character next to a token, and some
+>   constructs are one regex) and checked with lessc 4.9.1 only, on files
+>   that compile: a file lessc rejects can compile after a deletion.
+>   Otherwise verify compares Less like CSS (the whitespace rule above).
+> - The checkers (`gcc -E`, `node`, `npm root -g`, TypeScript, `gofmt`) run
+>   with 4 GiB of address space, 30 s of CPU and wall time and 16 MiB of
+>   output, in a session of their own that a timeout kills; a hostile file
+>   can still use those 4 GiB (gcc on `#include "/dev/zero"` peaks near
+>   2 GB for about a second). The caps are best effort, not a sandbox: the
+>   tools run with the user's permissions and can read what the user can, and
+>   on Windows only the timeout (which kills the tool, not what it started)
+>   and the refusal of output over 16 MiB apply.
 > - SCSS: a comment right before a negative number (`$x/**/-1`) is
 >   protected, never deleted. Verify, as for CSS, treats whitespace after
 >   `:` as insignificant, so a hand edit or formatter turning `a:/**/hover`

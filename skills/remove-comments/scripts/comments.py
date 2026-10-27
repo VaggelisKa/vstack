@@ -19,11 +19,12 @@ compares code tokens of the snapshot or a git ref against the working tree.
 Both cross-check edits with tools that don't share this scanner: Python's ast,
 and, when installed outside the repository, TypeScript's emitter, the C
 preprocessor, node --check and gofmt -e. Those run in a scratch directory on
-copies or stdin, with variables like NODE_OPTIONS and CPATH removed and PATH
-entries inside the repository dropped; TypeScript loads only from RC_TS_ROOT or
-the global npm root, and never when its real path is inside the repository. So
-none of this runs code from the repository; the repo's own formatter, lint and
-tests do, which is why SKILL.md gates them.
+copies or stdin, with only HOME, locale, temp-dir and npm-prefix variables passed
+on, PATH entries inside the repository dropped, and memory, CPU time and output
+capped; TypeScript loads only from RC_TS_ROOT or the global npm root, and never
+when its real path is inside the repository. So none of this runs code from the
+repository; the repo's own formatter, lint and tests do, which is why SKILL.md
+gates them.
 
 Exit codes: 0 ok; 1 verify found a code change, or apply skipped a file that
 changed since list; 2 bad arguments or decisions, git or scan errors, a dirty
@@ -38,12 +39,18 @@ import hashlib
 import json
 import os
 import re
+import signal
 import stat
 import subprocess
 import sys
 import tempfile
 import tokenize
 import unicodedata
+
+try:
+    import resource
+except ImportError:
+    resource = None
 
 # python3 -I leaves the script's own directory off sys.path.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -400,7 +407,9 @@ def delete_inline(t, s, e, c, lang, directive=False):
     """Remove the comment at t[s:e] that shares its line with code. In a preprocessor
     directive a line break would end the directive; in CSS whitespace between two
     tokens is a combinator, and a comment isn't whitespace, but in SCSS it is
-    (Sass compiles .a/**/.b to .a .b), so there it leaves a space."""
+    (Sass compiles .a/**/.b to .a .b), so there it leaves a space. A Less comment
+    that touches code is protected, so one deleted here has whitespace on both
+    sides or starts a statement."""
     ls = t.rfind("\n", 0, s) + 1
     le = t.find("\n", e)
     le = len(t) if le < 0 else le
@@ -669,8 +678,9 @@ def normalize(text, lang):
 
 def css_tokens(joined, line):
     """CSS tokens, with WS_TOKEN where whitespace separates two of them and can matter.
-    A CSS or Less comment (CSS_GAP) separates tokens without being whitespace; normalize
-    turns an SCSS comment into a space."""
+    A CSS comment (CSS_GAP) separates tokens without being whitespace, and so does a
+    Less one that isn't protected; a protected one stays a token. normalize turns an
+    SCSS comment into a space."""
     out, ws = [], None
     for m in CSS_TOKEN.finditer(joined):
         if m.group("gap") is not None:
@@ -910,32 +920,37 @@ def cmd_apply(a):
             (stale if is_stale else failed).append((rec["path"], err))
         else:
             plans.append((rec, new))
+    xs = []
     if not failed:
         edits = [(rec["path"], rec["lang"], decode(open(os.path.join(doc["repo"], rec["path"]), "rb").read()),
                   new.decode("utf-8"), None) for rec, new in plans if sha(new) != rec["sha256"]]
+        xs = cross_checks(edits, untrusted_roots(doc["repo"]))
         failed = [(path, f"cross-check {tool} differs ({reason}); file left untouched")
-                  for path, tool, status, reason in cross_checks(edits, untrusted_roots(doc["repo"]))
-                  if status == "differs"]
+                  for path, tool, status, reason in xs if status == "differs"]
     if failed:
         print("remove-comments apply: refusing, no file was changed", file=sys.stderr)
         for path, err in failed:
             print(f"  {q(path)}: {err}", file=sys.stderr)
         sys.exit(2)
-    done = {rec["path"] for rec, _ in plans}
-    file_of = {c["id"]: c["file"] for c in doc["comments"]}
-    counts = {k: sum(1 for cid, d in dec.items() if d["action"] == k and file_of[cid] in done)
-              for k in ("delete", "rewrite", "keep")}
     copies = a.list + ".applied"
     record = {}
-    edited = 0
+    edited = []
     for rec, new in plans:
         full = os.path.join(doc["repo"], rec["path"])
         if sha(new) == rec["sha256"]:
             continue
-        edited += 1
         if a.dry_run:
+            edited.append(rec["path"])
+            continue
+        try:
+            now = None if os.path.islink(full) else open(full, "rb").read()
+        except OSError:
+            now = None
+        if now is None or sha(now) != rec["sha256"]:
+            stale.append((rec["path"], "file changed while apply was checking it; not written"))
             continue
         write_atomic(full, new)
+        edited.append(rec["path"])
         os.makedirs(copies, exist_ok=True)
         copy = os.path.join(copies, os.path.basename(rec["snapshot"]))
         with open(copy, "wb") as f:
@@ -943,10 +958,18 @@ def cmd_apply(a):
         record[rec["path"]] = {"sha256": sha(new), "copy": copy}
     if not a.dry_run and record:
         write_atomic(a.list + ".applied.json", json.dumps(record, indent=1, ensure_ascii=True).encode("ascii"))
+    done = {rec["path"] for rec, _ in plans} - {path for path, _ in stale}
+    file_of = {c["id"]: c["file"] for c in doc["comments"]}
+    counts = {k: sum(1 for cid, d in dec.items() if d["action"] == k and file_of[cid] in done)
+              for k in ("delete", "rewrite", "keep")}
     by_id = {c["id"]: c for c in doc["comments"]}
     verb = "would edit" if a.dry_run else "edited"
-    print(f"remove-comments apply: {verb} {edited} file(s): {counts['delete']} deleted, "
+    print(f"remove-comments apply: {verb} {len(edited)} file(s): {counts['delete']} deleted, "
           f"{counts['rewrite']} rewritten, {counts['keep']} kept")
+    status = {path: st for path, _, st, _ in xs}
+    ok, weak = (sum(status.get(path) == st for path in edited) for st in ("ok", "weak"))
+    print(f"  {len(edited)} edited file(s): {ok} cross-checked ok, {weak} syntax-only (weak), "
+          f"{len(edited) - ok - weak} no independent check")
     for cid, d in dec.items():
         c = by_id[cid]
         if d["action"] != "delete" and "addresses-agent" in c["flags"] and not c["protected"]:
@@ -1002,11 +1025,17 @@ def verify_pairs(a):
 
 
 TOOL_TIMEOUT = 30
-# Variables that make node, npm, a C compiler or gofmt load code, headers or flags from
-# somewhere else; a repo's .envrc can set them.
-TOOL_ENV_DROP = re.compile(r"NODE_.*|TS_NODE_.*|LD_.*|DYLD_.*|GCC_.*|GO.*|COMPILER_PATH|CPATH|C_INCLUDE_PATH"
-                           r"|CPLUS_INCLUDE_PATH|OBJC_INCLUDE_PATH|OBJCPLUS_INCLUDE_PATH|DEPENDENCIES_OUTPUT"
-                           r"|SUNPRO_DEPENDENCIES")
+# node doesn't start with 1 GiB of address space; with 4 GiB, gcc reading
+# #include "/dev/zero" gives up after about a second.
+TOOL_MEMORY = 4 << 30
+TOOL_OUTPUT = 16 << 20
+# The only variables checkers get, besides a PATH without repo directories: anything
+# else a repo's .envrc sets (NODE_OPTIONS, LD_PRELOAD, CPATH, GOFLAGS) could load its
+# code. HOME and the npm prefix are how npm root -g finds the user's global packages.
+TOOL_ENV_KEEP = ("HOME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "TMP", "TEMP", "NPM_CONFIG_PREFIX",
+                 "npm_config_prefix", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "APPDATA",
+                 "LOCALAPPDATA")
+TOOL_FAILED = "didn't finish: timed out, or wrote too much"
 NODE_RESOLVE = ("try { process.stdout.write(require.resolve('typescript', {paths: [process.argv[1]]})); }"
                 " catch (e) { process.exit(3); }")
 NO_TYPESCRIPT = "typescript isn't available outside the repo; set RC_TS_ROOT to a trusted install"
@@ -1051,9 +1080,9 @@ def untrusted_roots(root):
 
 
 def tool_env(roots=()):
-    """The environment checkers run with: no TOOL_ENV_DROP variables, and a PATH of
+    """The environment checkers run with: the TOOL_ENV_KEEP variables, and a PATH of
     absolute directories outside roots."""
-    env = {k: v for k, v in os.environ.items() if not TOOL_ENV_DROP.fullmatch(k)}
+    env = {k: v for k, v in os.environ.items() if k in TOOL_ENV_KEEP}
     env["PATH"] = os.pathsep.join(d for d in os.environ.get("PATH", "").split(os.pathsep)
                                   if os.path.isabs(d) and not any(inside(d, r) for r in roots))
     return env
@@ -1068,13 +1097,49 @@ def find_tool(name, env, roots=()):
     return None
 
 
+def limit_tool():
+    """Caps a checker's address space, CPU time and file size (its output files too).
+    Runs in the child between fork and exec, where an exception would fail the run, so
+    a cap the system refuses (macOS rejects some RLIMIT_AS values) is left out."""
+    for res, cap in ((resource.RLIMIT_AS, TOOL_MEMORY), (resource.RLIMIT_CPU, TOOL_TIMEOUT),
+                     (resource.RLIMIT_FSIZE, TOOL_OUTPUT)):
+        try:
+            hard = resource.getrlimit(res)[1]
+            cap = cap if hard == resource.RLIM_INFINITY else min(cap, hard)
+            resource.setrlimit(res, (cap, cap))
+        except (ValueError, OSError):
+            pass
+
+
 def run_tool(argv, scratch, env, data=b""):
-    """(exit code, stdout, stderr) of a checker run in the scratch dir, or None if it couldn't run."""
+    """(exit code, stdout, stderr) of a checker run in the scratch dir, or None if it couldn't
+    run, ran past TOOL_TIMEOUT or wrote TOOL_OUTPUT bytes. On POSIX it runs under limit_tool
+    in a session of its own, and a timeout kills everything it started."""
+    posix = resource is not None
     try:
-        r = subprocess.run(argv, input=data, capture_output=True, cwd=scratch, env=env, timeout=TOOL_TIMEOUT)
+        with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+            p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=out, stderr=err, cwd=scratch, env=env,
+                                 start_new_session=posix, preexec_fn=limit_tool if posix else None)
+            try:
+                p.communicate(data, timeout=TOOL_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                try:
+                    if posix:
+                        os.killpg(p.pid, signal.SIGKILL)
+                    else:
+                        p.kill()
+                except OSError:
+                    pass
+                p.wait()
+                return None
+            out.seek(0)
+            err.seek(0)
+            stdout, stderr = out.read(TOOL_OUTPUT), err.read(TOOL_OUTPUT)
     except (OSError, subprocess.SubprocessError):
         return None
-    return r.returncode, r.stdout, r.stderr
+    if max(len(stdout), len(stderr)) >= TOOL_OUTPUT:
+        return None
+    return p.returncode, stdout, stderr
 
 
 def first_line(err):
@@ -1140,10 +1205,10 @@ def cross_check_c(before, after, argv, scratch, env):
     cc = os.path.basename(argv[0])
     b = run_tool(argv + ["-"], scratch, env, before.encode("utf-8"))
     if not b or b[0]:
-        return cc, "skipped", "the before file doesn't preprocess: " + (first_line(b[2]) if b else "timed out")
+        return cc, "skipped", "the before file doesn't preprocess: " + (first_line(b[2]) if b else TOOL_FAILED)
     a = run_tool(argv + ["-"], scratch, env, after.encode("utf-8"))
     if not a or a[0]:
-        return cc, "differs", "the edited file doesn't preprocess: " + (first_line(a[2]) if a else "timed out")
+        return cc, "differs", "the edited file doesn't preprocess: " + (first_line(a[2]) if a else TOOL_FAILED)
     return (cc, "ok", None) if c_items(b[1]) == c_items(a[1]) else (cc, "differs", "preprocessed output differs")
 
 
@@ -1161,7 +1226,7 @@ def cross_check_node(path, before, after, node, scratch, env):
         return "node --check", "skipped", "the before file doesn't pass node --check"
     if not out[1] or out[1][0]:
         return "node --check", "differs", "the edited file has a syntax error: " + (
-            first_line(out[1][2]) if out[1] else "timed out")
+            first_line(out[1][2]) if out[1] else TOOL_FAILED)
     return "node --check", "weak", "syntax only"
 
 

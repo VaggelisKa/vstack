@@ -6,9 +6,11 @@
 never run code from it. The cross-checks `apply` and `verify` run use only
 tools from outside the repo: Python's `ast`; `node --check`, `gofmt -e` and
 `gcc -E` on copies or stdin in an empty scratch directory (so `#include
-"x.h"` can't reach repo headers), with `NODE_OPTIONS`, `NODE_PATH`,
-`LD_PRELOAD`, `CPATH`, `GCC_*`, `GO*` and similar variables removed and PATH
-entries inside the repo dropped; and TypeScript's `transpileModule` only from
+"x.h"` can't reach repo headers), with only `HOME`, locale, temp-dir and
+npm-prefix variables passed on (`NODE_OPTIONS`, `NODE_PATH`, `LD_PRELOAD`,
+`CPATH`, `GCC_*`, `GO*` and anything else a repo's `.envrc` sets are dropped),
+PATH entries inside the repo dropped, and memory, CPU time and output capped
+(best effort, not a sandbox); and TypeScript's `transpileModule` only from
 `RC_TS_ROOT` or the global npm root, never when its real path is inside the
 repo (a `node_modules/typescript` the repo installs, commits or symlinks is
 repo code). Everything below does run repo code: a formatter or linter loads

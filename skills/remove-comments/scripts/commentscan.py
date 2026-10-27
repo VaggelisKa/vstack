@@ -767,10 +767,13 @@ class CssScanner(Base):
         s, stack = self.s, []
         while self.i < self.n:
             c = s[self.i]
-            if s.startswith("/*", self.i):
-                self.block_comment()
-            elif s.startswith("//", self.i) and self.lang in ("scss", "less"):
-                self.line_comment()
+            if s.startswith("/*", self.i) or s.startswith("//", self.i) and self.lang in ("scss", "less"):
+                if s[self.i + 1] == "*":
+                    self.block_comment()
+                else:
+                    self.line_comment()
+                if stack and stack[-1] in "([":
+                    self.comments[-1].meta["in_brackets"] = True
             elif c in "'\"":
                 end = self.quoted(self.i + 1, c)
                 self.literal(self.i, end)
@@ -1428,6 +1431,12 @@ ADDRESSES_AGENT = rx(
 # Sass reads "1px/**/-1" as a subtraction and "1px -1" as a list: no comment-free text
 # keeps a comment's meaning right before a negative number.
 SASS_MINUS = rx(r"-\.?\d")
+LESS_SPACE = " \t\r\n"
+LESS_IN_BRACKETS = ("Less: inside parentheses or brackets, where lessc copies some text as it is (:not(...)) and "
+                    "matches some with one pattern (:extend(.b all /**/ ) extends nothing)")
+LESS_AFTER_AT = "Less: between an @name and its ':' or '(' (@x /**/ : 3 is an at-rule, @x : 3 a variable)"
+LESS_TOUCHING = ("Less: it touches code with no whitespace between, and lessc reads the character next to a token "
+                 "(.a /**/.b is .a.b, 1 /**/-2 is -1, @x -/**/ 1 is a list)")
 TODO = rx(r"\b(?:TODO|FIXME|HACK|XXX)\b")
 TODO_OWNER = rx(r"\b(?:TODO|FIXME|HACK|XXX)\s*[(\[][^)\]]+[)\]]|@\w+|#\d+|\b[A-Z][A-Z0-9]+-\d+\b|https?://")
 CHANGE_LOG = rx(r"(?:added|updated|changed|fixed|new:|now\s|as requested|removed|refactored|modified|replaced|moved|renamed|previously|changed from)\b", re.I)
@@ -1459,6 +1468,33 @@ def body_lines(raw, c):
             line = line.lstrip("*").strip()
         out.append(line)
     return out
+
+
+def less_risk(text, c):
+    """Why deleting comment c could change what lessc reads, or None. lessc skips
+    comments with whitespace between tokens, then tests the one character next to a
+    token: before it for a descendant combinator or a negative number, after it for
+    an operator. So only whitespace on both sides survives the deletion, or a
+    statement start: after ';', a '{' that isn't @{...} interpolation, or the start
+    of the file. Some constructs are one regex that a comment breaks."""
+    if c.meta.get("in_brackets"):
+        return LESS_IN_BRACKETS
+    i = c.start
+    while i > 0 and text[i - 1] in LESS_SPACE:
+        i -= 1
+    if i == 0 or i == 1 and text[0] == "\ufeff" or text[i - 1] == ";" \
+            or text[i - 1] == "{" and text[i - 2:i - 1] not in ("@", "$"):
+        return None
+    if i == c.start or c.end < len(text) and text[c.end] not in LESS_SPACE:
+        return LESS_TOUCHING
+    j, k = i, c.end
+    while j > 0 and (text[j - 1].isalnum() or text[j - 1] in "_-"):
+        j -= 1
+    while k < len(text) and text[k] in LESS_SPACE:
+        k += 1
+    if j < i and text[j - 1:j] == "@" and text[k:k + 1] in (":", "("):
+        return LESS_AFTER_AT
+    return None
 
 
 def classify(text, sc):
@@ -1496,6 +1532,8 @@ def classify(text, sc):
             c.protected = "inside <pre>: removing it changes the preformatted text"
         elif lang == "scss" and c.kind == "block" and SASS_MINUS.match(text, c.end):
             c.protected = "before a '-' Sass reads as a minus: without it the '-' starts a negative number"
+        elif lang == "less" and (why := less_risk(text, c)):
+            c.protected = why
         else:
             for langs, pat, label, reason in DIRECTIVES:
                 if lang not in langs or c.kind == "docstring":

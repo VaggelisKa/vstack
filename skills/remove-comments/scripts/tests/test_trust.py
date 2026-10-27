@@ -1,6 +1,7 @@
 """Cross-checks never run code from the repo: a committed node_modules/typescript
 symlink, repo directories on PATH, NODE_OPTIONS and repo headers are all ignored,
-RC_TS_ROOT inside the repo is refused, and RC_TS_ROOT outside it is used.
+RC_TS_ROOT inside the repo is refused, and RC_TS_ROOT outside it is used. Checkers
+get only allowlisted variables, which still let npm root -g find the global packages.
 
 Run from the repo root: python3 -m unittest discover -s skills/remove-comments/scripts/tests
 """
@@ -10,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 from helpers import GIT_ENV, SCRIPTS, commit_all, decide, git, new_repo, tmpdir
 
@@ -141,23 +143,37 @@ class RepoCodeNeverRuns(unittest.TestCase):
 
 
 class ToolEnvironment(unittest.TestCase):
-    def test_scrubbed_variables_and_path(self):
+    def test_only_allowlisted_variables_and_path(self):
         repo = tmpdir()
-        saved = dict(os.environ)
-        try:
-            os.environ.update(NODE_OPTIONS="--require x", NODE_PATH="/x", LD_PRELOAD="/x.so", GCC_EXEC_PREFIX="/x",
-                              CPATH="/x", C_INCLUDE_PATH="/x", CPLUS_INCLUDE_PATH="/x", GOFLAGS="-x",
-                              GOROOT="/x", TS_NODE_PROJECT="/x", KEEP_ME="1",
-                              PATH=os.pathsep.join([str(repo / "bin"), "rel/bin", "/usr/bin"]))
+        with mock.patch.dict(os.environ, NODE_OPTIONS="--require x", NODE_PATH="/x", LD_PRELOAD="/x.so",
+                             GCC_EXEC_PREFIX="/x", CPATH="/x", C_INCLUDE_PATH="/x", CPLUS_INCLUDE_PATH="/x",
+                             GOFLAGS="-x", GOROOT="/x", TS_NODE_PROJECT="/x", BASH_ENV="/x", PYTHONPATH="/x",
+                             RC_TS_ROOT="/x", SOME_NEW_HOOK="1", HOME="/home/u", LANG="C.UTF-8",
+                             NPM_CONFIG_PREFIX="/p", PATH=os.pathsep.join([str(repo / "bin"), "rel/bin", "/usr/bin"])):
             env = comments.tool_env([str(repo)])
-        finally:
-            os.environ.clear()
-            os.environ.update(saved)
-        for k in ("NODE_OPTIONS", "NODE_PATH", "LD_PRELOAD", "GCC_EXEC_PREFIX", "CPATH", "C_INCLUDE_PATH",
-                  "CPLUS_INCLUDE_PATH", "GOFLAGS", "GOROOT", "TS_NODE_PROJECT"):
-            self.assertNotIn(k, env)
-        self.assertEqual(env["KEEP_ME"], "1")
-        self.assertEqual(env["PATH"], "/usr/bin")
+        self.assertEqual(env, {"HOME": "/home/u", "LANG": "C.UTF-8", "NPM_CONFIG_PREFIX": "/p", "PATH": "/usr/bin",
+                               **{k: os.environ[k] for k in comments.TOOL_ENV_KEEP
+                                  if k in os.environ and k not in ("HOME", "LANG", "NPM_CONFIG_PREFIX")}})
+
+    def test_a_checker_sees_only_the_tool_environment(self):
+        with mock.patch.dict(os.environ, NODE_OPTIONS="--require x", SOME_NEW_HOOK="1"):
+            env = comments.tool_env()
+        r = comments.run_tool([sys.executable, "-I", "-c", "import os; print(' '.join(sorted(os.environ)))"],
+                              str(tmpdir()), env)
+        self.assertEqual(r[0], 0, r)
+        seen = set(r[1].decode().split())
+        self.assertNotIn("NODE_OPTIONS", seen)
+        self.assertNotIn("SOME_NEW_HOOK", seen)
+        self.assertLessEqual(seen - {"LC_CTYPE", "__CF_USER_TEXT_ENCODING"}, set(comments.TOOL_ENV_KEEP) | {"PATH"})
+
+    @unittest.skipUnless(shutil.which("npm"), "npm isn't on PATH")
+    def test_npm_root_g_is_the_same_with_the_tool_environment(self):
+        npm = shutil.which("npm")
+        scratch = str(tmpdir())
+        full = subprocess.run([npm, "root", "-g"], capture_output=True, cwd=scratch, timeout=60)
+        r = comments.run_tool([npm, "root", "-g"], scratch, comments.tool_env())
+        self.assertEqual(full.returncode, 0, full.stderr)
+        self.assertEqual(r[:2], (0, full.stdout))
 
     @unittest.skipUnless(comments.c_preprocessor(str(tmpdir())), "no working gcc, cc or clang")
     def test_c_cross_check_never_reads_repo_headers(self):

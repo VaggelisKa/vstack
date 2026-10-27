@@ -1,7 +1,8 @@
 """In SCSS a comment is whitespace (Sass compiles .a/**/.b to .a .b), so deleting one
 between two tokens leaves a space, and verify flags .a/**/.b -> .a.b. The exception is
 a comment right before a negative number ($x/**/-1 is a subtraction, $x -1 a list):
-it is protected. CSS and Less keep treating a comment as no token at all.
+it is protected. CSS keeps treating a comment as no token at all; Less has rules of
+its own (test_less.py).
 
 With RC_SASS_ROOT (or RC_TS_ROOT) naming a directory whose node_modules has sass, every
 case is also compiled before and after and must give the same CSS.
@@ -81,12 +82,10 @@ class Scss(unittest.TestCase):
         self.assertTrue(comments.compare(".a/**/.b { x: y }\n", ".a .b { x: y }\n", "scss")["ok"])
         self.assertFalse(comments.compare(".d{ &/**/.e{} }\n", ".d{ &.e{} }\n", "scss")["ok"])
         self.assertTrue(comments.compare(".a/**/.b { x: y }\n", ".a.b { x: y }\n", "css")["ok"])
-        self.assertTrue(comments.compare(".a/**/.b { x: y }\n", ".a.b { x: y }\n", "less")["ok"])
         self.assertFalse(comments.compare("a { m: $x/**/-1 }\n", "a { m: $x -1 }\n", "scss")["ok"])
 
-    def test_css_and_less_unchanged(self):
+    def test_css_unchanged(self):
         self.assertEqual(strip_all(".a/**/.b { x: y }\n", "css"), ".a.b { x: y }\n")
-        self.assertEqual(strip_all(".a/**/.b { x: y }\n", "less"), ".a.b { x: y }\n")
 
     def test_apply_through_the_cli(self):
         repo = new_repo()
