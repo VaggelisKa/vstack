@@ -80,12 +80,12 @@ THREADS_QUERY = """
 query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
   viewer{ login }
   repository(owner:$owner,name:$repo){ pullRequest(number:$pr){
-    reviewThreads(first:100, after:$endCursor){
+    reviewThreads(first:50, after:$endCursor){
       pageInfo{ hasNextPage endCursor }
       nodes{ id isResolved path
-        comments(first:100){ pageInfo{ hasNextPage }
+        comments(first:50){ pageInfo{ hasNextPage }
           nodes{ id author{ __typename login } body createdAt
-            reactions(first:100){ nodes{ content createdAt user{ login } } } } } } } } } }
+            reactions(first:20){ nodes{ content createdAt user{ login } } } } } } } } } }
 """
 FIRST_COMMENT_QUERY = """
 query($id:ID!){ node(id:$id){ ... on PullRequestReviewThread { comments(first:1){ nodes{ id databaseId } } } } }

@@ -372,5 +372,20 @@ class Coordination(unittest.TestCase):
         self.assertIn("gh exited 1", out["handback"]["detail"])
 
 
+
+
+class QueryBudget(unittest.TestCase):
+    def test_threads_query_within_github_node_limit(self):
+        import importlib.util, os, re
+        spec = importlib.util.spec_from_file_location(
+            "coord", os.path.join(os.path.dirname(__file__), "..", "coordination.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        total = 1
+        for n in re.findall(r"first:(\d+)", mod.THREADS_QUERY):
+            total *= int(n)
+        self.assertLessEqual(total, 500_000)
+
+
 if __name__ == "__main__":
     unittest.main()
