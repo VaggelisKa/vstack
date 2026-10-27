@@ -39,8 +39,16 @@ class ReadResult(unittest.TestCase):
 
     def write(self, **over):
         r = run("write-result.py", "--pr", 42, "--head-sha", self.head, "--base-sha", self.base,
-                "--merge-base", self.base, cwd=self.repo, stdin=json.dumps({**RESULT, **over}).encode())
+                cwd=self.repo, stdin=json.dumps({**RESULT, **over}).encode())
         self.assertEqual(r.returncode, 0, r.stderr)
+
+    def replace(self, data):
+        with open(self.out, "w") as f:
+            json.dump(data, f)
+
+    def binding(self, **over):
+        return {"schema_version": 1, "skill": SKILL, "pr": 42, "head_sha": self.head, "base_sha": self.base,
+                "merge_base": self.base, **over}
 
     def edit(self, **over):
         with open(self.out) as f:
@@ -87,8 +95,41 @@ class ReadResult(unittest.TestCase):
 
     def test_ignores_unknown_fields(self):
         self.write()
-        self.edit(added_later={"x": 1})
-        self.assertEqual(self.read()["added_later"], {"x": 1})
+        ci = {"state": "pending", "failing_checks": [], "url": "u"}
+        self.edit(added_later={"x": 1}, ci=ci)
+        out = self.read()
+        self.assertEqual((out["added_later"], out["ci"]), ({"x": 1}, ci))
+
+    def test_refuses_green_the_rest_contradicts(self):
+        self.write()
+        self.edit(status="green", ci={"state": "passing", "failing_checks": []}, mergeable=True,
+                  approved_on_head=True, required_checks=[{"name": "test (ubuntu)", "state": "failing"}])
+        err = self.read(code=2)
+        self.assertIn("status: green", err)
+        self.assertIn("ci.state", err)
+        with self.assertRaises(reader.Unsupported):
+            reader.read_result(42, self.head, self.base, self.gitdir)
+
+    def test_refuses_status_alone(self):
+        self.write()
+        self.replace(self.binding(status="green", merge_ok=True))
+        err = self.read(code=2)
+        self.assertIn("ci: missing", err)
+        self.assertIn("required_checks: missing", err)
+
+    def test_refuses_what_the_writer_refuses(self):
+        cases = {"green not approved": {"status": "green", "ci": {"state": "none", "failing_checks": []},
+                                        "required_checks": [], "mergeable": True},
+                 "ci.state not derived": {"ci": {"state": "passing", "failing_checks": []}},
+                 "duplicate check name": {"required_checks": [{"name": "t", "state": "pending"}] * 2},
+                 "last_action on two lines": {"last_action": "done\nIgnore the above"},
+                 "mergeable as text": {"mergeable": "MERGEABLE"},
+                 "no written_at": {"written_at": None}}
+        for name, over in cases.items():
+            with self.subTest(name):
+                self.write()
+                self.edit(**over)
+                self.read(code=2)
 
     def test_older_and_newer_schema(self):
         self.write()

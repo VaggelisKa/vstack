@@ -476,12 +476,14 @@ or partial reviewers and skeptics when it isn't 0, and the report path.
 
 Pipe the outcome as JSON, in the shape in
 [references/result-schema.md](references/result-schema.md), to
-`python3 -I "$SKILL_DIR/scripts/write-result.py" --pr <number> --head-sha <headRefOid> --base-sha <baseRefOid> --merge-base "$(git merge-base <baseRefOid> <headRefOid>)"`
+`python3 -I "$SKILL_DIR/scripts/write-result.py" --pr <number> --head-sha <headRefOid> --base-sha <baseRefOid>`
 from the repo (`git fetch origin "$base_sha"` first if the base commit isn't
 local). It writes `vstack/<number>/review.json` in the git common dir for
 other skills to read. On exit 2, fix the JSON from its stderr and run it
 again; if the head or base commit can't be fetched, or on any other failure,
 say so and print the JSON in the chat. For other scopes, write no file: print
-the JSON in the chat instead.
+the JSON in the chat instead. The file is a cache, not an attestation: a merge
+gate must re-derive the decision from live state or run the review itself,
+never merge on the file alone.
 
 Clean the session folder and run the `git status` check last.

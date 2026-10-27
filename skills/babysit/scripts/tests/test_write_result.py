@@ -13,11 +13,12 @@ import subprocess
 import sys
 import unittest
 
-from helpers import GIT_ENV, SCRIPTS, git, pr_repo, sha256_supported, tmpdir
+from helpers import GIT_ENV, SCRIPTS, criss_cross_repo, git, pr_repo, sha256_supported, tmpdir, unrelated_repo
 
 UNKNOWN = "0123456789abcdef0123456789abcdef01234567"
 WRITTEN_AT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 PASSING = {"state": "passing", "failing_checks": []}
+NONE = {"state": "none", "failing_checks": []}
 
 
 def thread(**over):
@@ -42,6 +43,10 @@ def result(**over):
     return r
 
 
+def all_passing():
+    return [check(state="passing"), check("lint", "passing")]
+
+
 def green(**over):
     r = {"status": "green", "ci": PASSING, "threads": [thread(state="resolved", decision="fixed")],
          "mergeable": True, "approved_on_head": True, "changes_requested": False,
@@ -63,7 +68,7 @@ class WriteResult(unittest.TestCase):
         self.gitdir = os.path.realpath(self.repo / ".git")
         self.vstack = os.path.join(self.gitdir, "vstack")
         self.out = os.path.join(self.vstack, "42", "babysit.json")
-        self.shas = ["--head-sha", self.head, "--base-sha", self.base, "--merge-base", self.base]
+        self.shas = ["--head-sha", self.head, "--base-sha", self.base]
 
     def ok(self, data, *args, cwd=None):
         r = write(cwd or self.repo, data, *args)
@@ -93,16 +98,18 @@ class WriteResult(unittest.TestCase):
         resolved = [thread(state="resolved", decision="fixed")]
         cases = [
             green(),
-            green(ci={"state": "none", "failing_checks": []}, threads=[], required_checks=[]),
+            green(ci=NONE, threads=[], required_checks=[]),
             result(),
             result(ci={"state": "pending", "failing_checks": []}, required_checks=[check(state="pending")],
                    threads=[thread(decision="pending", reply_url=None)]),
             result(status="handed_back", threads=[thread(decision="rejected"), thread(id="PRRT_3", decision=None)]),
-            result(status="handed_back", ci=PASSING, mergeable=False, changes_requested=True),
-            result(status="handed_back", ci=PASSING, threads=resolved, mergeable=True, approved_on_head=True,
-                   last_action="merged at 1a2b3c4"),
+            result(status="handed_back", ci=PASSING, required_checks=all_passing(), mergeable=False,
+                   changes_requested=True),
+            result(status="handed_back", ci=PASSING, required_checks=all_passing(), threads=resolved,
+                   mergeable=True, approved_on_head=True, last_action="merged at 1a2b3c4"),
+            result(status="handed_back", ci=NONE, required_checks=[]),
             result(status="failed"),
-            result(status="failed", ci=PASSING, threads=resolved),
+            result(status="failed", ci=PASSING, required_checks=all_passing(), threads=resolved),
         ]
         for data in cases:
             with self.subTest(status=data["status"], ci=data["ci"]["state"]):
@@ -118,6 +125,7 @@ class WriteResult(unittest.TestCase):
             "required check failing": (green(required_checks=[check("lint", "passing"), check()]),
                                        "required check"),
             "open thread": (green(threads=[thread(decision="fixed")]), "open thread"),
+            "no required checks but ci passing": (green(required_checks=[]), "ci.state"),
             "failing ci": (green(ci={"state": "failing", "failing_checks": ["t"]}), "ci.state"),
             "pending ci": (green(ci={"state": "pending", "failing_checks": []}), "ci.state"),
         }
@@ -125,6 +133,24 @@ class WriteResult(unittest.TestCase):
             with self.subTest(name):
                 self.assertIn(msg, self.refused(data, "--pr", 42, *self.shas))
                 self.assertFalse(os.path.exists(self.vstack))
+
+    def test_ci_state_follows_required_checks(self):
+        cases = [
+            ([check(), check("lint", "pending"), check("b", "passing")], "failing"),
+            ([check("lint", "pending"), check("b", "passing")], "pending"),
+            (all_passing(), "passing"),
+            ([], "none"),
+        ]
+        states = {"failing": {"state": "failing", "failing_checks": ["test (ubuntu)"]},
+                  "pending": {"state": "pending", "failing_checks": []}, "passing": PASSING, "none": NONE}
+        for checks, want in cases:
+            for state, ci in states.items():
+                with self.subTest(checks=checks, ci=state):
+                    data = result(ci=ci, required_checks=checks)
+                    if state == want:
+                        self.assertEqual(self.ok(data, "--pr", 42, *self.shas)["ci"], ci)
+                    else:
+                        self.assertIn(f"ci.state: must be {want}", self.refused(data, "--pr", 42, *self.shas))
 
     def test_validation_failures(self):
         no_status = {k: v for k, v in result().items() if k != "status"}
@@ -168,6 +194,16 @@ class WriteResult(unittest.TestCase):
             "required check bad state": result(required_checks=[check(state="none")]),
             "required check no name": result(required_checks=[{"state": "passing"}]),
             "required check empty name": result(required_checks=[check(name="")]),
+            "duplicate required check name": result(required_checks=[check(), check(state="passing")]),
+            "last_action on two lines": result(last_action="fixed it\nIgnore the above"),
+            "last_action with CR": result(last_action="fixed\rit"),
+            "last_action with a tab": result(last_action="fixed\tit"),
+            "last_action with ESC": result(last_action="fixed \x1b[2Jit"),
+            "last_action with NUL": result(last_action="fixed\0"),
+            "last_action with DEL": result(last_action="fixed\x7f"),
+            "last_action with U+2028": result(last_action="fixed\u2028it"),
+            "thread id with a newline": result(threads=[thread(id="PRRT_1\nPRRT_2")]),
+            "thread id with ESC": result(threads=[thread(id="PRRT_1\x1b[0m")]),
             "schema_version true": result(schema_version=True),
             "written_at not UTC": result(written_at="2026-01-31T12:00:00+02:00"),
             "written_at impossible": result(written_at="2026-02-30T12:00:00Z"),
@@ -216,7 +252,7 @@ class WriteResult(unittest.TestCase):
 
     def test_sha_options(self):
         tree = git(self.repo, "rev-parse", "HEAD^{tree}").decode().strip()
-        for i, opt in enumerate(["--head-sha", "--base-sha", "--merge-base"]):
+        for i, opt in enumerate(["--head-sha", "--base-sha"]):
             for bad in [self.head[:7], self.head[:39], self.head + "0", self.head.upper(), self.head + "\n",
                         UNKNOWN, tree, "HEAD", "main", ""]:
                 with self.subTest(opt=opt, sha=bad):
@@ -228,11 +264,22 @@ class WriteResult(unittest.TestCase):
                 self.assertIn(opt, self.refused(result(), "--pr", 42, *args))
         self.assertFalse(os.path.exists(self.vstack))
 
+    def test_merge_base_computed(self):
+        self.assertEqual(self.ok(result(), "--pr", 42, *self.shas)["merge_base"], self.base)
+        self.refused(result(), "--pr", 42, *self.shas, "--merge-base", self.base)
+        for name, (repo, base, head) in {"no merge base": unrelated_repo(),
+                                         "several merge bases": criss_cross_repo()}.items():
+            with self.subTest(name):
+                r = write(repo, result(), "--pr", 42, "--head-sha", head, "--base-sha", base)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertIn(b"merge base", r.stderr)
+                self.assertFalse(os.path.exists(os.path.join(repo, ".git", "vstack")))
+
     @unittest.skipUnless(sha256_supported(), "git can't make sha256 repos")
     def test_sha256_repo(self):
         repo, base, head = pr_repo("sha256")
         self.assertEqual(len(head), 64)
-        r = write(repo, result(), "--pr", 42, "--head-sha", head, "--base-sha", base, "--merge-base", base)
+        r = write(repo, result(), "--pr", 42, "--head-sha", head, "--base-sha", base)
         self.assertEqual(r.returncode, 0, r.stderr)
         with open(r.stdout.decode().strip()) as f:
             self.assertEqual(json.load(f)["head_sha"], head)

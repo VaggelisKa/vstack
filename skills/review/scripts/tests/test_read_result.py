@@ -38,8 +38,16 @@ class ReadResult(unittest.TestCase):
 
     def write(self, **over):
         r = run("write-result.py", "--pr", 42, "--head-sha", self.head, "--base-sha", self.base,
-                "--merge-base", self.base, cwd=self.repo, stdin=json.dumps({**RESULT, **over}).encode())
+                cwd=self.repo, stdin=json.dumps({**RESULT, **over}).encode())
         self.assertEqual(r.returncode, 0, r.stderr)
+
+    def replace(self, data):
+        with open(self.out, "w") as f:
+            json.dump(data, f)
+
+    def binding(self, **over):
+        return {"schema_version": 1, "skill": SKILL, "pr": 42, "head_sha": self.head, "base_sha": self.base,
+                "merge_base": self.base, **over}
 
     def edit(self, **over):
         with open(self.out) as f:
@@ -86,8 +94,42 @@ class ReadResult(unittest.TestCase):
 
     def test_ignores_unknown_fields(self):
         self.write()
-        self.edit(added_later={"x": 1})
-        self.assertEqual(self.read()["added_later"], {"x": 1})
+        finding = {"id": "C1", "severity": "minor", "file": "a.py", "line": 1, "rule": "design",
+                   "summary": "s", "verified": False, "added_later": True}
+        self.edit(added_later={"x": 1}, findings=[finding])
+        out = self.read()
+        self.assertEqual((out["added_later"], out["findings"]), ({"x": 1}, [finding]))
+
+    def test_refuses_merge_ok_the_rest_contradicts(self):
+        self.write()
+        self.edit(merge_ok=True, partial=True, unreviewed_areas=["auth"])
+        err = self.read(code=2)
+        self.assertIn("merge_ok", err)
+        self.assertNotIn("auth", err)
+        with self.assertRaises(reader.Unsupported):
+            reader.read_result(42, self.head, self.base, self.gitdir)
+
+    def test_refuses_merge_ok_alone(self):
+        self.write()
+        self.replace(self.binding(merge_ok=True))
+        err = self.read(code=2)
+        self.assertIn("status: missing", err)
+        self.assertIn("written_at: missing", err)
+
+    def test_refuses_what_the_writer_refuses(self):
+        cases = {"status disagrees with verdict": {"status": "fix"},
+                 "Ship with a blocker": {"findings": [{"id": "C1", "severity": "blocker", "file": "a.py",
+                                                       "line": 1, "rule": "security", "summary": "s",
+                                                       "verified": True}]},
+                 "verdict with ESC": {"verdict": "Ship\x1b[2J"},
+                 "score as text": {"score": "9"},
+                 "merge_ok false for ship": {"merge_ok": False},
+                 "no written_at": {"written_at": None}}
+        for name, over in cases.items():
+            with self.subTest(name):
+                self.write()
+                self.edit(**over)
+                self.read(code=2)
 
     def test_older_and_newer_schema(self):
         self.write()

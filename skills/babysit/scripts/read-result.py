@@ -6,14 +6,17 @@ Pass the PR's current head and base (`gh pr view N --json headRefOid,baseRefOid`
 as full SHAs. Prints the result JSON on stdout. Exits 0 ok, 3 stale (the file's
 head_sha or base_sha doesn't match; nothing on stdout), 2 usage error, not in a
 git repo, missing file or unsupported file (newer schema_version, not JSON,
-wrong skill or pr), 4 internal error. Reasons go to stderr.
+wrong skill or pr, fails validation), 4 internal error. Reasons go to stderr.
+Any non-zero exit means don't use the file.
 
-Readers follow references/result-schema.md: unknown fields are ignored, a
-schema_version newer than SCHEMA_VERSION is refused, and a head_sha or base_sha
-that isn't exactly the PR's current one means stale. The folder is found as
+Readers follow references/result-schema.md: a schema_version newer than
+SCHEMA_VERSION is refused, and a head_sha or base_sha that isn't exactly the
+PR's current one means stale. The whole file is also checked as
+write-result.py checks it (it's loaded from this folder), so a missing field,
+wrong type or contradiction such as a status the rest doesn't support is
+refused (exit 2); only unknown fields are ignored. The folder is found as
 write-result.py finds it, and a symlinked vstack, <pr> folder or file is
-refused. Checking the fields a decision needs (such as status) is the
-caller's job.
+refused. The file is a cache, not an attestation: never merge on it alone.
 
 To import it, load this file with importlib.util.spec_from_file_location and
 call read_result(pr, expect_head_sha, expect_base_sha); it returns the result
@@ -21,20 +24,26 @@ dict or raises Stale (which carries .result), Missing or Unsupported.
 """
 import argparse
 import errno
+import importlib.util
 import json
 import os
-import re
 import stat
 import subprocess
 import sys
 
-SKILL = "babysit"
-SCHEMA_VERSION = 1
-MAX_BYTES = 1024 * 1024
-MAX_PR = 2**31 - 1
-PR_ARG = re.compile(r"[1-9][0-9]*")
-SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
-DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+_spec = importlib.util.spec_from_file_location(
+    "vstack_babysit_write_result", os.path.join(os.path.dirname(os.path.abspath(__file__)), "write-result.py"))
+writer = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(writer)
+
+SKILL = writer.SKILL
+SCHEMA_VERSION = writer.SCHEMA_VERSION
+MAX_BYTES = writer.MAX_BYTES
+MAX_ERRORS = writer.MAX_ERRORS
+MAX_PR = writer.MAX_PR
+PR_ARG = writer.PR_ARG
+SHA = writer.SHA
+DIR_FLAGS = writer.DIR_FLAGS
 
 
 class Unusable(Exception):
@@ -55,8 +64,9 @@ class Stale(Exception):
         self.result = result
 
 
-def is_int(v):
-    return isinstance(v, int) and not isinstance(v, bool)
+is_int = writer.is_int
+no_duplicates = writer.no_duplicates
+no_constants = writer.no_constants
 
 
 def is_sha(v):
@@ -74,19 +84,6 @@ def common_dir():
     if r.returncode == 128 and "not a git repository" in r.stderr:
         raise Unusable("not in a git repository")
     raise Unusable(f"can't find the git common dir: git exited {r.returncode}")
-
-
-def no_duplicates(pairs):
-    out = {}
-    for k, v in pairs:
-        if k in out:
-            raise ValueError("duplicate key")
-        out[k] = v
-    return out
-
-
-def no_constants(name):
-    raise ValueError(name)
 
 
 def load(top, pr):
@@ -137,6 +134,10 @@ def read_result(pr, expect_head_sha, expect_base_sha, top=None):
     for k in ("head_sha", "base_sha"):
         if not is_sha(r.get(k)):
             raise Unsupported(f"{k} is missing or not a full SHA")
+    errs = writer.validate(r, strict=False)
+    if errs:
+        more = [f"... and {len(errs) - MAX_ERRORS} more"] if len(errs) > MAX_ERRORS else []
+        raise Unsupported(f"vstack/{pr}/{SKILL}.json fails validation:\n  " + "\n  ".join(errs[:MAX_ERRORS] + more))
     if r["head_sha"] != expect_head_sha:
         raise Stale(f"stale: written for head {r['head_sha']}, the PR head is {expect_head_sha}", r)
     if r["base_sha"] != expect_base_sha:

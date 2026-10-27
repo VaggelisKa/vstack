@@ -1,12 +1,12 @@
 """Write the review's result for one PR to <git-common-dir>/vstack/<pr>/review.json,
 where other skills can read it.
 
-Usage: python3 -I write-result.py [--pr N] --head-sha SHA --base-sha SHA
-                                  --merge-base SHA [--file PATH]
+Usage: python3 -I write-result.py [--pr N] --head-sha SHA --base-sha SHA [--file PATH]
 
 The result is a JSON object on stdin, or in --file, matching
 references/result-schema.md. schema_version, skill, pr (from --pr), head_sha,
-base_sha, merge_base (from their options), merge_ok (computed) and written_at
+base_sha (from their options), merge_base
+(`git merge-base --all`, which must give exactly one commit), merge_ok (computed) and written_at
 (now, UTC) are filled in when missing; a value given both in the result and as
 an option, or computed, must agree. Unknown fields are rejected. Each SHA must
 be a full 40 or 64 hex commit that exists in the repo.
@@ -38,10 +38,11 @@ MAX_ERRORS = 20
 MAX_PR = 2**31 - 1
 PR_ARG = re.compile(r"[1-9][0-9]*")
 SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
-SHA_OPTS = {"head_sha": "--head-sha", "base_sha": "--base-sha", "merge_base": "--merge-base"}
+SHA_OPTS = {"head_sha": "--head-sha", "base_sha": "--base-sha"}
 UTC = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d{1,9})?(Z|\+00:00)")
 DECISION = re.compile(r"(Ship with fixes|Ship|Rethink|Incomplete)(, based on .+)?")
 LINE_BREAKS = "\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"
+CONTROLS = frozenset(map(chr, [*range(0x20), 0x7f])) | frozenset(LINE_BREAKS)
 STATUS_FOR = {"Ship": "ship", "Ship with fixes": "fix", "Rethink": "rethink", "Incomplete": "unreviewed"}
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
@@ -81,8 +82,12 @@ def is_utc(v):
     return True
 
 
+def is_line(v):
+    return is_text(v) and CONTROLS.isdisjoint(v)
+
+
 def is_verdict(v):
-    return isinstance(v, str) and not any(c in v for c in LINE_BREAKS) and DECISION.fullmatch(v)
+    return is_line(v) and DECISION.fullmatch(v)
 
 
 def is_repo_path(v):
@@ -92,7 +97,7 @@ def is_repo_path(v):
 
 
 def kind(test, what):
-    def check(v, path, errs):
+    def check(v, path, errs, strict=True):
         if not test(v):
             errs.append(f"{path}: must be {what}")
     return check
@@ -104,26 +109,26 @@ def enum(*values, null=False):
 
 
 def list_of(item):
-    def check(v, path, errs):
+    def check(v, path, errs, strict=True):
         if not isinstance(v, list):
             errs.append(f"{path}: must be a list")
             return
         for i, x in enumerate(v):
-            item(x, f"{path}[{i}]", errs)
+            item(x, f"{path}[{i}]", errs, strict)
     return check
 
 
 def obj(spec):
-    def check(v, path, errs):
+    def check(v, path, errs, strict=True):
         if not isinstance(v, dict):
             errs.append(f"{path or 'result'}: must be an object")
             return
         for k in v:
-            if k not in spec:
+            if strict and k not in spec:
                 errs.append(f"{join(path, repr(cap(k)))}: unknown field")
         for k, field in spec.items():
             if k in v:
-                field(v[k], join(path, k), errs)
+                field(v[k], join(path, k), errs, strict)
             else:
                 errs.append(f"{join(path, k)}: missing")
     return check
@@ -131,6 +136,7 @@ def obj(spec):
 
 TEXT = kind(is_text, "a non-empty string")
 BOOL = kind(lambda v: isinstance(v, bool), "true or false")
+LINE = kind(is_line, "one line of text with no control characters")
 
 COMMON = {
     "schema_version": kind(lambda v: is_int(v) and v == SCHEMA_VERSION, str(SCHEMA_VERSION)),
@@ -144,16 +150,16 @@ COMMON = {
 
 FIELDS = {
     "status": enum("ship", "fix", "rethink", "unreviewed"),
-    "verdict": kind(is_verdict, "one line: Ship, Ship with fixes, Rethink or Incomplete, "
-                                "optionally followed by ', based on ...'"),
+    "verdict": kind(is_verdict, "one line with no control characters: Ship, Ship with fixes, Rethink "
+                                "or Incomplete, optionally followed by ', based on ...'"),
     "score": kind(lambda v: v is None or (is_number(v) and 0 <= v <= 10), "a number from 0 to 10 or null"),
     "findings": list_of(obj({
-        "id": TEXT,
+        "id": LINE,
         "severity": enum("blocker", "major", "minor", "nit"),
         "file": kind(is_repo_path, "a repo-relative path (no leading /, drive, backslash or .. segment)"),
         "line": kind(lambda v: v is None or (is_int(v) and v >= 1), "an integer >= 1 or null"),
-        "rule": TEXT,
-        "summary": TEXT,
+        "rule": LINE,
+        "summary": LINE,
         "verified": BOOL,
     })),
     "unreviewed_areas": list_of(TEXT),
@@ -186,6 +192,16 @@ def consistent(r, errs):
     if r["merge_ok"] != merge_ok(r):
         errs.append("merge_ok: must be true exactly when status is ship, partial is false "
                     "and unreviewed_areas is empty")
+
+
+def validate(r, strict=True):
+    """Every problem with result r, as a list of messages that don't echo its
+    values. With strict=False (readers), unknown fields are allowed."""
+    errs = []
+    obj({**COMMON, **FIELDS})(r, "", errs, strict)
+    if not errs:
+        consistent(r, errs)
+    return errs
 
 
 def no_constants(name):
@@ -243,6 +259,17 @@ def check_commit(opt, sha):
         raise Usage(f"{opt} must be a full SHA, 40 or 64 lowercase hex characters")
     if git("cat-file", "-e", f"{sha}^{{commit}}").returncode != 0:
         raise Usage(f"{opt} is not a commit in this repo (fetch it first)")
+
+
+def merge_base(base, head):
+    r = git("merge-base", "--all", base, head)
+    if r.returncode not in (0, 1):
+        raise Usage(f"can't find the merge base: git exited {r.returncode}")
+    shas = r.stdout.split()
+    if len(shas) != 1:
+        raise Usage(f"the base and head have {'no' if not shas else 'several'} merge bases; "
+                    "need exactly one")
+    return shas[0]
 
 
 def fill(r, given, errs):
@@ -315,13 +342,12 @@ def main():
         for k, opt in SHA_OPTS.items():
             check_commit(opt, getattr(a, k))
             given[k] = getattr(a, k)
+        given["merge_base"] = merge_base(a.base_sha, a.head_sha)
         r = read(a.file)
         errs = []
         fill(r, given, errs)
         r.setdefault("merge_ok", merge_ok(r))
-        obj({**COMMON, **FIELDS})(r, "", errs)
-        if not errs:
-            consistent(r, errs)
+        errs += validate(r)
         if errs:
             more = [f"... and {len(errs) - MAX_ERRORS} more"] if len(errs) > MAX_ERRORS else []
             raise Usage("invalid result:\n  " + "\n  ".join(errs[:MAX_ERRORS] + more))
@@ -332,11 +358,12 @@ def main():
     print(path)
 
 
-try:
-    main()
-except OSError as e:
-    print(f"write-result: internal error: {e.strerror or type(e).__name__}", file=sys.stderr)
-    sys.exit(4)
-except Exception as e:
-    print(f"write-result: internal error: {type(e).__name__}", file=sys.stderr)
-    sys.exit(4)
+if __name__ == "__main__":
+    try:
+        main()
+    except OSError as e:
+        print(f"write-result: internal error: {e.strerror or type(e).__name__}", file=sys.stderr)
+        sys.exit(4)
+    except Exception as e:
+        print(f"write-result: internal error: {type(e).__name__}", file=sys.stderr)
+        sys.exit(4)

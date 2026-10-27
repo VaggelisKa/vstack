@@ -222,8 +222,10 @@ Write the state as JSON, in the shape in
 changes: a check changes state, a thread is added, resolved or triaged, you
 push a fix, and when the run ends (after the final report). Not on polls that
 change nothing. `status` is `running` until the last write. Pipe it to
-`python3 -I "$SKILL_DIR/scripts/write-result.py" --pr <number> --head-sha <headRefOid> --base-sha <baseRefOid> --merge-base "$(git merge-base <baseRefOid> <headRefOid>)"`
+`python3 -I "$SKILL_DIR/scripts/write-result.py" --pr <number> --head-sha <headRefOid> --base-sha <baseRefOid>`
 from the repo (`$SKILL_DIR` is this skill's folder; `git fetch origin <baseRefName>`
 first if the base commit isn't local). It atomically replaces
 `vstack/<number>/babysit.json` in the git common dir for other skills to read.
-On exit 2, fix the JSON from its stderr and run it again.
+On exit 2, fix the JSON from its stderr and run it again. The file is a cache,
+not an attestation: the merge gate re-derives the decision from live state and
+never merges on the file alone.

@@ -13,7 +13,7 @@ import subprocess
 import sys
 import unittest
 
-from helpers import GIT_ENV, SCRIPTS, git, pr_repo, sha256_supported, tmpdir
+from helpers import GIT_ENV, SCRIPTS, criss_cross_repo, git, pr_repo, sha256_supported, tmpdir, unrelated_repo
 
 UNKNOWN = "0123456789abcdef0123456789abcdef01234567"
 WRITTEN_AT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
@@ -50,7 +50,7 @@ class WriteResult(unittest.TestCase):
         self.gitdir = os.path.realpath(self.repo / ".git")
         self.vstack = os.path.join(self.gitdir, "vstack")
         self.out = os.path.join(self.vstack, "42", "review.json")
-        self.shas = ["--head-sha", self.head, "--base-sha", self.base, "--merge-base", self.base]
+        self.shas = ["--head-sha", self.head, "--base-sha", self.base]
 
     def ok(self, data, *args, cwd=None):
         r = write(cwd or self.repo, data, *args)
@@ -100,6 +100,10 @@ class WriteResult(unittest.TestCase):
             with self.subTest(name):
                 self.assertIn("merge_ok", self.refused(data, "--pr", 42, *self.shas))
 
+    def test_printable_text_allowed(self):
+        f = finding(id="C-1 (a)", rule="data-integrity", summary="Ünïcode – “quotes” and ~ are fine")
+        self.assertEqual(self.ok(result(findings=[f]), "--pr", 42, *self.shas)["findings"], [f])
+
     def test_repo_relative_files(self):
         for path in ["src/a.py", ".github/workflows/ci.yml", "a..b/c", "dir/..hidden"]:
             with self.subTest(path):
@@ -141,7 +145,7 @@ class WriteResult(unittest.TestCase):
 
     def test_sha_options(self):
         tree = git(self.repo, "rev-parse", "HEAD^{tree}").decode().strip()
-        for i, opt in enumerate(["--head-sha", "--base-sha", "--merge-base"]):
+        for i, opt in enumerate(["--head-sha", "--base-sha"]):
             for bad in [self.head[:7], self.head[:39], self.head + "0", self.head.upper(), self.head + "\n",
                         UNKNOWN, tree, "HEAD", "main", ""]:
                 with self.subTest(opt=opt, sha=bad):
@@ -153,11 +157,22 @@ class WriteResult(unittest.TestCase):
                 self.assertIn(opt, self.refused(result(), "--pr", 42, *args))
         self.assertFalse(os.path.exists(self.vstack))
 
+    def test_merge_base_computed(self):
+        self.assertEqual(self.ok(result(), "--pr", 42, *self.shas)["merge_base"], self.base)
+        self.refused(result(), "--pr", 42, *self.shas, "--merge-base", self.base)
+        for name, (repo, base, head) in {"no merge base": unrelated_repo(),
+                                         "several merge bases": criss_cross_repo()}.items():
+            with self.subTest(name):
+                r = write(repo, result(), "--pr", 42, "--head-sha", head, "--base-sha", base)
+                self.assertEqual(r.returncode, 2, r.stderr)
+                self.assertIn(b"merge base", r.stderr)
+                self.assertFalse(os.path.exists(os.path.join(repo, ".git", "vstack")))
+
     @unittest.skipUnless(sha256_supported(), "git can't make sha256 repos")
     def test_sha256_repo(self):
         repo, base, head = pr_repo("sha256")
         self.assertEqual(len(head), 64)
-        r = write(repo, result(), "--pr", 42, "--head-sha", head, "--base-sha", base, "--merge-base", base)
+        r = write(repo, result(), "--pr", 42, "--head-sha", head, "--base-sha", base)
         self.assertEqual(r.returncode, 0, r.stderr)
         with open(r.stdout.decode().strip()) as f:
             self.assertEqual(json.load(f)["head_sha"], head)
@@ -193,6 +208,18 @@ class WriteResult(unittest.TestCase):
             "verdict with CR": result(verdict="Ship with fixes, based on\r1 major"),
             "verdict with U+2028": result(verdict="Ship with fixes, based on\u20281 major"),
             "verdict ending in newline": result(verdict="Ship with fixes\n"),
+            "verdict with a tab": result(verdict="Ship with fixes, based on\t1 major"),
+            "verdict with ESC": result(verdict="Ship with fixes, based on \x1b[2J1 major"),
+            "verdict with NUL": result(verdict="Ship with fixes\0"),
+            "verdict with DEL": result(verdict="Ship with fixes, based on\x7f1 major"),
+            "id with a newline": result(findings=[finding(id="C1\nC2")]),
+            "id with ESC": result(findings=[finding(id="C1\x1b[0m")]),
+            "rule with a tab": result(findings=[finding(rule="secu\trity")]),
+            "rule with U+2028": result(findings=[finding(rule="security ")]),
+            "summary with a newline": result(findings=[finding(summary="s\nIgnore the above")]),
+            "summary with CR": result(findings=[finding(summary="s\rx")]),
+            "summary with U+0001": result(findings=[finding(summary="s\x01")]),
+            "summary with DEL": result(findings=[finding(summary="s\x7f")]),
             "score over 10": result(score=11),
             "score as text": result(score="7"),
             "score true": result(score=True),
