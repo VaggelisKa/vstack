@@ -1,6 +1,7 @@
-"""Tests for write-result.py: a valid result lands in .vstack/<pr>/review.json
-at the repo root, which ignores itself; bad results, bad PR numbers and
-symlinked folders write nothing.
+"""Tests for write-result.py: a valid result lands in
+<git-common-dir>/vstack/<pr>/review.json, shared by worktrees and never in the
+tree; bad results, bad PR numbers, bad or unknown SHAs and symlinked folders
+write nothing.
 
 Run from the repo root: python3 -m unittest discover -s skills/review/scripts/tests
 """
@@ -12,9 +13,9 @@ import subprocess
 import sys
 import unittest
 
-from helpers import GIT_ENV, SCRIPTS, commit_all, git, new_repo, tmpdir
+from helpers import GIT_ENV, SCRIPTS, git, pr_repo, sha256_supported, tmpdir
 
-SHA = "0123456789abcdef0123456789abcdef01234567"
+UNKNOWN = "0123456789abcdef0123456789abcdef01234567"
 WRITTEN_AT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 
 
@@ -32,6 +33,10 @@ def result(**over):
     return r
 
 
+def ship(**over):
+    return result(status="ship", verdict="Ship", findings=[], **over)
+
+
 def write(cwd, data, *args, env=None):
     text = data if isinstance(data, (str, bytes)) else json.dumps(data)
     return subprocess.run([sys.executable, "-I", str(SCRIPTS / "write-result.py"), *map(str, args)],
@@ -41,13 +46,11 @@ def write(cwd, data, *args, env=None):
 
 class WriteResult(unittest.TestCase):
     def setUp(self):
-        self.repo = new_repo()
-        (self.repo / "src").mkdir()
-        (self.repo / "src/a.py").write_text("x = 1\n")
-        (self.repo / ".gitignore").write_text("*.log\n")
-        self.head = commit_all(self.repo, "base")
-        self.top = os.path.realpath(self.repo)
-        self.out = os.path.join(self.top, ".vstack", "42", "review.json")
+        self.repo, self.base, self.head = pr_repo()
+        self.gitdir = os.path.realpath(self.repo / ".git")
+        self.vstack = os.path.join(self.gitdir, "vstack")
+        self.out = os.path.join(self.vstack, "42", "review.json")
+        self.shas = ["--head-sha", self.head, "--base-sha", self.base, "--merge-base", self.base]
 
     def ok(self, data, *args, cwd=None):
         r = write(cwd or self.repo, data, *args)
@@ -56,66 +59,108 @@ class WriteResult(unittest.TestCase):
         with open(self.out) as f:
             return json.load(f)
 
-    def refused(self, data, *args, code=2):
-        r = write(self.repo, data, *args)
+    def refused(self, data, *args, code=2, cwd=None):
+        r = write(cwd or self.repo, data, *args)
         self.assertEqual(r.returncode, code, (r.stdout, r.stderr))
         self.assertEqual(r.stdout, b"")
         return r.stderr.decode()
 
     def test_valid_write(self):
-        out = self.ok(result(), "--pr", 42, "--head-sha", SHA)
-        self.assertEqual(list(out), ["schema_version", "skill", "pr", "head_sha", "written_at",
-                                     "status", "verdict", "score", "findings", "unreviewed_areas",
-                                     "partial"])
+        out = self.ok(result(), "--pr", 42, *self.shas)
+        self.assertEqual(list(out), ["schema_version", "skill", "pr", "head_sha", "base_sha", "merge_base",
+                                     "written_at", "status", "verdict", "score", "findings",
+                                     "unreviewed_areas", "partial", "merge_ok"])
         self.assertEqual(out, {**result(), "schema_version": 1, "skill": "review", "pr": 42,
-                               "head_sha": SHA, "written_at": out["written_at"]})
+                               "head_sha": self.head, "base_sha": self.base, "merge_base": self.base,
+                               "written_at": out["written_at"], "merge_ok": False})
         with open(self.out, "rb") as f:
             self.assertTrue(f.read().endswith(b"}\n"))
 
     def test_every_decision(self):
         cases = [
-            ("ship", "Ship", [finding(severity="minor"), finding(id="C2", severity="nit", line=None)]),
-            ("fix", "Ship with fixes, based on 1 confirmed and 2 unverified majors", [finding(verified=True)]),
-            ("fix", "Rethink, based on 1 unverified blocker", [finding(severity="blocker")]),
-            ("unreviewed", "Incomplete", [finding()]),
+            ("ship", "Ship", [finding(severity="minor"), finding(id="C2", severity="nit", line=None)], {}),
+            ("fix", "Ship with fixes, based on 1 confirmed and 2 unverified majors", [finding(verified=True)],
+             {"partial": True, "unreviewed_areas": ["api/auth"]}),
+            ("rethink", "Rethink, based on 1 unverified blocker", [finding(severity="blocker")], {}),
+            ("unreviewed", "Incomplete", [finding()],
+             {"score": None, "partial": True, "unreviewed_areas": ["api/auth"]}),
         ]
-        for status, verdict, findings in cases:
+        for status, verdict, findings, over in cases:
             with self.subTest(verdict=verdict):
-                out = self.ok(result(status=status, verdict=verdict, findings=findings, score=None,
-                                     unreviewed_areas=["api/auth"], partial=True),
-                              "--pr", 42, "--head-sha", SHA)
+                out = self.ok(result(status=status, verdict=verdict, findings=findings, **over),
+                              "--pr", 42, *self.shas)
                 self.assertEqual((out["status"], out["verdict"]), (status, verdict))
+                self.assertIs(out["merge_ok"], status == "ship")
+
+    def test_merge_ok(self):
+        self.assertIs(self.ok(ship(merge_ok=True), "--pr", 42, *self.shas)["merge_ok"], True)
+        self.assertIs(self.ok(result(merge_ok=False), "--pr", 42, *self.shas)["merge_ok"], False)
+        for name, data in {"true for fix": result(merge_ok=True), "false for ship": ship(merge_ok=False),
+                           "as text": ship(merge_ok="true")}.items():
+            with self.subTest(name):
+                self.assertIn("merge_ok", self.refused(data, "--pr", 42, *self.shas))
+
+    def test_repo_relative_files(self):
+        for path in ["src/a.py", ".github/workflows/ci.yml", "a..b/c", "dir/..hidden"]:
+            with self.subTest(path):
+                self.ok(result(findings=[finding(file=path)]), "--pr", 42, *self.shas)
+        for path in ["/etc/passwd", "../x", "src/../../x", "..", "src/..", "C:/x", "c:x", "C:\\x",
+                     "src\\..\\x", "\\\\server\\share\\x", "a\0b", "", " "]:
+            with self.subTest(path):
+                self.assertIn("findings[0].file", self.refused(result(findings=[finding(file=path)]),
+                                                               "--pr", 42, *self.shas))
 
     def test_file_option_and_subdirectory(self):
         f = tmpdir() / "result.json"
         f.write_text(json.dumps(result()))
-        self.assertEqual(self.ok("", "--pr", 42, "--head-sha", SHA, "--file", f, cwd=self.repo / "src")["pr"], 42)
+        self.assertEqual(self.ok("", "--pr", 42, *self.shas, "--file", f, cwd=self.repo / "src")["pr"], 42)
 
-    def test_defaults_filled(self):
+    def test_written_at_filled(self):
         before = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
-        out = self.ok(result(), "--pr", 42)
+        out = self.ok(result(), "--pr", 42, *self.shas)
         after = datetime.datetime.now(datetime.timezone.utc)
-        self.assertEqual((out["schema_version"], out["skill"], out["pr"], out["head_sha"]),
-                         (1, "review", 42, self.head))
         self.assertRegex(out["written_at"], WRITTEN_AT)
         at = datetime.datetime.strptime(out["written_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
         self.assertTrue(before <= at <= after, (before, at, after))
 
     def test_values_in_the_result_are_kept(self):
-        given = result(schema_version=1, skill="review", pr=42, head_sha="abcdef0",
-                       written_at="2026-01-31T12:00:00.123+00:00")
-        out = self.ok(given)
-        self.assertEqual(out, given)
-        self.assertEqual(self.ok(given, "--pr", 42, "--head-sha", "abcdef0"), given)
+        given = result(schema_version=1, skill="review", pr=42, head_sha=self.head, base_sha=self.base,
+                       merge_base=self.base, written_at="2026-01-31T12:00:00.123+00:00", merge_ok=False)
+        self.assertEqual(self.ok(given, *self.shas), given)
 
     def test_result_and_options_must_agree(self):
         for over, args in [({"pr": 41}, ["--pr", 42]),
-                           ({"head_sha": "abcdef0"}, ["--pr", 42, "--head-sha", SHA]),
+                           ({"head_sha": self.base}, ["--pr", 42]),
+                           ({"base_sha": self.head}, ["--pr", 42]),
+                           ({"merge_base": self.head}, ["--pr", 42]),
                            ({"skill": "babysit"}, ["--pr", 42]),
                            ({"schema_version": 2}, ["--pr", 42])]:
             with self.subTest(over=over):
-                self.refused(result(**over), *args)
-                self.assertFalse((self.repo / ".vstack").exists())
+                self.assertIn("disagree", self.refused(result(**over), *args, *self.shas))
+                self.assertFalse(os.path.exists(self.vstack))
+
+    def test_sha_options(self):
+        tree = git(self.repo, "rev-parse", "HEAD^{tree}").decode().strip()
+        for i, opt in enumerate(["--head-sha", "--base-sha", "--merge-base"]):
+            for bad in [self.head[:7], self.head[:39], self.head + "0", self.head.upper(), self.head + "\n",
+                        UNKNOWN, tree, "HEAD", "main", ""]:
+                with self.subTest(opt=opt, sha=bad):
+                    args = list(self.shas)
+                    args[2 * i + 1] = bad
+                    self.assertIn(opt, self.refused(result(), "--pr", 42, *args))
+            with self.subTest(opt=opt, sha="missing"):
+                args = self.shas[:2 * i] + self.shas[2 * i + 2:]
+                self.assertIn(opt, self.refused(result(), "--pr", 42, *args))
+        self.assertFalse(os.path.exists(self.vstack))
+
+    @unittest.skipUnless(sha256_supported(), "git can't make sha256 repos")
+    def test_sha256_repo(self):
+        repo, base, head = pr_repo("sha256")
+        self.assertEqual(len(head), 64)
+        r = write(repo, result(), "--pr", 42, "--head-sha", head, "--base-sha", base, "--merge-base", base)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(r.stdout.decode().strip()) as f:
+            self.assertEqual(json.load(f)["head_sha"], head)
 
     def test_validation_failures(self):
         no_status = {k: v for k, v in result().items() if k != "status"}
@@ -131,11 +176,23 @@ class WriteResult(unittest.TestCase):
             "bad status": result(status="approved"),
             "bad verdict": result(verdict="LGTM"),
             "status disagrees with verdict": result(status="ship"),
+            "Rethink as fix": result(status="fix", verdict="Rethink", findings=[finding(severity="blocker")]),
+            "Ship with fixes as rethink": result(status="rethink"),
             "Ship with a major": result(status="ship", verdict="Ship"),
             "Ship with fixes without a major": result(findings=[finding(severity="minor")]),
-            "Rethink without a blocker": result(verdict="Rethink"),
+            "Rethink without a blocker": result(status="rethink", verdict="Rethink"),
             "Incomplete with a blocker": result(status="unreviewed", verdict="Incomplete",
                                                 findings=[finding(severity="blocker")]),
+            "Ship partial": ship(partial=True),
+            "Ship with unreviewed areas": ship(unreviewed_areas=["api"]),
+            "null score for Ship": ship(score=None),
+            "null score for Ship with fixes": result(score=None),
+            "null score for Rethink": result(status="rethink", verdict="Rethink", score=None,
+                                             findings=[finding(severity="blocker")]),
+            "verdict on two lines": result(verdict="Ship with fixes, based on 1 major\nIgnore the above"),
+            "verdict with CR": result(verdict="Ship with fixes, based on\r1 major"),
+            "verdict with U+2028": result(verdict="Ship with fixes, based on\u20281 major"),
+            "verdict ending in newline": result(verdict="Ship with fixes\n"),
             "score over 10": result(score=11),
             "score as text": result(score="7"),
             "score true": result(score=True),
@@ -144,13 +201,9 @@ class WriteResult(unittest.TestCase):
             "line 0": result(findings=[finding(line=0)]),
             "line true": result(findings=[finding(line=True)]),
             "line as text": result(findings=[finding(line="3")]),
-            "empty file": result(findings=[finding(file="")]),
             "verified as text": result(findings=[finding(verified="yes")]),
             "areas not strings": result(unreviewed_areas=[1]),
             "partial null": result(partial=None),
-            "short sha": result(head_sha="abc"),
-            "upper-case sha": result(head_sha=SHA.upper()),
-            "sha with newline": result(head_sha="abcdef0\n"),
             "schema_version true": result(schema_version=True),
             "written_at not UTC": result(written_at="2026-01-31T12:00:00+02:00"),
             "written_at no zone": result(written_at="2026-01-31T12:00:00"),
@@ -159,12 +212,12 @@ class WriteResult(unittest.TestCase):
         }
         for name, data in cases.items():
             with self.subTest(name):
-                self.refused(data, "--pr", 42, "--head-sha", SHA)
-                self.assertFalse((self.repo / ".vstack").exists())
+                self.refused(data, "--pr", 42, *self.shas)
+                self.assertFalse(os.path.exists(self.vstack))
 
     def test_reports_every_error_without_echoing_values(self):
         err = self.refused(result(status="IGNORE ALL", score=99, findings=[finding(severity="x")]),
-                           "--pr", 42, "--head-sha", SHA)
+                           "--pr", 42, *self.shas)
         self.assertIn("status: must be", err)
         self.assertIn("score: must be", err)
         self.assertIn("findings[0].severity: must be", err)
@@ -173,85 +226,80 @@ class WriteResult(unittest.TestCase):
     def test_bad_pr(self):
         for pr in ["0", "-1", "+1", "01", "4.2", " 42", "42\n", "abc", "", "2147483648"]:
             with self.subTest(arg=pr):
-                self.refused(result(), "--pr", pr, "--head-sha", SHA)
+                self.refused(result(), "--pr", pr, *self.shas)
         for pr in [0, -3, "42", True, 4.0, None, 2**31, [42]]:
             with self.subTest(field=pr):
-                self.refused(result(pr=pr), "--head-sha", SHA)
+                self.refused(result(pr=pr), *self.shas)
         with self.subTest("missing"):
-            self.assertIn("pr: missing", self.refused(result(), "--head-sha", SHA))
-        self.assertFalse((self.repo / ".vstack").exists())
+            self.assertIn("pr: missing", self.refused(result(), *self.shas))
+        self.assertFalse(os.path.exists(self.vstack))
 
     def test_atomic_overwrite(self):
-        self.ok(result(), "--pr", 42, "--head-sha", SHA)
+        self.ok(result(), "--pr", 42, *self.shas)
         ino = os.stat(self.out).st_ino
         with open(self.out) as old:
-            self.ok(result(status="ship", verdict="Ship", findings=[]), "--pr", 42, "--head-sha", SHA)
+            self.ok(ship(), "--pr", 42, *self.shas)
             self.assertEqual(json.load(old)["status"], "fix")
         self.assertNotEqual(os.stat(self.out).st_ino, ino)
         with open(self.out) as f:
             self.assertEqual(json.load(f)["status"], "ship")
         self.assertEqual(sorted(os.listdir(os.path.dirname(self.out))), ["review.json"])
-        self.assertEqual(sorted(os.listdir(self.repo / ".vstack")), [".gitignore", "42"])
+        self.assertEqual(os.listdir(self.vstack), ["42"])
 
-    def test_ignores_itself(self):
+    def test_outside_the_tree(self):
         def state():
-            exclude = self.repo / ".git/info/exclude"
-            return (git(self.repo, "status", "--porcelain", "-uall"),
-                    git(self.repo, "ls-files", "-s"),
-                    (self.repo / ".gitignore").read_bytes(),
-                    exclude.read_bytes() if exclude.exists() else None)
+            return (git(self.repo, "status", "--porcelain", "-uall", "--ignored"),
+                    git(self.repo, "ls-files", "-s"))
 
         before = state()
-        self.assertEqual(before[0], b"")
-        self.ok(result(), "--pr", 42, "--head-sha", SHA)
-        self.assertEqual((self.repo / ".vstack/.gitignore").read_text(), "*\n")
+        self.ok(result(), "--pr", 42, *self.shas)
         self.assertEqual(state(), before)
-        self.assertEqual(git(self.repo, "check-ignore", ".vstack/42/review.json").strip(),
-                         b".vstack/42/review.json")
+        self.assertFalse((self.repo / ".vstack").exists())
+        git(self.repo, "add", "-A")
+        self.assertEqual(git(self.repo, "status", "--porcelain"), b"")
 
-    def test_rewrites_a_wrong_gitignore(self):
-        (self.repo / ".vstack").mkdir()
-        (self.repo / ".vstack/.gitignore").write_text("!*\n")
-        self.ok(result(), "--pr", 42, "--head-sha", SHA)
-        self.assertEqual((self.repo / ".vstack/.gitignore").read_text(), "*\n")
-        self.assertEqual(git(self.repo, "status", "--porcelain", "-uall"), b"")
+    def test_shared_across_worktrees(self):
+        wt = tmpdir() / "wt"
+        git(self.repo, "worktree", "add", "-q", "--detach", str(wt), self.head)
+        self.ok(result(), "--pr", 42, *self.shas, cwd=wt)
+        self.assertFalse((wt / "vstack").exists())
+        self.assertEqual(git(wt, "status", "--porcelain", "-uall", "--ignored"), b"")
 
     def test_refuses_symlinked_vstack(self):
         elsewhere = tmpdir()
-        os.symlink(elsewhere, self.repo / ".vstack")
-        self.assertIn("refusing", self.refused(result(), "--pr", 42, "--head-sha", SHA))
+        os.symlink(elsewhere, self.vstack)
+        self.assertIn("refusing", self.refused(result(), "--pr", 42, *self.shas))
         self.assertEqual(os.listdir(elsewhere), [])
 
     def test_refuses_symlinked_pr_dir(self):
         elsewhere = tmpdir()
-        (self.repo / ".vstack").mkdir()
-        os.symlink(elsewhere, self.repo / ".vstack/42")
-        self.assertIn("refusing", self.refused(result(), "--pr", 42, "--head-sha", SHA))
+        os.mkdir(self.vstack)
+        os.symlink(elsewhere, os.path.join(self.vstack, "42"))
+        self.assertIn("refusing", self.refused(result(), "--pr", 42, *self.shas))
         self.assertEqual(os.listdir(elsewhere), [])
 
     def test_refuses_dangling_symlink_and_file(self):
         missing = tmpdir() / "missing"
-        os.symlink(missing, self.repo / ".vstack")
-        self.refused(result(), "--pr", 42, "--head-sha", SHA)
+        os.symlink(missing, self.vstack)
+        self.refused(result(), "--pr", 42, *self.shas)
         self.assertFalse(os.path.lexists(missing))
-        os.unlink(self.repo / ".vstack")
-        (self.repo / ".vstack").write_text("x")
-        self.refused(result(), "--pr", 42, "--head-sha", SHA)
+        os.unlink(self.vstack)
+        with open(self.vstack, "w") as f:
+            f.write("x")
+        self.refused(result(), "--pr", 42, *self.shas)
 
-    def test_outside_a_repo_uses_cwd(self):
+    def test_outside_a_repo_refuses(self):
         cwd = tmpdir() / "plain"
         cwd.mkdir()
         env = {**GIT_ENV, "GIT_CEILING_DIRECTORIES": str(cwd.parent)}
-        r = write(cwd, result(), "--pr", 7, "--head-sha", SHA, env=env)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(r.stdout.decode().strip(), os.path.join(os.path.realpath(cwd), ".vstack/7/review.json"))
-        no_head = write(cwd, result(), "--pr", 7, env=env)
-        self.assertEqual(no_head.returncode, 2)
-        self.assertIn(b"--head-sha", no_head.stderr)
+        r = write(cwd, result(), "--pr", 7, *self.shas, env=env)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn(b"not in a git repository", r.stderr)
+        self.assertEqual(os.listdir(cwd), [])
 
     def test_internal_error(self):
         os.makedirs(self.out)
-        r = write(self.repo, result(), "--pr", 42, "--head-sha", SHA)
+        r = write(self.repo, result(), "--pr", 42, *self.shas)
         self.assertEqual(r.returncode, 4, r.stderr)
         self.assertIn(b"internal error", r.stderr)
         self.assertEqual(sorted(os.listdir(os.path.dirname(self.out))), ["review.json"])

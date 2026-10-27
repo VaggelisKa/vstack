@@ -7,6 +7,8 @@ Personal agent skills, packaged as one plugin (`vstack`) for Claude Code, Codex,
 - `remove-comments`: delete comment noise from a change and check that no code changed
 - `review`: read-only multi-lens code review of a PR, branch or path
 
+`review` and `babysit` record each PR's outcome as JSON in `$(git rev-parse --git-common-dir)/vstack/<pr>/<skill>.json`, outside the working tree; read it with the skill's `scripts/read-result.py`.
+
 ## Install
 
 ### Claude Code

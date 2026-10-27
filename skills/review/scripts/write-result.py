@@ -1,20 +1,22 @@
-"""Write the review's result for one PR to .vstack/<pr>/review.json, where
-other skills can read it.
+"""Write the review's result for one PR to <git-common-dir>/vstack/<pr>/review.json,
+where other skills can read it.
 
-Usage: python3 -I write-result.py [--pr N] [--head-sha SHA] [--file PATH]
+Usage: python3 -I write-result.py [--pr N] --head-sha SHA --base-sha SHA
+                                  --merge-base SHA [--file PATH]
 
 The result is a JSON object on stdin, or in --file, matching
-references/result-schema.md. schema_version, skill, pr (from --pr), head_sha
-(from --head-sha, else `git rev-parse HEAD`) and written_at (now, UTC) are
-filled in when missing; a value given both in the result and as an option must
-agree. Unknown fields are rejected.
+references/result-schema.md. schema_version, skill, pr (from --pr), head_sha,
+base_sha, merge_base (from their options), merge_ok (computed) and written_at
+(now, UTC) are filled in when missing; a value given both in the result and as
+an option, or computed, must agree. Unknown fields are rejected. Each SHA must
+be a full 40 or 64 hex commit that exists in the repo.
 
-The file goes in <root>/.vstack/<pr>/, where <root> is the git toplevel of the
-current directory, or the current directory outside a repo. .vstack holds a
-.gitignore of "*", so it ignores itself and no tracked file changes. A .vstack
-or <pr> that is a symlink or not a directory is refused. The JSON is written to
-a temp file in the same folder and renamed over the old one, so a reader sees
-the old file or the new one, never part of one. Prints the path written.
+The file goes in `git rev-parse --git-common-dir`, so it can't be committed and
+every worktree of the repo shares it. Outside a git repo nothing is written. A
+vstack or <pr> folder that is a symlink or not a directory is refused. The JSON
+is written to a temp file in the same folder and renamed over the old one, so a
+reader sees the old file or the new one, never part of one. Prints the path
+written.
 
 Exits 0 ok, 2 usage or validation error (reasons on stderr; a result that fails
 validation writes nothing), 4 internal error.
@@ -35,10 +37,12 @@ MAX_BYTES = 1024 * 1024
 MAX_ERRORS = 20
 MAX_PR = 2**31 - 1
 PR_ARG = re.compile(r"[1-9][0-9]*")
-SHA = re.compile(r"[0-9a-f]{7,40}")
+SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+SHA_OPTS = {"head_sha": "--head-sha", "base_sha": "--base-sha", "merge_base": "--merge-base"}
 UTC = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d{1,9})?(Z|\+00:00)")
-DECISION = re.compile(r"(Ship with fixes|Ship|Rethink|Incomplete)(, based on .+)?", re.DOTALL)
-STATUS_FOR = {"Ship": "ship", "Ship with fixes": "fix", "Rethink": "fix", "Incomplete": "unreviewed"}
+DECISION = re.compile(r"(Ship with fixes|Ship|Rethink|Incomplete)(, based on .+)?")
+LINE_BREAKS = "\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"
+STATUS_FOR = {"Ship": "ship", "Ship with fixes": "fix", "Rethink": "rethink", "Incomplete": "unreviewed"}
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
 
@@ -75,6 +79,16 @@ def is_utc(v):
     except ValueError:
         return False
     return True
+
+
+def is_verdict(v):
+    return isinstance(v, str) and not any(c in v for c in LINE_BREAKS) and DECISION.fullmatch(v)
+
+
+def is_repo_path(v):
+    if not is_text(v) or "\\" in v or "\0" in v or v.startswith("/") or re.match(r"[A-Za-z]:", v):
+        return False
+    return ".." not in v.split("/")
 
 
 def kind(test, what):
@@ -122,19 +136,21 @@ COMMON = {
     "schema_version": kind(lambda v: is_int(v) and v == SCHEMA_VERSION, str(SCHEMA_VERSION)),
     "skill": kind(lambda v: v == SKILL, f'"{SKILL}"'),
     "pr": kind(lambda v: is_int(v) and 1 <= v <= MAX_PR, "a positive integer"),
-    "head_sha": kind(lambda v: isinstance(v, str) and SHA.fullmatch(v), "7 to 40 lowercase hex characters"),
+    "head_sha": kind(lambda v: isinstance(v, str) and SHA.fullmatch(v), "40 or 64 lowercase hex characters"),
+    "base_sha": kind(lambda v: isinstance(v, str) and SHA.fullmatch(v), "40 or 64 lowercase hex characters"),
+    "merge_base": kind(lambda v: isinstance(v, str) and SHA.fullmatch(v), "40 or 64 lowercase hex characters"),
     "written_at": kind(is_utc, "an ISO 8601 UTC time such as 2026-01-31T12:00:00Z"),
 }
 
 FIELDS = {
-    "status": enum("ship", "fix", "unreviewed"),
-    "verdict": kind(lambda v: isinstance(v, str) and DECISION.fullmatch(v),
-                    "Ship, Ship with fixes, Rethink or Incomplete, optionally followed by ', based on ...'"),
+    "status": enum("ship", "fix", "rethink", "unreviewed"),
+    "verdict": kind(is_verdict, "one line: Ship, Ship with fixes, Rethink or Incomplete, "
+                                "optionally followed by ', based on ...'"),
     "score": kind(lambda v: v is None or (is_number(v) and 0 <= v <= 10), "a number from 0 to 10 or null"),
     "findings": list_of(obj({
         "id": TEXT,
         "severity": enum("blocker", "major", "minor", "nit"),
-        "file": TEXT,
+        "file": kind(is_repo_path, "a repo-relative path (no leading /, drive, backslash or .. segment)"),
         "line": kind(lambda v: v is None or (is_int(v) and v >= 1), "an integer >= 1 or null"),
         "rule": TEXT,
         "summary": TEXT,
@@ -142,7 +158,12 @@ FIELDS = {
     })),
     "unreviewed_areas": list_of(TEXT),
     "partial": BOOL,
+    "merge_ok": BOOL,
 }
+
+
+def merge_ok(r):
+    return r.get("status") == "ship" and r.get("partial") is False and r.get("unreviewed_areas") == []
 
 
 def consistent(r, errs):
@@ -158,6 +179,13 @@ def consistent(r, errs):
         errs.append("verdict: Ship can't have a major finding")
     if decision == "Ship with fixes" and "major" not in severities:
         errs.append("verdict: Ship with fixes needs a major finding")
+    if r["score"] is None and decision != "Incomplete":
+        errs.append("score: only Incomplete can have a null score")
+    if decision == "Ship" and (r["partial"] or r["unreviewed_areas"]):
+        errs.append("verdict: Ship can't be partial or have unreviewed areas")
+    if r["merge_ok"] != merge_ok(r):
+        errs.append("merge_ok: must be true exactly when status is ship, partial is false "
+                    "and unreviewed_areas is empty")
 
 
 def no_constants(name):
@@ -201,30 +229,28 @@ def git(*args, cwd=None):
         raise Usage(f"can't run git: {e.strerror}")
 
 
-def root():
-    r = git("rev-parse", "--show-toplevel")
+def common_dir():
+    r = git("rev-parse", "--git-common-dir")
     if r.returncode == 0 and r.stdout.strip():
-        return os.path.realpath(r.stdout.strip())
+        return os.path.realpath(os.path.join(os.getcwd(), r.stdout.rstrip("\n")))
     if r.returncode == 128 and "not a git repository" in r.stderr:
-        return os.path.realpath(os.getcwd())
-    raise Usage(f"can't determine the repo root: git exited {r.returncode}")
+        raise Usage("not in a git repository: nothing written")
+    raise Usage(f"can't find the git common dir: git exited {r.returncode}")
 
 
-def head_sha(top):
-    r = git("rev-parse", "--verify", "--quiet", "HEAD", cwd=top)
-    if r.returncode != 0 or not r.stdout.strip():
-        raise Usage("head_sha is missing and git rev-parse HEAD failed: pass --head-sha")
-    return r.stdout.strip()
+def check_commit(opt, sha):
+    if not SHA.fullmatch(sha):
+        raise Usage(f"{opt} must be a full SHA, 40 or 64 lowercase hex characters")
+    if git("cat-file", "-e", f"{sha}^{{commit}}").returncode != 0:
+        raise Usage(f"{opt} is not a commit in this repo (fetch it first)")
 
 
-def fill(r, given, top, errs):
+def fill(r, given, errs):
     for k, v in given.items():
         if k not in r:
             r[k] = v
         elif type(r[k]) is not type(v) or r[k] != v:
             errs.append(f"{k}: the result and the option disagree")
-    if "head_sha" not in r:
-        r["head_sha"] = head_sha(top)
     if "written_at" not in r:
         r["written_at"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -259,35 +285,24 @@ def replace(dir_fd, name, data):
         raise
 
 
-def ignore_itself(vstack):
-    try:
-        fd = os.open(".gitignore", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=vstack)
-        with os.fdopen(fd, "rb") as f:
-            current = f.read(16)
-    except OSError:
-        current = None
-    if current != b"*\n":
-        replace(vstack, ".gitignore", b"*\n")
-
-
 def write(top, r):
     fds = []
     try:
         fds.append(os.open(top, os.O_RDONLY | os.O_DIRECTORY))
-        fds.append(open_dir(".vstack", fds[-1], ".vstack"))
-        ignore_itself(fds[-1])
-        fds.append(open_dir(str(r["pr"]), fds[-1], f".vstack/{r['pr']}"))
+        fds.append(open_dir("vstack", fds[-1], "vstack"))
+        fds.append(open_dir(str(r["pr"]), fds[-1], f"vstack/{r['pr']}"))
         replace(fds[-1], f"{SKILL}.json", (json.dumps(r, indent=2) + "\n").encode())
     finally:
         for fd in fds:
             os.close(fd)
-    return os.path.join(top, ".vstack", str(r["pr"]), f"{SKILL}.json")
+    return os.path.join(top, "vstack", str(r["pr"]), f"{SKILL}.json")
 
 
 def main():
     ap = argparse.ArgumentParser(prog="write-result.py")
     ap.add_argument("--pr")
-    ap.add_argument("--head-sha")
+    for opt in SHA_OPTS.values():
+        ap.add_argument(opt, required=True)
     ap.add_argument("--file", default="-")
     a = ap.parse_args()
     try:
@@ -296,14 +311,14 @@ def main():
             if not PR_ARG.fullmatch(a.pr) or int(a.pr) > MAX_PR:
                 raise Usage("--pr must be a positive integer")
             given["pr"] = int(a.pr)
-        if a.head_sha is not None:
-            if not SHA.fullmatch(a.head_sha):
-                raise Usage("--head-sha must be 7 to 40 lowercase hex characters")
-            given["head_sha"] = a.head_sha
+        top = common_dir()
+        for k, opt in SHA_OPTS.items():
+            check_commit(opt, getattr(a, k))
+            given[k] = getattr(a, k)
         r = read(a.file)
-        top = root()
         errs = []
-        fill(r, given, top, errs)
+        fill(r, given, errs)
+        r.setdefault("merge_ok", merge_ok(r))
         obj({**COMMON, **FIELDS})(r, "", errs)
         if not errs:
             consistent(r, errs)

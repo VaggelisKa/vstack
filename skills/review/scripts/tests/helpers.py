@@ -42,3 +42,22 @@ def commit_all(repo, msg):
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", msg)
     return git(repo, "rev-parse", "HEAD").decode().strip()
+
+
+def pr_repo(object_format=None):
+    """A repo on branch feature, one commit ahead of main. Returns (repo, base, head);
+    base is also the merge base."""
+    repo = tmpdir() / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main", *([f"--object-format={object_format}"] if object_format else []))
+    (repo / "src").mkdir()
+    (repo / "src/a.py").write_text("x = 1\n")
+    base = commit_all(repo, "base")
+    git(repo, "checkout", "-qb", "feature")
+    (repo / "src/a.py").write_text("x = 2\n")
+    return repo, base, commit_all(repo, "head")
+
+
+def sha256_supported():
+    probe = tmpdir()
+    return git(probe, "init", "-q", "--object-format=sha256", check=False).returncode == 0
