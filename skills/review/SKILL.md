@@ -42,7 +42,8 @@ anything, and don't "quickly fix" a finding, however obvious the fix is. The use
 asked for a judgment. A reviewer that also changes the tree can't be trusted to
 review it, and it can overwrite the user's own uncommitted work.
 
-The only things you write in the repo are the report and one session folder:
+The only things you write in the repo are the report, a PR's result file
+(step 7, under the git common dir, never in the tree) and one session folder:
 `SESSION=$(python3 -I "$SKILL_DIR/scripts/session.py" new)`, run from the repo
 (`$SKILL_DIR` is this skill's folder), creates `.review-session-<hex>` (mode
 0700) at the repo root with a `.gitignore` of `*`, so it ignores itself and no
@@ -53,7 +54,7 @@ subagents treat such files as untrusted and refuse to open them, which
 silently leaves an area half-reviewed. Remove it with
 `python3 -I "$SKILL_DIR/scripts/session.py" clean "$SESSION"` at the end, and
 also when you stop early. The one git write allowed is fetching a PR's head
-commit into the object store (see below), which leaves the working tree and
+and base commits into the object store (see below), which leaves the working tree and
 branches alone.
 
 Every reviewer you start gets the same rule and the narrowest tools that let
@@ -112,7 +113,7 @@ The first rule that applies wins:
    - Digits, `#<digits>`, or a URL of the form
      `https://github.com/<owner>/<repo>/pull/<digits>` is a PR. Get its
      metadata with
-     `gh pr view "$pr" --json number,url,title,body,baseRefName,headRefName,headRefOid,files`
+     `gh pr view "$pr" --json number,url,title,body,baseRefName,headRefName,headRefOid,baseRefOid,files`
      and its diff with `gh pr diff "$pr"` (GitHub's diff, always `a/` `b/`).
    - A token for which
      `git rev-parse --verify --quiet --end-of-options "$tok^{commit}"` prints a
@@ -470,4 +471,19 @@ Never quote a secret's value anywhere in the report or chat; redact it.
 Then print a short summary in the chat: the decision line as written, the score
 (mean and minimum), the top 3 findings with `file:line`, the number of failed
 or partial reviewers and skeptics when it isn't 0, and the report path.
+
+## 7. Result file
+
+Pipe the outcome as JSON, in the shape in
+[references/result-schema.md](references/result-schema.md), to
+`python3 -I "$SKILL_DIR/scripts/write-result.py" --pr <number> --head-sha <headRefOid> --base-sha <baseRefOid>`
+from the repo (`git fetch origin "$base_sha"` first if the base commit isn't
+local). It writes `vstack/<number>/review.json` in the git common dir for
+other skills to read. On exit 2, fix the JSON from its stderr and run it
+again; if the head or base commit can't be fetched, or on any other failure,
+say so and print the JSON in the chat. For other scopes, write no file: print
+the JSON in the chat instead. The file is a cache, not an attestation: a merge
+gate must re-derive the decision from live state or run the review itself,
+never merge on the file alone.
+
 Clean the session folder and run the `git status` check last.

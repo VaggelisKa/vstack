@@ -64,6 +64,7 @@
   or missing sentinels and ids, manifest gaps, injected text (never echoed),
   1 MB inputs, a ui-live skip, file names with form feeds or U+2028, and an
   internal error (exit 4, treated as `retry`). 92 tests in total (48 before).
+- For a PR, `write-result.py` writes the outcome to `vstack/<pr>/review.json` in the git common dir and `read-result.py` reads it back, refusing it as stale unless head and base match; both are tested against real temp repos and worktrees.
 
 > Not yet verified: `--cross` (running reviewers through codex, gemini or agy),
 > gemini's stdin prompt (help only), agy's stream-json stdin (not used),

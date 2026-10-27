@@ -34,7 +34,7 @@ and `gh pr merge --match-head-commit` are older). Check with `gh --version`.
 
 ## Setup
 
-1. Resolve the PR and repo: `gh pr view <pr> --json number,url,headRefName,baseRefName,headRefOid,state,isDraft`.
+1. Resolve the PR and repo: `gh pr view <pr> --json number,url,headRefName,baseRefName,headRefOid,baseRefOid,state,isDraft`.
 2. Check out the head branch locally (`gh pr checkout <pr>`). Make sure you can
    push to it; if not, run in reply-and-escalate mode only and say so.
 3. Find how to run the repo's tests, lint and type checks locally (README,
@@ -49,7 +49,7 @@ and `gh pr merge --match-head-commit` are older). Check with `gh --version`.
 Each poll, gather state for the current head SHA:
 
 ```bash
-gh pr view <pr> --json state,isDraft,headRefOid,mergeable,mergeStateStatus,reviewDecision,reviews,comments,labels,statusCheckRollup
+gh pr view <pr> --json state,isDraft,headRefOid,baseRefOid,mergeable,mergeStateStatus,reviewDecision,reviews,comments,labels,statusCheckRollup
 ```
 
 Each entry in `reviews` carries `commit.oid`, the SHA the review was made on.
@@ -214,3 +214,18 @@ checks status, review status and unresolved thread count, fix rounds used with
 commit links, replies posted, reruns, and **every open escalation with a link and
 the decision needed**. If branch protection couldn't be read, say so and that
 all checks were treated as required. Without `--merge`, end with whether it is ready to merge.
+
+### Result file
+
+Write the state as JSON, in the shape in
+[references/result-schema.md](references/result-schema.md), whenever it
+changes: a check changes state, a thread is added, resolved or triaged, you
+push a fix, and when the run ends (after the final report). Not on polls that
+change nothing. `status` is `running` until the last write. Pipe it to
+`python3 -I "$SKILL_DIR/scripts/write-result.py" --pr <number> --head-sha <headRefOid> --base-sha <baseRefOid>`
+from the repo (`$SKILL_DIR` is this skill's folder; `git fetch origin <baseRefName>`
+first if the base commit isn't local). It atomically replaces
+`vstack/<number>/babysit.json` in the git common dir for other skills to read.
+On exit 2, fix the JSON from its stderr and run it again. The file is a cache,
+not an attestation: the merge gate re-derives the decision from live state and
+never merges on the file alone.
