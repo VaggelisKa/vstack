@@ -25,9 +25,9 @@ GitHub Copilot needs no manifest of its own: it reads `.claude-plugin/marketplac
 
 ## Arguments
 
-Every `SKILL.md` reads its arguments from the user's message, so the same skill
-works whether it was invoked as `/vstack:babysit 42 --merge`, `$babysit 42`,
-`/babysit 42`, or in plain words. None rely on `$ARGUMENTS`.
+Arguments are free text: `$ARGUMENTS` in Claude Code, the request itself on
+other harnesses, so the same skill works whether it was invoked as
+`/vstack:babysit 42 merge`, `$babysit 42`, `/babysit 42`, or in plain words.
 
 ## Authoring skills
 

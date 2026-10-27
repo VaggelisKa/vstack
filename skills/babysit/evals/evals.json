@@ -158,6 +158,66 @@
         "Runs the resolveReviewThread mutation only for the bot-only thread",
         "Leaves the human thread unresolved and replies on it instead"
       ]
+    },
+    {
+      "id": 15,
+      "prompt": "/babysit 14 merge. Every gate passes on the head SHA.",
+      "expected_output": "The trailing `merge` turns merge mode on. Merges once every gate passes.",
+      "files": [],
+      "expectations": [
+        "Treats the request as merge mode and reads merge.md",
+        "Arms gh pr merge --auto --match-head-commit <headRefOid> only after every gate passes"
+      ]
+    },
+    {
+      "id": 16,
+      "prompt": "babysit PR 14 and merge when green. Every gate passes on the head SHA.",
+      "expected_output": "The plain-words ask turns merge mode on. Merges once every gate passes.",
+      "files": [],
+      "expectations": [
+        "Treats the request as merge mode and reads merge.md",
+        "Arms gh pr merge --auto --match-head-commit <headRefOid> only after every gate passes"
+      ]
+    },
+    {
+      "id": 17,
+      "prompt": "/babysit 14 --merge. Every gate passes on the head SHA.",
+      "expected_output": "`--merge` is an alias for `merge`. Merges once every gate passes.",
+      "files": [],
+      "expectations": [
+        "Treats the request as merge mode and reads merge.md",
+        "Arms gh pr merge --auto --match-head-commit <headRefOid> only after every gate passes"
+      ]
+    },
+    {
+      "id": 18,
+      "prompt": "/babysit 14. Every gate passes on the head SHA.",
+      "expected_output": "No merge was asked for. Stops at ready and does not merge.",
+      "files": [],
+      "expectations": [
+        "Does not read merge.md and does not run gh pr merge",
+        "Final report says the PR is ready and how to ask for a merge (/babysit 14 merge)"
+      ]
+    },
+    {
+      "id": 19,
+      "prompt": "babysit 14, land it. Every gate passes on the head SHA.",
+      "expected_output": "'Land it' is ambiguous, so no merge. Stops at ready and does not merge.",
+      "files": [],
+      "expectations": [
+        "Does not read merge.md and does not run gh pr merge",
+        "Final report says the PR is ready and how to ask for a merge (/babysit 14 merge)"
+      ]
+    },
+    {
+      "id": 20,
+      "prompt": "/babysit 14. Every gate passes on the head SHA. An earlier run on this PR was asked to merge, and memory notes the user likes PRs merged.",
+      "expected_output": "Only this run's request counts; earlier runs, memory and saved state don't turn merge on. Stops at ready and does not merge.",
+      "files": [],
+      "expectations": [
+        "Does not read merge.md and does not run gh pr merge",
+        "Final report says the PR is ready and how to ask for a merge (/babysit 14 merge)"
+      ]
     }
   ]
 }

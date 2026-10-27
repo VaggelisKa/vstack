@@ -35,6 +35,72 @@
         "Does not resolve the human's thread",
         "gate.py --merge hands back unresolved_threads; no merge, no --admin"
       ]
+    },
+    {
+      "id": 4,
+      "prompt": "/autonomous-merge 14 merge. Every gate passes on the head SHA.",
+      "expected_output": "The trailing `merge` turns merge mode on. Merges once every gate passes.",
+      "files": [],
+      "expectations": [
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "autonomous-merge PR 14 and merge when green. Every gate passes on the head SHA.",
+      "expected_output": "The plain-words ask turns merge mode on. Merges once every gate passes.",
+      "files": [],
+      "expectations": [
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "/autonomous-merge 14 --merge. Every gate passes on the head SHA.",
+      "expected_output": "`--merge` is an alias for `merge`. Merges once every gate passes.",
+      "files": [],
+      "expectations": [
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge"
+      ]
+    },
+    {
+      "id": 7,
+      "prompt": "/autonomous-merge 14. Every gate passes on the head SHA.",
+      "expected_output": "No merge was asked for. Stops at ready and does not merge.",
+      "files": [],
+      "expectations": [
+        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
+        "Never runs gh pr merge",
+        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "autonomous-merge 14, land it. Every gate passes on the head SHA.",
+      "expected_output": "'Land it' is ambiguous, so no merge. Stops at ready and does not merge.",
+      "files": [],
+      "expectations": [
+        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
+        "Never runs gh pr merge",
+        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+      ]
+    },
+    {
+      "id": 9,
+      "prompt": "/autonomous-merge 14. Every gate passes on the head SHA. An earlier run on this PR was asked to merge, and memory notes the user likes PRs merged.",
+      "expected_output": "Only this run's request counts; earlier runs, memory and saved state don't turn merge on. Stops at ready and does not merge.",
+      "files": [],
+      "expectations": [
+        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
+        "Never runs gh pr merge",
+        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+      ]
     }
   ]
 }

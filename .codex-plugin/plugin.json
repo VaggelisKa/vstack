@@ -1,6 +1,6 @@
 {
   "name": "vstack",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Personal agent skills: autonomous-merge (review, fix and babysit a PR to ready, or merged with --merge, within caps), babysit (shepherd a PR to green or merged), html-plan (interactive HTML implementation plans), review (read-only multi-lens code review) and remove-comments (strictly delete comment noise, with a check that no code changed).",
   "author": {
     "name": "Evangelos Karavasileiadis",

@@ -2,8 +2,8 @@
 
 Personal agent skills, packaged as one plugin (`vstack`) for Claude Code, Codex, GitHub Copilot, Antigravity and Gemini CLI.
 
-- `autonomous-merge`: run `review` and `babysit` in a capped loop, then a live merge gate; stops at ready (`--merge` to merge on GitHub; Bitbucket PRs are handed back for you to merge), hands back anything that needs you
-- `babysit`: watch a PR until it's green and approved, fixing and replying as needed (`--merge` to merge)
+- `autonomous-merge`: run `review` and `babysit` in a capped loop, then a live merge gate; stops at ready (`/autonomous-merge <pr> merge` to merge on GitHub; Bitbucket PRs are handed back for you to merge), hands back anything that needs you
+- `babysit`: watch a PR until it's green and approved, fixing and replying as needed (`/babysit <pr> merge` or "and merge when green" to merge; `--merge` also works)
 - `html-plan`: write an implementation plan as one interactive HTML page
 - `remove-comments`: delete comment noise from a change and check that no code changed
 - `review`: read-only multi-lens code review of a PR, branch or path

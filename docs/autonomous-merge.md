@@ -1,6 +1,6 @@
 # autonomous-merge: what's tested
 
-`/vstack:autonomous-merge <pr> [--merge]` (`$autonomous-merge` in Codex).
+`/vstack:autonomous-merge <pr> [merge]` (`$autonomous-merge` in Codex), or in plain words ("... and merge when green"). It merges only when that run's request explicitly asks to.
 
 - 79 script tests, with fake `gh` and `curl` on a `PATH` holding only git, in temp repos:
   `python3 -m unittest discover -s skills/autonomous-merge/scripts/tests`.

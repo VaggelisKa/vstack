@@ -1,6 +1,6 @@
-# babysit --merge: merge gates
+# babysit merge mode: merge gates
 
-Read this only when `babysit` was invoked with `--merge`. Without it, never merge.
+Read this only when the request explicitly asked to merge (see SKILL.md). Otherwise, never merge.
 
 Evaluate every gate against the **current head SHA** (`headRefOid`). Re-fetch
 state right before deciding; if the SHA changed, start over.
