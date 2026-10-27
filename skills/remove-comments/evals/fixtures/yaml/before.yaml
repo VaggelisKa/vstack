@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+# CI workflow
+name: ci
+
+# Trigger on push and PRs
+on:
+  push:
+    branches: [main] # only main
+  pull_request:
+
+jobs:
+  # ---- Test job ----
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      # Check out the code
+      - uses: actions/checkout@v4
+      # Pinned to a SHA: this action's tags were moved during the 2025 supply-chain incident
+      - uses: acme/setup-tool@3f1c2a9b7d5e4f6a8b0c1d2e3f4a5b6c7d8e9f0a
+      - name: Run tests
+        run: |
+          # this comment is part of the shell script
+          npm test # run tests
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096 # not a comment"
+          DOCS_URL: https://example.com/docs#setup
+          # Added cache key
+          CACHE_KEY: v2
+      # - name: Lint
+      #   run: npm run lint

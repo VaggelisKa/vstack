@@ -404,6 +404,9 @@ Evidence: … · Fix: … · Skeptic (<model>): …
 <budget-trimmed areas, skipped ui-live, files excluded from --cross, hunks held back by the secret scan (file + @@ header only), unreviewed lower-priority changes, timeouts>
 ```
 
+If the diff adds agent-tell comments ("// Added X", narration, banners), the
+report's footer may name `remove-comments` as a follow-up; review itself never edits.
+
 Put ui-live screenshots under their findings, by path in the temp directory.
 Never quote a secret's value anywhere in the report or chat; redact it.
 

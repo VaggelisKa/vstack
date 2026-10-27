@@ -1,0 +1,19 @@
+{
+  "fixture": "tsx/before.tsx",
+  "protected": [
+    {
+      "id": "c7",
+      "text": "// eslint-disable-next-line react-hooks/exhaustive-deps -- focus once, on mount only",
+      "why": "eslint-disable"
+    }
+  ],
+  "kept": [
+    {
+      "id": "c11",
+      "text": "// Key by id, not index: drag-and-drop reorders rows.",
+      "action": "rewrite"
+    }
+  ],
+  "needs_human": [],
+  "deleted": 12
+}

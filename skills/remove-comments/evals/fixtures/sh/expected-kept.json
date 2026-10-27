@@ -1,0 +1,30 @@
+{
+  "fixture": "sh/before.sh",
+  "protected": [
+    {
+      "id": "c1",
+      "text": "#!/usr/bin/env bash",
+      "why": "shebang"
+    },
+    {
+      "id": "c10",
+      "text": "# shellcheck disable=SC2086",
+      "why": "shellcheck disable"
+    }
+  ],
+  "kept": [
+    {
+      "id": "c14",
+      "text": "# systemd needs a moment to release the port; restarting faster fails with EADDRINUSE",
+      "action": "keep"
+    }
+  ],
+  "needs_human": [
+    {
+      "id": "c10",
+      "text": "# shellcheck disable=SC2086",
+      "why": "suppression without a reason"
+    }
+  ],
+  "deleted": 12
+}

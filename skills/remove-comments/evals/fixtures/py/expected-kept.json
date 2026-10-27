@@ -1,0 +1,50 @@
+{
+  "fixture": "py/before.py",
+  "protected": [
+    {
+      "id": "c1",
+      "text": "#!/usr/bin/env python3",
+      "why": "shebang"
+    },
+    {
+      "id": "c2",
+      "text": "# Copyright (c) 2025 Acme Corp. Licensed under the MIT License.",
+      "why": "legal header"
+    },
+    {
+      "id": "c17",
+      "text": "# pragma: no cover",
+      "why": "pragma"
+    }
+  ],
+  "kept": [
+    {
+      "id": "c3",
+      "text": "\"\"\"Command-line tool that exports invoices to CSV.\"\"\"",
+      "action": "keep"
+    },
+    {
+      "id": "c7",
+      "text": "# seconds; the billing API returns 429 above 2 polls/s",
+      "action": "rewrite"
+    },
+    {
+      "id": "c11",
+      "text": "\"\"\"Raises ValueError on empty rows: importers treat an empty file as \"delete everything\".\"\"\"",
+      "action": "rewrite"
+    },
+    {
+      "id": "c18",
+      "text": "\"\"\"Does nothing.\"\"\"",
+      "action": "keep"
+    }
+  ],
+  "needs_human": [
+    {
+      "id": "c17",
+      "text": "# pragma: no cover",
+      "why": "suppression without a reason"
+    }
+  ],
+  "deleted": 11
+}

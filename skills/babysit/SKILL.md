@@ -179,6 +179,10 @@ One round = one push. **At most 3 rounds.**
    run the local tests, lint and type checks. Fix or drop items until they pass.
    A dropped item is never silent: reply on its comment explaining why, or add
    it to the escalation list.
+   **Optional comment pass:** if the `remove-comments` skill is installed and
+   the round's diff adds comments, run it on the PR branch scoped to the lines
+   the PR added (its PR scope, no new checkout) after the diff review and
+   before the commit. Keep its report out of PR replies. Skip it otherwise.
 4. Commit once and push once (`git push`, never `--force`). `fix_rounds += 1`.
 5. Reply on each handled comment with the commit link.
 
