@@ -165,6 +165,12 @@ def ci_state(checks):
     return "none"
 
 
+def all_green(r):
+    return (r["ci"]["state"] in ("passing", "none") and r["approved_on_head"] and r["mergeable"] is True
+            and not r["changes_requested"] and not any(t["state"] == "open" for t in r["threads"])
+            and all(c["state"] == "passing" for c in r["required_checks"]))
+
+
 def consistent(r, errs):
     ci = r["ci"]
     if ci["state"] != ci_state(r["required_checks"]):
@@ -183,6 +189,9 @@ def consistent(r, errs):
         errs.append("status: green can't have changes_requested")
     if r["status"] == "green" and any(c["state"] != "passing" for c in r["required_checks"]):
         errs.append("status: green needs every required check passing")
+    if r["status"] == "failed" and all_green(r):
+        errs.append("status: failed can't have everything green (CI passing or none, approved, mergeable, "
+                    "no changes requested, no open thread); that's green")
     ids = [t["id"] for t in r["threads"]]
     if len(ids) != len(set(ids)):
         errs.append("threads: duplicate id")

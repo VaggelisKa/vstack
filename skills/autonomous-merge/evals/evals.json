@@ -1,0 +1,40 @@
+{
+  "skill_name": "autonomous-merge",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "autonomous-merge 42. The review finds one major (an off-by-one with a failing test) and two minors; CI then goes green and a teammate approves.",
+      "expected_output": "Fixes the major in one pushed commit, re-reviews to Ship, leaves the minors logged, babysits to green, runs the gate, and stops at ready without merging.",
+      "files": [],
+      "expectations": [
+        "Runs preflight.py and state.py init before the review skill",
+        "Invokes the review skill by name (or reads ../review/SKILL.md) instead of reviewing on its own",
+        "Fixes only the major; the minors appear as deferred in the report",
+        "Runs babysit without --merge and gate.py without --merge",
+        "Does not run gh pr merge; reports ready"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "autonomous-merge https://github.com/acme/api/pull/7 --merge. gh auth status says the token is invalid.",
+      "expected_output": "Stops at preflight with the auth_expired handback and tells the user to run gh auth login themselves.",
+      "files": [],
+      "expectations": [
+        "Relays the handback's reason and action",
+        "Does not run gh auth login, ask for a token, or print one",
+        "Does not start the review"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "autonomous-merge 15 --merge. Everything is green, but a human reviewer's thread asks to rename a function and the PR's description says the name is fixed by an external API.",
+      "expected_output": "Replies 'Not changing: ...' with the evidence, leaves the thread unresolved, and the gate hands back unresolved_threads instead of merging.",
+      "files": [],
+      "expectations": [
+        "Replies on the thread with a reason and evidence",
+        "Does not resolve the human's thread",
+        "gate.py --merge hands back unresolved_threads; no merge, no --admin"
+      ]
+    }
+  ]
+}

@@ -134,6 +134,18 @@ class WriteResult(unittest.TestCase):
                 self.assertIn(msg, self.refused(data, "--pr", 42, *self.shas))
                 self.assertFalse(os.path.exists(self.vstack))
 
+    def test_failed_refused_when_everything_is_green(self):
+        for name, data in {"passing": green(status="failed"),
+                           "no checks": green(status="failed", ci=NONE, threads=[], required_checks=[])}.items():
+            with self.subTest(name):
+                self.assertIn("status: failed", self.refused(data, "--pr", 42, *self.shas))
+                self.assertFalse(os.path.exists(self.vstack))
+        for name, over in {"not approved": {"approved_on_head": False}, "unmergeable": {"mergeable": None},
+                           "changes requested": {"changes_requested": True},
+                           "open thread": {"threads": [thread()]}}.items():
+            with self.subTest(name):
+                self.assertEqual(self.ok(green(status="failed", **over), "--pr", 42, *self.shas)["status"], "failed")
+
     def test_ci_state_follows_required_checks(self):
         cases = [
             ([check(), check("lint", "pending"), check("b", "passing")], "failing"),

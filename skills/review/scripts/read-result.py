@@ -11,7 +11,10 @@ Any non-zero exit means don't use the file.
 
 Readers follow references/result-schema.md: a schema_version newer than
 SCHEMA_VERSION is refused, and a head_sha or base_sha that isn't exactly the
-PR's current one means stale. The whole file is also checked as
+PR's current one means stale. merge_base is recomputed with
+`git merge-base --all base_sha head_sha` and the file refused (exit 2) unless
+that gives exactly one commit equal to it, so the commits must be local. The
+whole file is also checked as
 write-result.py checks it (it's loaded from this folder), so a missing field,
 wrong type or contradiction such as a merge_ok the rest doesn't support is
 refused (exit 2); only unknown fields are ignored. The folder is found as
@@ -86,6 +89,20 @@ def common_dir():
     raise Unusable(f"can't find the git common dir: git exited {r.returncode}")
 
 
+def merge_base(top, base, head):
+    try:
+        r = subprocess.run(["git", "--git-dir", top, "merge-base", "--all", base, head], capture_output=True,
+                           text=True, env={**os.environ, "LC_ALL": "C"})
+    except OSError as e:
+        raise Unusable(f"can't run git: {e.strerror}")
+    if r.returncode not in (0, 1):
+        raise Unsupported(f"can't recompute merge_base: git exited {r.returncode} (fetch the head and base first)")
+    shas = r.stdout.split()
+    if len(shas) != 1:
+        raise Unsupported(f"base_sha and head_sha have {'no' if not shas else 'several'} merge bases; need exactly one")
+    return shas[0]
+
+
 def load(top, pr):
     shown = f"vstack/{pr}/{SKILL}.json"
     fds = []
@@ -121,7 +138,8 @@ def read_result(pr, expect_head_sha, expect_base_sha, top=None):
     for name, sha in (("expect_head_sha", expect_head_sha), ("expect_base_sha", expect_base_sha)):
         if not is_sha(sha):
             raise Unusable(f"{name} must be a full SHA, 40 or 64 lowercase hex characters")
-    r = load(top or common_dir(), pr)
+    top = top or common_dir()
+    r = load(top, pr)
     if not isinstance(r, dict):
         raise Unsupported("the result is not a JSON object")
     v = r.get("schema_version")
@@ -142,6 +160,8 @@ def read_result(pr, expect_head_sha, expect_base_sha, top=None):
         raise Stale(f"stale: written for head {r['head_sha']}, the PR head is {expect_head_sha}", r)
     if r["base_sha"] != expect_base_sha:
         raise Stale(f"stale: written for base {r['base_sha']}, the PR base is {expect_base_sha}", r)
+    if r["merge_base"] != merge_base(top, r["base_sha"], r["head_sha"]):
+        raise Unsupported("merge_base doesn't match `git merge-base --all` of base_sha and head_sha")
     return r
 
 
