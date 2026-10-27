@@ -25,12 +25,12 @@ handback.
 | `draft` | gate | The PR is a draft | Mark it ready when it is |
 | `conflicts` | gate | Conflicts with the base | Resolve them |
 | `changes_requested` | gate | A reviewer requested changes (`reviewDecision`, or a human's latest verdict), or the reviews couldn't be read | Get a re-review or dismissal |
-| `not_approved` | gate | An approval is required (or `reviewDecision` is APPROVED) but none from a non-author is on the current head; stale approvals don't count (GitHub). Nobody approved (Bitbucket) | Get an approval on the head |
+| `not_approved` | gate | An approval is required (or `reviewDecision` is APPROVED) but none from a non-author, non-bot reviewer is on the current head; stale approvals don't count (GitHub). Nobody approved (Bitbucket) | Get an approval on the head |
 | `checks_failing` | gate | A required check is failing or pending (all checks when the required ones can't be read); on Bitbucket also no build status at all | Fix, rerun or wait |
 | `unresolved_threads` | gate | An unresolved review thread (Bitbucket: open task or inline comment), or threads couldn't all be read | A human resolves theirs |
 | `branch_protection` | gate | `mergeStateStatus` BLOCKED or BEHIND, or the merge was refused by protection or merge checks | Meet the rule; never bypass it |
 | `needs_review` | gate, state | No `review.json` for this head and base, or it isn't a clean Ship; or the head or base moved while auto-merge was pending | Run review on the head |
-| `escalated` | state escalate | A finding or comment needs a human decision (ambiguous, a code owner's), or babysit escalated | Decide it |
+| `escalated` | state escalate, state init | A finding or comment needs a human decision (ambiguous, a code owner's), or babysit escalated; or `init` found review's or babysit's result for the PR with no state file | Decide it; for `init`, run `init --fresh` yourself if a new run should start |
 | `security_blocker` | state | A `security` or `data-integrity` blocker (from review, or escalated) | Fix it yourself |
 | `ci_unreproducible` | state escalate | A red check that can't be reproduced locally | Read the logs, fix or rerun |
 | `conflict_judgement` | state escalate | A conflict with the base that needs a choice between both sides | Resolve it |
@@ -40,12 +40,16 @@ handback.
 | `oscillation` | state | A fixed finding came back, or a commit put a file back to how it was before a fix | Decide which version is right |
 | `no_progress` | state | A review round didn't reduce the blocker plus major count | Fix or decide the findings by hand |
 | `merge_unsupported_host` | gate | A Bitbucket PR passed every check; autonomous-merge never merges there (no head-pinned merge, no babysit gate, merge permission only known at merge time) | Merge it yourself in Bitbucket |
-| `merge_failed` | gate | `gh pr merge` failed for another reason (gh's message is in `detail`), or auto-merge hadn't merged when polling ran out (it's then disabled) | Read the message |
-| `unknown` | any | Anything else (no git remote, mergeability still unknown after re-polling, the PR unreadable after auto-merge was enabled, network, an internal error) | Read `detail` |
+| `merge_failed` | gate | `gh pr merge` failed for another reason (gh's message is in `detail`), or auto-merge hadn't merged when the poll delays or the 8-minute deadline ran out (it's then disabled) | Read the message |
+| `unknown` | any | Anything else (no git remote, mergeability still unknown after re-polling, the base branch's rulesets unreadable, the PR unreadable after auto-merge was enabled, the gate interrupted by Ctrl-C or SIGTERM or an internal error while auto-merge was pending, network, an internal error) | Read `detail` |
 
-`init --continue` and `reset` are the user's to run, never the model's. When
-the gate hands back after enabling auto-merge, it has already run
-`gh pr merge --disable-auto` (or says in `action` that you must).
+`init --continue`, `init --fresh` and `reset` are the user's to run, never the
+model's. When the gate hands back after enabling auto-merge, it has already run
+`gh pr merge --disable-auto` (or says in `action` that you must); if that
+failed because the PR had just merged, the outcome is `merged` instead. If
+`gate.py --merge` printed nothing or no JSON (SIGKILL, a suspended machine),
+run `gh pr merge N --disable-auto` (or check `autoMergeRequest` with
+`gh pr view N --json autoMergeRequest`) before anything else.
 
 The gate collects every block it finds, reports the first in the table's gate
 order (not_open, draft, conflicts, changes_requested, not_approved,

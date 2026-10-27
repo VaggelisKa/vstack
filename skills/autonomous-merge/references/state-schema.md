@@ -64,5 +64,7 @@ many. It also stops at once (`security_blocker`) on a blocker whose rule is
 `last_head` and the open findings. After a `ready` stop, `init` clears it (say,
 to rerun with `--merge`); after a handback, only `init --continue` does, and it
 keeps the counters and fingerprints. After `merged`, nothing resumes.
-`init --continue` and `reset` are the user's commands; the model never runs
-them.
+With no state file, `init` refuses (`escalated`) when `review.json` or
+`babysit.json` already exists for the PR, unless `--fresh`.
+`init --continue`, `init --fresh` and `reset` are the user's commands; the
+model never runs them.

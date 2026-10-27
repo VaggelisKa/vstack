@@ -158,7 +158,7 @@ class State(unittest.TestCase):
         for rule in ("security", "Data-Integrity"):
             with self.subTest(rule):
                 self.st("reset")
-                self.st("init")
+                self.st("init", "--fresh")
                 blocker = finding(severity="blocker", rule=rule, summary="SQL built from user input")
                 write_result(REVIEW_WRITER, self.repo, 42, self.head, self.base, review(blocker))
                 data = self.handback("security_blocker", "record-review", "--head-sha", self.head,
@@ -166,8 +166,24 @@ class State(unittest.TestCase):
                 self.assertIn("SQL built from user input", data["detail"])
                 self.assertEqual(len(self.load()["rounds"]), 1)
         self.st("reset")
-        self.st("init")
+        self.st("init", "--fresh")
         self.assertFalse(self.reviewed(self.head, finding(severity="blocker", rule="bug-hunt"))["clean"])
+
+    def test_init_refuses_earlier_results_without_state(self):
+        review_json = os.path.join(self.vstack, "42", "review.json")
+        write_result(REVIEW_WRITER, self.repo, 42, self.head, self.base, SHIP)
+        data = self.handback("escalated", "init", "--merge")
+        self.assertIn("review.json already exists", data["detail"])
+        self.assertIn("init --pr 42 --fresh", data["action"])
+        self.assertFalse(os.path.exists(self.path))
+        write_result(BABYSIT_WRITER, self.repo, 42, self.head, self.base, babysit())
+        self.assertIn("review.json and babysit.json", self.handback("escalated", "init", "--continue")["detail"])
+        os.unlink(review_json)
+        self.assertIn("babysit.json already exists", self.handback("escalated", "init")["detail"])
+        self.assertEqual(self.st("init", "--fresh")["resumed"], False)
+        self.assertEqual(self.st("init")["resumed"], True)
+        self.st("reset")
+        self.handback("escalated", "init")
 
     def test_escalate(self):
         for reason in ("security_blocker", "ci_unreproducible", "conflict_judgement", "design_change",

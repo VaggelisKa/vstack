@@ -10,12 +10,14 @@ never merges there.
 """
 import importlib.util
 import json
+import math
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.parse
 
 OK, USAGE, INTERNAL, HANDBACK = 0, 2, 4, 5
@@ -205,7 +207,12 @@ def gh_env():
             "GH_PAGER": "cat", "PAGER": "cat", "GH_SPINNER_DISABLED": "1", "LC_ALL": "C"}
 
 
+DEADLINE = None  # a time.monotonic() every gh call must end by; the gate sets it while polling a merge
+
+
 def gh(*args, timeout=120):
+    if DEADLINE is not None:
+        timeout = max(1, min(timeout, math.ceil(DEADLINE - time.monotonic())))
     return run(["gh", *args], env=gh_env(), timeout=timeout)
 
 

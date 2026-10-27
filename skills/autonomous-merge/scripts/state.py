@@ -4,7 +4,8 @@ oscillation guard enforced here rather than left to the model.
 
 Usage: python3 -I state.py <command> --pr N [options]
 
-  init [--merge] [--continue]    start, or resume the run in the file
+  init [--merge] [--continue] [--fresh]
+                                 start, or resume the run in the file
   check --before review|fix      may another review or fix round start?
   record-review --head-sha H --base-sha B
                                  add review.json (read with review's
@@ -23,7 +24,9 @@ Usage: python3 -I state.py <command> --pr N [options]
   show                           print the state
   reset                          delete the state file
 
-`reset` and `init --continue` are for the user only: the model never runs them.
+`reset`, `init --continue` and `init --fresh` are for the user only: the model
+never runs them. With no state file, init refuses (escalated) when review.json
+or babysit.json already exists for the PR, unless --fresh.
 
 A round is clean when review's merge_ok is true (Ship: no blocker, no major,
 no unreviewed area) and it has no blocker or major. Caps: 3 review rounds, 6
@@ -77,6 +80,7 @@ ESCALATIONS = ("security_blocker", "ci_unreproducible", "conflict_judgement", "d
                "escalated")
 SECURITY_RULES = ("security", "data-integrity")
 BABYSIT_READER = os.path.join(c.HERE, "..", "..", "babysit", "scripts", "read-result.py")
+RESULT_FILES = ("review.json", "babysit.json")
 KEYS = ("schema_version", "skill", "pr", "merge", "started_at", "updated_at", "caps", "counters", "last_head",
         "rounds", "findings", "fixes", "threads", "ci", "stop")
 
@@ -358,10 +362,36 @@ def guard_reverts(top, s, prior, commits):
         stop(top, s, "oscillation", f"commit {new[:12]} puts {path} back to how it was before fix {old[:12]}")
 
 
+def earlier_results(top, pr):
+    """The sibling skills' result files already in vstack/<pr>/."""
+    try:
+        d = pr_dir(top, pr, create=False)
+    except FileNotFoundError:
+        return []
+    found = []
+    try:
+        for name in RESULT_FILES:
+            try:
+                os.stat(name, dir_fd=d, follow_symlinks=False)
+                found.append(name)
+            except FileNotFoundError:
+                pass
+    finally:
+        os.close(d)
+    return found
+
+
 def cmd_init(top, a):
     s = load(top, a.pr)
     resumed = s is not None
     if s is None:
+        found = earlier_results(top, a.pr)
+        if found and not a.fresh:
+            raise c.Handback("escalated", f"{' and '.join(found)} already exist{'s' if len(found) == 1 else ''} "
+                                          f"for PR {a.pr} but there's no "
+                                          f"{SKILL} state: they're from an earlier run, or its state was reset",
+                             f"If a new run should start anyway, run `state.py init --pr {a.pr} --fresh` "
+                             "yourself, then rerun autonomous-merge.")
         s = new_state(a.pr, a.merge)
     else:
         st = s["stop"]
@@ -606,6 +636,7 @@ def args():
     p = add("init", cmd_init)
     p.add_argument("--merge", action="store_true")
     p.add_argument("--continue", dest="cont", action="store_true")
+    p.add_argument("--fresh", action="store_true")
     add("check", cmd_check).add_argument("--before", choices=("review", "fix"), required=True)
     p = add("record-review", cmd_record_review)
     p.add_argument("--head-sha", required=True)
