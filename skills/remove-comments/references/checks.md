@@ -1,5 +1,26 @@
 # Formatter and checks after apply
 
+## First: whose code is this?
+
+`list`, `show`, `apply`, `verify` (with its cross-checks: Python's `ast`,
+TypeScript's `transpileModule`, `gcc -E`, `gofmt -e`, `node --check`) and
+`report` read the repo's files; they never run code from it. Everything
+below does: a formatter or linter loads the repo's config and plugins,
+`npm test` runs package scripts, pytest imports `conftest.py`, cargo runs
+`build.rs`, and any of them can trigger git hooks.
+
+For a PR target, find out where the checked-out head comes from:
+
+```bash
+gh pr view "$pr" --json isCrossRepository,headRepositoryOwner,maintainerCanModify
+```
+
+If `isCrossRepository` is `true`, or the command fails or the field is
+missing, the code is from a fork: skip the formatter, lint, type check and
+tests, and write "not run: fork PR code is untrusted" for each in the
+report. Run them only if the user explicitly says to. For a same-repo PR
+(`false`) and for local changes (no PR), carry on below.
+
 ## Formatter (only if the repo has one configured)
 
 Run it on the touched files only, never the whole repo: reformatting
@@ -27,7 +48,8 @@ python3 -I "$RC/comments.py" verify --list "$TMP/comments.json"
 ```
 
 If it fails, the formatter changed more than whitespace (it re-wrapped or
-re-quoted code). Put back the post-apply content and tell the user the
+re-quoted code, or, in CSS, added or removed a space between two tokens
+where that can change the meaning, such as `a+b` to `a + b`). Put back the post-apply content and tell the user the
 formatter was not applied:
 
 ```bash

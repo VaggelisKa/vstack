@@ -17,9 +17,9 @@ import commentscan  # noqa: E402 - must follow the sys.path line
 GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 
 
-def run(*args, cwd=None):
-    return subprocess.run([sys.executable, "-I", str(SCRIPTS / "comments.py"), *map(str, args)],
-                          capture_output=True, cwd=cwd, env=GIT_ENV,
+def run(*args, cwd=None, env=None, script=None):
+    return subprocess.run([sys.executable, "-I", str(script or SCRIPTS / "comments.py"), *map(str, args)],
+                          capture_output=True, cwd=cwd, env={**GIT_ENV, **(env or {})},
                           stdin=subprocess.DEVNULL, timeout=120)
 
 

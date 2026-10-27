@@ -36,6 +36,31 @@ class JavaScript(unittest.TestCase):
     def test_regex_after_keyword(self):
         self.assertEqual(texts("function f(){ return /\\/\\// } // c\n", "js"), ["// c"])
 
+    def test_regex_after_control_statement_head(self):
+        self.assertEqual(texts("if (p) /\\//.test(s) && go(s);\n", "js"), [])
+        self.assertEqual(texts("if (p) /a\\/*/.test(s) && go();\nfoo(); /* real */\n", "js"), ["/* real */"])
+        self.assertEqual(texts("while (x) /\\/*/.test(y); // c\nfor (;;) /'/.test(z);\n", "ts"), ["// c"])
+        self.assertEqual(texts("for await (const x of y) /\\//.exec(x);\n", "js"), [])
+        self.assertEqual(texts("x = f(a) / 2 / b; // c\no.if(a) / 2; // d\n", "js"), ["// c", "// d"])
+
+    def test_slash_after_closing_brace(self):
+        self.assertEqual(texts("function f() {} // c\nconst o = {} /* d */\nx = {}.a / 2 / b; // e\n", "js"),
+                         ["// c", "/* d */", "// e"])
+        self.assertEqual(texts("if (a) {}\n/x/.test(b); // c\nx = function () {} / 2;\n", "js"), ["// c"])
+        self.assertEqual(texts("if (a) {}\n/'/.test(b); // c\n", "js"), ["// c"])
+        for src in ("function f(){}\n/\\//.test(s) && go();\n", "{}\n/a/ /b//c\n",
+                    "x = function () {} / 2; // d\n"):
+            with self.subTest(src=src), self.assertRaisesRegex(ScanError, "ambiguous"):
+                scan(src, "js")
+
+    def test_line_terminators_end_a_line_comment(self):
+        for sep in ("\u2028", "\u2029", "\r\n"):
+            with self.subTest(sep=ascii(sep)):
+                self.assertEqual(texts(f"foo(); // note{sep}bar();\nbaz();\n", "js"), ["// note"])
+        self.assertEqual(texts("const a = 1; // x\u2029launch();\n", "ts"), ["// x"])
+        with self.assertRaises(ScanError):
+            scan("x = /a\u2028/;\n", "js")
+
     def test_jsx_comment_child_is_one_unit(self):
         src = ("export const A = () => (\n  <div className=\"a // b\">\n    {/* one unit */}\n"
                "    <a href=\"http://x\">http://text // not a comment, it's text</a>\n"
@@ -95,6 +120,16 @@ class CFamily(unittest.TestCase):
     def test_dart_strings(self):
         src = "var s = '${m['k']} // no'; var r = r'\\// no'; // yes\n"
         self.assertEqual(texts(src, "dart"), ["// yes"])
+
+
+class Preprocessor(unittest.TestCase):
+    def test_directive_spans(self):
+        src = ("#define SUM(a,b) ((a) /* first\n second */ + (b))\nint x;\n#define L 1 \\\n  + 2\n"
+               "#if 0\n#define OFF\n#endif\n  # pragma once // c\nint y; /*\n#define NO */\n")
+        spans = commentscan.directive_spans(src, scan(src, "c"))
+        self.assertEqual([src[a:b] for a, b in spans],
+                         ["#define SUM(a,b) ((a) /* first\n second */ + (b))", "#define L 1 \\\n  + 2",
+                          "#if 0", "#endif", "  # pragma once // c"])
 
 
 class Css(unittest.TestCase):
@@ -200,6 +235,12 @@ class Html(unittest.TestCase):
             "<!-- plain -->": None, "<!-- prettier-ignore -->": "prettier-ignore",
             '<!--#include virtual="/f" -->': "server-side include"})
         self.assertEqual(sc.notes, ["<script> contents are not scanned"])
+
+
+class HtmlPre(unittest.TestCase):
+    def test_comment_inside_pre_is_protected(self):
+        self.assertEqual(protected("<pre>\n<!-- c -->\nx</pre>\n<!-- d -->\n", "html"),
+                         {"<!-- c -->": "inside <pre>: removing it changes the preformatted text", "<!-- d -->": None})
 
 
 class Encoding(unittest.TestCase):

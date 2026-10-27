@@ -208,14 +208,22 @@ cloned folder). Uninstall: `agy plugin uninstall vstack`, or delete the folder.
 (`$remove-comments` in Codex).
 
 The model decides which comments go; `skills/remove-comments/scripts/comments.py`
-lists them, applies the decisions only inside comment spans, and verifies that
-the code tokens (and, for Python, the AST) didn't change. Its tests are in
+lists them, shows them to the model inside untrusted blocks, applies the
+decisions only inside comment spans, and verifies that the code tokens didn't
+change, cross-checked by tools that don't share its scanner. Its tests are in
 `skills/remove-comments/scripts/tests/` and use only temp dirs and temp git
 repos:
 
 ```bash
 python3 -m unittest discover -s skills/remove-comments/scripts/tests
 ```
+
+That runs 138 tests in about 35 to 40 seconds; two of them (the TypeScript
+cross-check and the JS fuzz) skip unless `RC_TS_ROOT` names a directory
+whose `node_modules` has `typescript`. With `RC_TS_ROOT` set (TypeScript
+5.9.3, node 24) all 138 pass. The C tests used gcc 14 in C mode
+(`-std=gnu2x`, no C++ front end installed); the Go test used gofmt from
+Go 1.27. Tests whose tool is missing skip.
 
 They cover:
 
@@ -234,9 +242,15 @@ They cover:
   (protected); TOML multi-line strings; Python 3.12 f-strings with `#` in
   nested expressions and module, class, function and only-statement
   docstrings; Dockerfile parser directives and `RUN <<EOF` heredocs; HTML
-  conditional comments, comments in attributes and `<script>`; BOM and CRLF
-  offsets; unterminated strings, templates, regexes, heredocs and bare CR as
-  errors;
+  conditional comments, comments in attributes and `<script>`, comments
+  inside `<pre>` (protected); BOM and CRLF offsets; unterminated strings,
+  templates, regexes, heredocs and bare CR as errors; a JS `/` after the `)`
+  of an `if`/`while`/`for`/`for await` head read as a regex
+  (`if (p) /\//.test(s)`), a `/` after `}` scanned when both readings agree
+  and an error when they don't (`function f(){}\n/\//.test(s)`), U+2028,
+  U+2029 and CRLF ending a JS `//` comment; the logical lines of C
+  preprocessor directives (backslash continuations, comments running onto the
+  next line, `#if 0` bodies);
 - protected detection: 35 directive cases across the languages (eslint,
   `@ts-expect-error`, prettier, biome, istanbul, webpack magic comments,
   `#__PURE__`, JSX pragmas, triple-slash, test-environment docblocks, `type:
@@ -246,15 +260,24 @@ They cover:
   with and without a reason; prose that mentions a tool but isn't a
   directive; legal headers after a shebang, encoding cookie or directive;
   PEP 723 blocks and cgo preambles; the hint flags, including comments that
-  address the agent;
+  address the agent; 15 phrasings aimed at the agent (look-alike letters,
+  zero-width and full-width characters, German, "Dear reviewer", "TOOLS:
+  ...") of which the flag catches some and misses others, all listed, deleted
+  or kept like any other comment;
 - `apply`: own-line, trailing, inline and multi-line block deletes, tokens
   that must not merge (`a/**/-/**/-b`), two comments on one line, JSX
   children, HTML inline comments, a shell comment after a `\` continuation,
-  Python comments and docstrings; blank-line collapsing (between blocks,
-  after an opener, before a closer, at file start and end); BOM, CRLF and a
-  missing final newline preserved; rewrites (indentation kept, a multi-line
-  run, a CRLF file, a docstring) and 13 invalid rewrites refused with no file
-  changed; missing, unknown, protected and reasonless decisions refused; a
+  Python comments and docstrings, a docstring followed by `; code`; a
+  multi-line comment in a `#define` (also on a continuation line, and two of
+  them) replaced by one space so the directive stays one line; CSS comments
+  between tokens (`.a/* c */.b` becomes `.a.b`, not `.a .b`; `#id/**/.c`,
+  `a/**/:hover`, SCSS, Less, a multi-line one) and `1/**/.5px`, which no
+  comment-free text can keep as two tokens, refused; an escaped space before
+  a shell comment kept; a JS `//` comment ending at U+2028; blank-line
+  collapsing (between blocks, after an opener, before a closer, at file start
+  and end); BOM, CRLF and a missing final newline preserved; rewrites
+  (indentation kept, a multi-line run, a CRLF file, a docstring) and 15
+  invalid rewrites (two with U+2028/U+2029) refused with no file changed; missing, unknown, protected and reasonless decisions refused; a
   docstring that is the only statement can't be deleted; a stale file skipped,
   a second apply reporting "file changed since list"; `--dry-run`; `restore`
   to the snapshot and back to the applied state; the `report` sections;
@@ -262,9 +285,41 @@ They cover:
   shell; it exits 1 when a code token changes, string content changes, a `#`
   inside a string is removed, code is uncommented, a protected directive is
   removed, Python indentation, YAML indentation or a shell continuation
-  changes, or the Python AST changes; docstring changes are reported
-  separately and fail only with `--strict`; a scan error exits 2; the
-  snapshot mode vs `--base HEAD`;
+  changes, the Python AST changes, code moves into or out of a C directive
+  (the `#define SUM` newline), or CSS gains or loses whitespace between two
+  tokens (`.a.b` vs `.a .b` both ways, `1.5px`, `1 .5px`, `ab`); docstring
+  changes are reported separately and fail only with `--strict`; a scan
+  error exits 2; the snapshot mode vs `--base HEAD`;
+- `verify` cross-checks: Python `ast` ok; `gcc -E` ok on a real edit,
+  "differs" on the hand-made `#define` newline, "skipped" when the before
+  file doesn't preprocess; TypeScript's emitter ok on a TSX edit and
+  "differs" on a dropped statement and on a syntax error (with
+  `RC_TS_ROOT`); `node --check` (or TypeScript, if one is found) on `.js`;
+  `gofmt -e` syntax; with `PATH` emptied, C, TS, Go and Rust files all report
+  "skipped" and verify still exits 0; `--no-cross-check`;
+- seeded fuzz (fixed seeds, small N): random C lines with comments, every
+  comment deleted, compared with `gcc -E -P -dD` output whenever verify's token
+  check passes (the same test finds 2 mismatches in the previous version of
+  the scripts); random JS/TS lines compared with TypeScript's emitter (with
+  `RC_TS_ROOT`);
+- untrusted text: `show` prints one `<untrusted-finding>` block per comment
+  via the review skill's `wrap-untrusted.py`, JSON-escapes a file name with a
+  newline and an ANSI escape, spells control and bidi characters as escapes,
+  escapes a `</untrusted-finding>` in a comment, reports the injection
+  attempt (the comment's own text vs the lines next to it) and records it for
+  the report's Needs a human list; `--ids` and `--file`; exit 2 when
+  `wrap-untrusted.py` is missing; report tables escape `|`, backticks,
+  newlines and untrusted tags;
+- `precheck`: a clean tree and ignored-only files pass; an untracked file, an
+  untracked file in a new directory, a staged change, a modified file, a
+  hostile file name (escaped), a merge (a `MERGE_HEAD` and a real
+  conflicted merge), a rebase, a cherry-pick and running outside a repo exit
+  2;
+- file names: a name that isn't valid UTF-8 (`\xff.py`) is skipped with a
+  reason in diff and paths mode and by `verify --base`, the listing is
+  ASCII-only JSON replaced atomically, and `apply`, `verify`, `report` and
+  both `restore` modes cope with the skipped entry and print the hostile name
+  escaped;
 - scope: only added lines in scope, untracked files wholly in scope; staged
   files and names with spaces, quotes, a leading `-`, non-ASCII characters
   and directories with spaces; `--all`; a clean branch ahead of `main`;
@@ -283,7 +338,8 @@ They cover:
   verifies, and deleting every comment the tool allows, through `list` and
   `apply`, verifies.
 
-Also run by hand (not part of the test suite):
+Also run by hand (not part of the test suite), with the first version of
+the scripts and not repeated since:
 
 - On a copy of the personal site (`site.js`, `style.css`, `index.html`):
   57 comments listed; 47 deleted and 10 shortened by hand-written decisions;
@@ -298,10 +354,38 @@ Also run by hand (not part of the test suite):
 > Not yet verified: the model-in-the-loop workflow (the evals in
 > `skills/remove-comments/evals/evals.json` haven't been run), running the
 > skill inside Claude Code, Codex or Antigravity sessions, the PR checkout
-> path and the babysit integration, the formatter and test steps, languages
-> and real-world files beyond the fixtures and corpus above (the scanner
-> fails closed on syntax it can't decide, but it's a heuristic lexer, not a
-> parser), and large repos.
+> path (`gh pr view`'s `isCrossRepository` and the fork-PR skip of the
+> formatter and tests are instructions to the model, not code) and the
+> babysit integration, the formatter and test steps, the C cross-check in C++
+> mode and with clang, languages and real-world files beyond the fixtures and
+> corpus above (the scanner fails closed on syntax it can't decide, but it's
+> a heuristic lexer, not a parser), and large repos.
+>
+> Known limitations:
+>
+> - A JS `/` right after `}` whose two readings (regex, division) find
+>   different comments or strings on the line is a scan error, so the file
+>   is left alone, even when the code is fine (`x = function () {} / 2; // d`).
+> - A CSS comment between two tokens that would merge without it
+>   (`1/**/.5px`, `a/**/b`) can't be deleted: apply refuses the run.
+> - CSS verify treats whitespace next to `{ } ; , > ~`, after `(` and `:`,
+>   and before `)` as insignificant; everywhere else gained or lost
+>   whitespace fails it, including spaces a formatter adds around `+`.
+> - HTML comments inside `<pre>` are protected instead of deleted, and verify
+>   compares HTML as whitespace-separated words, so a whitespace change
+>   inside `<pre>` or `<textarea>` made by hand or a formatter goes unnoticed.
+> - Shell `let x=1<<2` reads as a heredoc and is a scan error (bash parses
+>   it the same way).
+> - The C cross-check preprocesses each file on its own, without the
+>   build's `-D` flags or include paths beyond the file's directory: a file
+>   whose headers aren't found is "skipped", and code under an `#if` that is
+>   false without those flags isn't compared. The JS cross-check needs the repo's own `typescript` (one
+>   committed to the repo is never loaded); without it, `.ts`/`.tsx`/`.jsx`
+>   are "skipped" and `.js` gets a syntax-only `node --check`. Go gets a
+>   syntax-only `gofmt -e`; C#, Java, Kotlin, Swift, Rust, Scala, Dart,
+>   shell, YAML, TOML, Dockerfile, CSS and HTML have no cross-check.
+> - `show` runs `wrap-untrusted.py` once per comment (8 at a time), about
+>   30 ms each.
 
 ## Arguments
 

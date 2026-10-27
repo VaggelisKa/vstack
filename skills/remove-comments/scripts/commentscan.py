@@ -7,6 +7,7 @@ Anything the scanner can't decide raises ScanError, and the caller leaves the
 file alone: a missed comment costs nothing, a misread string can delete code.
 """
 import ast
+import bisect
 import io
 import os
 import re
@@ -153,7 +154,10 @@ class Base:
 
 JS_EXPR_KEYWORDS = frozenset(
     "return typeof instanceof in of new delete void throw case do else yield await".split())
-IDENT = re.compile(r"[\w$\u200c\u200d]+")
+# After the ")" that closes the head of one of these, a "/" starts a regex.
+JS_CTRL = frozenset(("if", "while", "for", "with"))
+JS_EOL = "\r\n  "
+IDENT = re.compile(r"[\w$‌‍]+")
 JS_NUMBER = re.compile(r"\.?\d[\w.]*")
 JSX_NAME = re.compile(r"[\w$][\w$.:\-]*")
 CLOSERS = {")": "(", "]": "[", "}": "{"}
@@ -163,8 +167,14 @@ class JsScanner(Base):
     def __init__(self, text, lang):
         super().__init__(text, lang)
         self.jsx = lang in ("js", "jsx", "tsx")
-        self.prev = None          # None | punct | kw | value: a regex or JSX can't follow a value
+        self.prev = None          # None | punct | kw | value | brace: a regex or JSX can't follow a value
         self.after_dot = False
+        self.ctrl = False         # the last token was if/while/for/with
+
+    def eol(self, j):
+        while j < self.n and self.s[j] not in JS_EOL:
+            j += 1
+        return j
 
     def run(self):
         if self.s.startswith("#!"):
@@ -178,11 +188,12 @@ class JsScanner(Base):
             c, nx = s[self.i], s[self.i + 1:self.i + 2]
             if c in WS:
                 self.i += 1
-            elif c == "/" and nx == "/":
-                self.line_comment()
-            elif c == "/" and nx == "*":
-                self.block_comment()
-            elif c in "'\"":
+                continue
+            if c == "/" and nx in ("/", "*"):
+                self.line_comment() if nx == "/" else self.block_comment()
+                continue
+            ctrl, self.ctrl = self.ctrl, False
+            if c in "'\"":
                 end = self.quoted(self.i + 1, c)
                 self.literal(self.i, end)
                 self.i, self.prev = end, "value"
@@ -190,12 +201,12 @@ class JsScanner(Base):
                 self.template()
                 self.prev = "value"
             elif c == "/":
-                if self.prev == "value":
+                if self.prev == "value" or (self.prev == "brace" and not self.brace_regex()):
                     self.i, self.prev = self.i + 1, "punct"
                 else:
                     self.regex()
                     self.prev = "value"
-            elif (c == "<" and self.jsx and self.prev != "value"
+            elif (c == "<" and self.jsx and self.prev not in ("value", "brace")
                   and (nx == ">" or (nx and (nx.isalpha() or nx in "_$")))):
                 self.jsx_element()
                 self.prev = "value"
@@ -205,36 +216,42 @@ class JsScanner(Base):
                 word = m.group()
                 self.i = m.end()
                 self.prev = "kw" if word in JS_EXPR_KEYWORDS and not self.after_dot else "value"
+                self.ctrl = (word in JS_CTRL or (word == "await" and ctrl)) and not self.after_dot
                 self.after_dot = False
             elif c in "([{":
-                stack.append(c)
+                stack.append((c, ctrl and c == "("))
                 self.i, self.prev = self.i + 1, "punct"
             elif c in ")]}":
                 if not stack:
                     if c == stop:
                         return
                     self.fail(f"unbalanced '{c}'")
-                if stack.pop() != CLOSERS[c]:
+                opener, head = stack.pop()
+                if opener != CLOSERS[c]:
                     self.fail(f"mismatched '{c}'")
-                self.i, self.prev = self.i + 1, "value"
+                self.i, self.prev = self.i + 1, "punct" if head else "brace" if c == "}" else "value"
             elif s.startswith(("++", "--"), self.i):
                 self.i, self.prev = self.i + 2, "value"
             else:
                 self.after_dot = c == "."
                 self.i, self.prev = self.i + 1, "punct"
         if stop or stack:
-            self.fail(f"missing '{stop or {'(': ')', '[': ']', '{': '}'}[stack[-1]]}'")
+            self.fail(f"missing '{stop or {'(': ')', '[': ']', '{': '}'}[stack[-1][0]]}'")
 
     def nested(self, stop):
         """Scan an embedded expression up to its closing stop char, leaving i on it."""
-        self.prev = None
+        self.prev, self.ctrl = None, False
         self.code(stop)
 
-    def regex(self):
-        s, start, j, in_class = self.s, self.i, self.i + 1, False
-        while j < self.n and s[j] not in "\r\n":
+    def regex_end(self, j):
+        """End of the regex literal starting at j, or None if it doesn't close on its line."""
+        s, in_class = self.s, False
+        j += 1
+        while j < self.n and s[j] not in JS_EOL:
             c = s[j]
             if c == "\\":
+                if j + 1 >= self.n or s[j + 1] in JS_EOL:
+                    return None
                 j += 2
                 continue
             if c == "[":
@@ -243,11 +260,89 @@ class JsScanner(Base):
                 in_class = False
             elif c == "/" and not in_class:
                 m = IDENT.match(s, j + 1)
-                self.i = m.end() if m else j + 1
-                self.literal(start, self.i)
-                return
+                return m.end() if m else j + 1
             j += 1
-        self.fail("unterminated regular expression", start)
+        return None
+
+    def regex(self):
+        end = self.regex_end(self.i)
+        if end is None:
+            self.fail("unterminated regular expression")
+        self.literal(self.i, end)
+        self.i = end
+
+    def brace_regex(self):
+        """Whether the "/" at i, right after a "}", starts a regex: after a block it does,
+        after an object or function expression it is a division. When both readings scan
+        and find different comments or strings on the line, raises ScanError."""
+        j, eol = self.i, self.eol(self.i)
+        end = self.regex_end(j)
+        as_regex = None if end is None else self.line_events(end, eol, "value")
+        as_division = self.line_events(j + 1, eol, "punct")
+        if as_regex is None or as_regex == as_division:
+            return False
+        if as_division is None:
+            return True
+        self.fail("ambiguous '/' after '}': can't tell a regular expression from a division")
+
+    def line_events(self, j, eol, prev):
+        """Where comments, strings and templates start on the rest of the line when j is
+        read with prev before it, or None if that reading doesn't scan."""
+        s, out, heads, ctrl, after_dot = self.s, [], [], False, False
+        while j < eol:
+            c = s[j]
+            if c in WS:
+                j += 1
+                continue
+            if s.startswith("//", j):
+                return out + [("comment", j)]
+            if s.startswith("/*", j):
+                k = s.find("*/", j + 2)
+                if k < 0 or k + 2 > eol:
+                    return out + [("comment", j)]
+                out.append(("comment", j, k + 2))
+                j = k + 2
+                continue
+            head, ctrl = ctrl, False
+            if c in "'\"":
+                k = j + 1
+                while k < eol and s[k] != c:
+                    if s[k] == "\\" and k + 1 >= eol:
+                        return out + [("string", j)]
+                    k += 2 if s[k] == "\\" else 1
+                if k >= eol:
+                    return None
+                out.append(("string", j, k + 1))
+                j, prev = k + 1, "value"
+            elif c == "`":
+                return out + [("template", j)]
+            elif c == "/":
+                if prev == "value":
+                    j, prev = j + 1, "punct"
+                else:
+                    k = self.regex_end(j)
+                    if k is None:
+                        return None
+                    j, prev = k, "value"
+            elif c.isdigit() or (c == "." and s[j + 1:j + 2].isdigit()):
+                j, prev = JS_NUMBER.match(s, j).end(), "value"
+            elif m := IDENT.match(s, j):
+                word, j = m.group(), m.end()
+                prev = "kw" if word in JS_EXPR_KEYWORDS and not after_dot else "value"
+                ctrl = word in JS_CTRL and not after_dot
+            elif c == "(":
+                heads.append(head)
+                j, prev = j + 1, "punct"
+            elif c == ")":
+                j, prev = j + 1, "punct" if heads and heads.pop() else "value"
+            elif c in "]}":
+                j, prev = j + 1, "value"
+            elif s.startswith(("++", "--"), j):
+                j, prev = j + 2, "value"
+            else:
+                j, prev = j + 1, "punct"
+            after_dot = c == "."
+        return out
 
     def template(self):
         s, piece, j = self.s, self.i, self.i + 1
@@ -1034,6 +1129,7 @@ class HtmlScanner(Base):
     def run(self):
         s = self.s
         raw = ("script", "style") if self.lang == "xml" else ("script", "style", "textarea", "title")
+        pre = 0
         while self.i < self.n:
             i = self.i
             if s.startswith("<!--", i):
@@ -1044,7 +1140,7 @@ class HtmlScanner(Base):
                     if end < 0:
                         self.fail("unterminated comment")
                     end += 3
-                self.comment(i, end, "html")
+                self.comment(i, end, "html", meta={"in_pre": True} if pre else {})
                 self.i = end
             elif s.startswith("<![CDATA[", i):
                 end = s.find("]]>", i)
@@ -1061,6 +1157,8 @@ class HtmlScanner(Base):
                 end = self.tag_end(m.end())
                 name = m.group(1).lower()
                 self.i = end
+                if name == "pre" and self.lang == "html" and s[end - 2] != "/":
+                    pre = max(0, pre + (-1 if s[i + 1] == "/" else 1))
                 if s[i + 1] != "/" and name in raw and s[end - 2] != "/":
                     close = re.compile(rf"</{name}\b", re.I).search(s, end)
                     if not close:
@@ -1101,6 +1199,49 @@ def line_starts(text):
     for l in lines_of(text):
         starts.append(starts[-1] + len(l))
     return starts
+
+
+def directive_spans(text, sc):
+    """[(start, end)] of each C preprocessor directive's logical line: the line starting
+    with "#" plus the lines a trailing backslash or a comment carries it onto."""
+    starts = line_starts(text)
+    spans = sorted([(c.start, c.end) for c in sc.comments] + list(sc.literals))
+    span_starts = [a for a, _ in spans]
+    comments = sorted((c.start, c.end) for c in sc.comments)
+    comment_starts = [a for a, _ in comments]
+
+    def line_end(ln):
+        e = starts[ln + 1]
+        while e > starts[ln] and text[e - 1] in "\r\n":
+            e -= 1
+        return e
+
+    def covered(pos):
+        k = bisect.bisect_left(span_starts, pos) - 1
+        return k >= 0 and spans[k][1] > pos
+
+    out, ln, last = [], 0, len(starts) - 1
+    while ln < last:
+        a = starts[ln]
+        if not text[a:starts[ln + 1]].lstrip(" \t\ufeff").startswith("#") or covered(a):
+            ln += 1
+            continue
+        end = ln
+        while True:
+            lo, eol = starts[end], line_end(end)
+            k = bisect.bisect_left(comment_starts, lo)
+            far = max((b for ca, b in comments[k:bisect.bisect_left(comment_starts, eol)] if b > eol),
+                      default=None)
+            if far is not None:
+                end = bisect.bisect_right(starts, far - 1) - 1
+            elif end + 1 < last and text[lo:eol].endswith("\\") \
+                    and (len(text[lo:eol]) - len(text[lo:eol].rstrip("\\"))) % 2:
+                end += 1
+            else:
+                break
+        out.append((a, line_end(end)))
+        ln = end + 1
+    return out
 
 
 def py_tokens(text):
@@ -1326,6 +1467,8 @@ def classify(text, sc):
             c.protected = "ends a keep (+) block scalar: removing it would change the value"
         elif lang == "yaml" and c.meta["line"] == 1 and raw.startswith("#cloud-config"):
             c.protected = "cloud-init header"
+        elif c.meta.get("in_pre"):
+            c.protected = "inside <pre>: removing it changes the preformatted text"
         else:
             for langs, pat, label, reason in DIRECTIVES:
                 if lang not in langs or c.kind == "docstring":

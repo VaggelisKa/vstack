@@ -53,6 +53,18 @@ class Deletes(Base):
         src = "let a = 1 /* x\n*/ let b = 2\n"
         self.assertEqual(self.deleted("a.js", src), "let a = 1\n let b = 2\n")
 
+    def test_multi_line_comment_in_a_directive_becomes_one_space(self):
+        cases = {
+            "#define SUM(a,b) ((a) /* first\n second */ + (b))\nint x = SUM(1,2);\n":
+                "#define SUM(a,b) ((a) + (b))\nint x = SUM(1,2);\n",
+            "#define A \\\n  1 /* c\n */ + 2\nint y = A;\n": "#define A \\\n  1 + 2\nint y = A;\n",
+            "#define A /* x\n */ 1 /* y\n z */ + 2\nint q = A;\n": "#define A 1 + 2\nint q = A;\n",
+            "#if X /* a\n b */\nint z;\n#endif\n": "#if X\nint z;\n#endif\n",
+        }
+        for src, want in cases.items():
+            with self.subTest(src=src):
+                self.assertEqual(self.deleted("a.c", src), want)
+
     def test_two_comments_on_one_line(self):
         self.assertEqual(self.deleted("a.c", "int a; /* x */ /* y */\n/* p */ /* q */\nint b;\n"),
                          "int a;\nint b;\n")
@@ -66,6 +78,32 @@ class Deletes(Base):
         self.assertEqual(self.deleted("a.html", "<p>a<!-- x -->b</p>\n<!-- own -->\n<p>c</p>\n"),
                          "<p>ab</p>\n<p>c</p>\n")
 
+    def test_css_comment_is_not_whitespace(self):
+        cases = {
+            ("a.css", ".a/* c */.b { color: red }\n"): ".a.b { color: red }\n",
+            ("a.css", "a/**/.b { x: y }\n#id/**/.c { x: y }\na/**/:hover { x: y }\n"):
+                "a.b { x: y }\n#id.c { x: y }\na:hover { x: y }\n",
+            ("a.scss", ".a/**/.b { x: y }\n"): ".a.b { x: y }\n",
+            ("a.less", ".a/* x\n */.b { x: y }\n"): ".a.b { x: y }\n",
+            ("a.css", ".a /* c */ .b { x: f(/* c */ y) }\n"): ".a .b { x: f( y) }\n",
+        }
+        for (name, src), want in cases.items():
+            with self.subTest(src=src):
+                self.assertEqual(self.deleted(name, src), want)
+
+    def test_css_comment_between_tokens_that_would_merge_is_refused(self):
+        src = "a { margin: 1/**/.5px }\n"
+        r, text = self.apply("a.css", src)
+        self.assertEqual(r.returncode, 2, r.stdout)
+        self.assertIn(b"would change code", r.stderr)
+        self.assertEqual(text, src)
+
+    def test_escaped_space_before_a_trailing_comment_stays(self):
+        self.assertEqual(self.deleted("a.sh", "echo a\\  # c\necho b\n"), "echo a\\ \necho b\n")
+
+    def test_js_line_separator_ends_the_comment(self):
+        self.assertEqual(self.deleted("a.js", "foo(); // note\u2028bar();\n"), "foo(); \u2028bar();\n")
+
     def test_shell_comment_after_continuation_keeps_its_line(self):
         src = "run a \\\n# ends the command\nrun b\n"
         self.assertEqual(self.deleted("a.sh", src), "run a \\\n\nrun b\n")
@@ -74,6 +112,11 @@ class Deletes(Base):
         src = ('"""Module docstring."""\n\nimport os  # import os\n\n\ndef f():\n    """Return one."""\n'
                "    # the answer\n    return 1\n")
         self.assertEqual(self.deleted("a.py", src), "import os\n\n\ndef f():\n    return 1\n")
+
+    def test_docstring_followed_by_a_semicolon(self):
+        r, text = self.apply("a.py", 'def f():\n    """d"""; return 1\n\n\ndef g(): """e"""; return 2\n')
+        self.assertEqual(r.returncode, 0, r.stderr.decode())
+        self.assertEqual(text, "def f():\n    return 1\n\n\ndef g(): return 2\n")
 
 
 class BlankLines(Base):
@@ -138,7 +181,8 @@ class Rewrites(Base):
 
     def test_invalid_rewrites_are_refused(self):
         bad = {
-            ("a.ts", "x(); // c\n"): ["/* c */", "// a\n// b", "x(); // c", "not a comment"],
+            ("a.ts", "x(); // c\n"): ["/* c */", "// a\n// b", "x(); // c", "not a comment", "// a\u2028b()",
+                                     "// a\u2029"],
             ("a.ts", "f(a /* c */, b);\n"): ["// c", "/* a */ b /* c */"],
             ("a.c", "int x; // c\n"): ["// ends in a backslash \\"],
             ("a.py", "def f():\n    \"\"\"Doc.\"\"\"\n"): ["# comment", "'''a''' 'b'", 'f"x"'],
