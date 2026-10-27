@@ -214,3 +214,12 @@ checks status, review status and unresolved thread count, fix rounds used with
 commit links, replies posted, reruns, and **every open escalation with a link and
 the decision needed**. If branch protection couldn't be read, say so and that
 all checks were treated as required. Without `--merge`, end with whether it is ready to merge.
+
+### Result file
+
+After the final report, pipe the outcome as JSON, in the shape in
+[references/result-schema.md](references/result-schema.md), to
+`python3 -I "$SKILL_DIR/scripts/write-result.py" --pr <number> --head-sha <headRefOid>`
+from the repo (`$SKILL_DIR` is this skill's folder). It writes
+`.vstack/<number>/babysit.json` for other skills to read; git ignores it. On
+exit 2, fix the JSON from its stderr and run it again.

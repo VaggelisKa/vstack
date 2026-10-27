@@ -42,7 +42,8 @@ anything, and don't "quickly fix" a finding, however obvious the fix is. The use
 asked for a judgment. A reviewer that also changes the tree can't be trusted to
 review it, and it can overwrite the user's own uncommitted work.
 
-The only things you write in the repo are the report and one session folder:
+The only things you write in the repo are the report, a PR's result file
+(step 7, in a `.vstack` folder that ignores itself) and one session folder:
 `SESSION=$(python3 -I "$SKILL_DIR/scripts/session.py" new)`, run from the repo
 (`$SKILL_DIR` is this skill's folder), creates `.review-session-<hex>` (mode
 0700) at the repo root with a `.gitignore` of `*`, so it ignores itself and no
@@ -470,4 +471,14 @@ Never quote a secret's value anywhere in the report or chat; redact it.
 Then print a short summary in the chat: the decision line as written, the score
 (mean and minimum), the top 3 findings with `file:line`, the number of failed
 or partial reviewers and skeptics when it isn't 0, and the report path.
+
+## 7. Result file (PR scopes only)
+
+Pipe the outcome as JSON, in the shape in
+[references/result-schema.md](references/result-schema.md), to
+`python3 -I "$SKILL_DIR/scripts/write-result.py" --pr <number> --head-sha <head_sha>`
+from the repo. It writes `.vstack/<number>/review.json` for other skills to
+read. On exit 2, fix the JSON from its stderr and run it again; on any other
+failure, say so in the chat. Skip this step for other scopes.
+
 Clean the session folder and run the `git status` check last.
