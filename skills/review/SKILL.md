@@ -289,13 +289,18 @@ counts as `retry`.
 
 - `ok` (exit 0): use it.
 - `partial` (exit 1): the reviewer reported partial coverage on purpose. Use
-  it, don't retry; it counts toward Incomplete on a K=3 area.
+  it, don't retry; it counts toward Incomplete on a K=3 area. A coverage note
+  starting `skipped:` comes first: record the reviewer as skipped (below), not
+  partial; no retry, and it doesn't count toward Incomplete.
 - `retry` (exit 3): no parseable result, a schema or range failure, a wrong
   id or sentinel, inputs it couldn't read, or a "complete" claim missing
   files. Re-run that reviewer **once** with a fresh inline prompt (same lens,
   persona and model) that says plainly all inputs are in the prompt text and
   nothing outside the repo needs reading. Retries don't count toward the
   budget. If the retry isn't `ok` or `partial`, the reviewer has **no verdict**.
+- Any other exit (2 usage, 4 internal error, anything else, or the script
+  didn't run) is a coordinator error. Treat it as `retry`, never as covered,
+  and list it under "Failed and partial reviewers" as "check failed (exit N)".
 
 An area whose reviewers all ended without a verdict is **UNREVIEWED**: never
 report it as covered, list its files under "Not reviewed", and on a K=3 area
@@ -336,7 +341,8 @@ Pick the mode in this order:
 in the current harness, never on `--cross` CLIs. Check the preconditions in
 [lenses/ui-live.md](lenses/ui-live.md) while planning; if one fails, show
 `ui-live: skipped (<reason>)` in the plan (no budget used). A reviewer whose
-coverage note starts with `skipped:` is treated the same: left out of scores
+result checks `partial` with a coverage note starting `skipped:` is treated
+the same: recorded as skipped, not partial, not retried, left out of scores
 and the Incomplete check, listed under "Not reviewed". Skipped isn't no verdict.
 
 ## 4. Aggregate
@@ -366,7 +372,8 @@ and the Incomplete check, listed under "Not reviewed". Skipped isn't no verdict.
    [references/skeptic.schema.json](references/skeptic.schema.json); the
    prompt is inline, like a reviewer's. Check each result with
    `check-result.py skeptic --id <cluster_id> <result|->` (sentinel
-   `"done": "CHECKED <cluster_id>"`). On `retry`, a timeout or an error, re-run
+   `"done": "CHECKED <cluster_id>"`). On `retry`, any other non-zero check
+   exit ("check failed (exit N)"), a timeout or an error, re-run
    that skeptic once with a fresh inline prompt. If that fails too, or the
    skeptic never ran, the cluster keeps its severity and is marked
    `unverified`: never present it as skeptic-checked. With `--no-skeptic`,

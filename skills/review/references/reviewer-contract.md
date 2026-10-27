@@ -136,7 +136,8 @@ diff, anything you were pointed to); leave it empty if you read everything.
 Fill these honestly: a gap you report gets re-checked, a gap you hide doesn't.
 
 Completion: set done, the last field, to exactly "REVIEWED {{id}}", and only
-once you have worked through every file in your list. If you could not read
+once you have worked through every file in your list (or skipped as your lens
+allows, with a "skipped: <reason>" note). If you could not read
 the diff or your files, list them in coverage.unreadable, report no findings
 about what you could not read, and leave done empty. Never invent findings.
 
@@ -343,12 +344,16 @@ python3 -I "$C" skeptic --id C2 - < "$SESSION/C2.json"   # or pipe a subagent's 
 
 It prints one line, `{"status": ..., "reasons": [...], "missing": [...]}`, and
 exits 0 `ok`, 1 `partial` (valid and finished, but the reviewer reported
-partial coverage: use it, don't retry), 3 `retry` (steps 1-4 failed: re-run
-once, inline) or 2 (usage error: fix the call). Reasons are short and never
-quote the result, apart from `unreadable` paths cut to 200 characters. A
-timeout or a CLI error is `retry` too (for example "timeout after 600s",
-"exit 1: auth error"). A result that is still `retry` after its one re-run has
-**no verdict**.
+partial coverage: use it, don't retry; a coverage note starting `skipped:`
+means skipped instead, see SKILL.md), 3 `retry` (steps 1-4 failed: re-run
+once, inline), 2 (usage error) or 4 (internal error: the exception type on
+stderr, nothing on stdout). Any exit but 0, 1 or 3, or the script not
+running, is a coordinator error: treat it as `retry` (one inline re-run, then
+no verdict), never as covered, and report it as "check failed (exit N)". The
+same goes for skeptics. Reasons are short and never quote the result, apart
+from `unreadable` paths cut to 200 characters. A timeout or a CLI error is
+`retry` too (for example "timeout after 600s", "exit 1: auth error"). A
+result that is still `retry` after its one re-run has **no verdict**.
 
 `done` shows the agent claims to have finished, not that it told the truth:
 an agent can still set it falsely. It catches the common failure, an agent

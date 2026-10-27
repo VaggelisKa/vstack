@@ -52,15 +52,18 @@
   prompt files under `/tmp`, so one area was only partly reviewed without
   anyone noticing. Prompts now go to subagents inline. `session.py` tests
   cover creating the folder in a temp repo (`git status --porcelain`, tracked
-  files and `.git/info/exclude` unchanged), outside a repo, and `clean`
-  refusing symlinks, wrong names, `..` and folders outside the toplevel.
+  files and `.git/info/exclude` unchanged), outside a repo, a missing or
+  failing git (exit 2, not the current directory), `clean` removing read-only
+  and unreadable subfolders or warning and exiting 2, and `clean` refusing
+  symlinks, wrong names, `..` and folders outside the toplevel.
 - `check-result.py` checks every reviewer and skeptic result (schema, ranges,
   id, the `done` sentinel, `unreadable`, the file manifest) and says `ok`,
   `partial` or `retry`; a failed result gets one inline re-run, then its area
   is UNREVIEWED or its cluster unverified. Its tests cover refusal prose,
   truncated, fenced and prose-wrapped JSON, schema and range failures, wrong
-  or missing sentinels and ids, manifest gaps, injected text (never echoed)
-  and 1 MB inputs. 85 tests in total (48 before).
+  or missing sentinels and ids, manifest gaps, injected text (never echoed),
+  1 MB inputs, a ui-live skip, file names with form feeds or U+2028, and an
+  internal error (exit 4, treated as `retry`). 92 tests in total (48 before).
 
 > Not yet verified: `--cross` (running reviewers through codex, gemini or agy),
 > gemini's stdin prompt (help only), agy's stream-json stdin (not used),

@@ -8,9 +8,10 @@ never render. Your evidence is screenshots and observed behaviour.
 
 The coordinator checks these before planning you. If one turns out to fail
 while you're running, don't guess. Return `verdict: "approved"`, `score: 10`,
-no findings, `coverage.status: "partial"` and a `coverage.note` starting with
-`skipped: <reason>`. The coordinator recognises that and records you as
-skipped, not approved.
+no findings, `coverage.status: "partial"`, a `coverage.note` starting with
+`skipped: <reason>` and `done: "REVIEWED <your id>"`, so the result validates.
+The coordinator recognises that and records you as skipped, not approved or
+partial.
 
 1. **A reachable app.** Prefer a dev server that's already running. Probe the
    port in the project's dev script, or common ones

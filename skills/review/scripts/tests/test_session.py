@@ -16,10 +16,12 @@ from helpers import GIT_ENV, SCRIPTS, commit_all, git, new_repo, tmpdir
 NAME = re.compile(r"\.review-session-[0-9a-f]{16}")
 
 
-def session(*args, cwd):
+def session(*args, cwd, path=None):
     temp_root = next(p for p in pathlib.Path(os.path.realpath(cwd)).parents
                      if p.name.startswith("review-test-"))
     env = {**GIT_ENV, "GIT_CEILING_DIRECTORIES": str(temp_root)}
+    if path is not None:
+        env["PATH"] = str(path)
     return subprocess.run([sys.executable, "-I", str(SCRIPTS / "session.py"), *map(str, args)],
                           capture_output=True, text=True, cwd=cwd, env=env)
 
@@ -71,6 +73,59 @@ class Session(unittest.TestCase):
         self.assertEqual(os.path.dirname(path), os.path.realpath(cwd))
         self.assertEqual(session("clean", path, cwd=cwd).returncode, 0)
         self.assertFalse(os.path.exists(path))
+
+    def fake_git(self, script):
+        bin_dir = tmpdir() / "bin"
+        bin_dir.mkdir()
+        if script is not None:
+            (bin_dir / "git").write_text("#!/bin/sh\n" + script + "\n")
+            (bin_dir / "git").chmod(0o755)
+        return bin_dir
+
+    def test_git_failure_is_an_error_not_cwd(self):
+        for script in (None, "echo 'fatal: boom' >&2; exit 1",
+                       "echo \"fatal: detected dubious ownership in repository at '/x'\" >&2; exit 128",
+                       "exit 0"):
+            with self.subTest(script=script):
+                r = session("new", cwd=self.repo / "src", path=self.fake_git(script))
+                self.assertEqual((r.returncode, r.stdout), (2, ""))
+                self.assertIn("session: can't determine the repo root", r.stderr)
+                self.assertEqual(os.listdir(self.repo / "src"), ["app.py"])
+        path = self.new()
+        r = session("clean", path, cwd=self.repo, path=self.fake_git("exit 1"))
+        self.assertEqual(r.returncode, 2)
+        self.assertTrue(os.path.isdir(path))
+
+    @unittest.skipIf(os.geteuid() == 0, "root ignores permissions")
+    def test_clean_removes_read_only_and_unreadable_dirs(self):
+        path = self.new()
+        for name, mode in (("ro", 0o500), ("none", 0o000)):
+            os.makedirs(os.path.join(path, name, "deep"))
+            with open(os.path.join(path, name, "deep", "f.png"), "w") as f:
+                f.write("x")
+            with open(os.path.join(path, name, "f.log"), "w") as f:
+                f.write("x")
+            os.chmod(os.path.join(path, name, "deep"), 0o500)
+            os.chmod(os.path.join(path, name), mode)
+        r = session("clean", path, cwd=self.repo)
+        self.assertEqual((r.returncode, r.stderr), (0, ""))
+        self.assertFalse(os.path.lexists(path))
+
+    @unittest.skipIf(os.geteuid() == 0, "root ignores permissions")
+    def test_clean_warns_and_fails_on_what_it_cant_remove(self):
+        path = self.new()
+        with open(os.path.join(path, "R1.log"), "w") as f:
+            f.write("x")
+        os.chmod(self.repo, 0o555)
+        try:
+            r = session("clean", path, cwd=self.repo)
+            self.assertEqual(stat.S_IMODE(os.stat(self.repo).st_mode), 0o555)
+        finally:
+            os.chmod(self.repo, 0o755)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn(f"session: warning: couldn't remove {path}\n", r.stderr)
+        self.assertTrue(os.path.isdir(path))
+        self.assertEqual(os.listdir(path), [])
 
     def assertRefused(self, arg, survivor):
         r = session("clean", arg, cwd=self.repo)

@@ -3,7 +3,8 @@
 Usage: python3 -I check-result.py reviewer --id R1 [--files LIST] RESULT
        python3 -I check-result.py skeptic --id C2 RESULT
 RESULT and LIST are paths, or "-" for stdin (only one of them). LIST holds the
-area's files, one per line.
+area's files, one per line, split on LF only (a CR, form feed or U+2028 inside a
+name stays part of it).
 
 The result is untrusted text: it is parsed as JSON and nothing in it is run
 or followed. The object is the whole text, else the last fenced block that
@@ -23,6 +24,7 @@ and exits:
              sentinel, unreadable inputs, or a "complete" claim with files
              missing: re-dispatch once
   2 usage error (message on stderr)
+  4 internal error (exception type on stderr, nothing on stdout)
 Reasons never quote the result's text; paths are cut to 200 characters.
 """
 import argparse
@@ -72,7 +74,7 @@ def read_files(src):
         raise Usage(f"can't read --files: {e.strerror}")
     if len(data) > MAX_BYTES:
         raise Usage(f"--files is over {MAX_BYTES} bytes")
-    return [p for p in map(norm, data.decode("utf-8", errors="replace").splitlines()) if p]
+    return [p for p in map(norm, data.decode("utf-8", errors="replace").split("\n")) if p]
 
 
 def no_constants(name):
@@ -259,4 +261,8 @@ def main():
     sys.exit({"ok": 0, "partial": 1, "retry": 3}[status])
 
 
-main()
+try:
+    main()
+except Exception as e:
+    print(f"check-result: internal error: {type(e).__name__}", file=sys.stderr)
+    sys.exit(4)
