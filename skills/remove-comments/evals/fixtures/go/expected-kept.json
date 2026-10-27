@@ -1,0 +1,50 @@
+{
+  "fixture": "go/before.go",
+  "protected": [
+    {
+      "id": "c1",
+      "text": "// Copyright 2025 Acme Corp. All rights reserved.",
+      "why": "legal header"
+    },
+    {
+      "id": "c2",
+      "text": "// Use of this source code is governed by a BSD-style license.",
+      "why": "legal header"
+    },
+    {
+      "id": "c3",
+      "text": "//go:build linux",
+      "why": "go directive"
+    },
+    {
+      "id": "c17",
+      "text": "//nolint:exhaustruct",
+      "why": "go directive"
+    }
+  ],
+  "kept": [
+    {
+      "id": "c6",
+      "text": "// protects items",
+      "action": "keep"
+    },
+    {
+      "id": "c9",
+      "text": "// zero means never",
+      "action": "keep"
+    },
+    {
+      "id": "c13",
+      "text": "// Callers must not modify the returned value: it is shared between goroutines.",
+      "action": "keep"
+    }
+  ],
+  "needs_human": [
+    {
+      "id": "c17",
+      "text": "//nolint:exhaustruct",
+      "why": "suppression without a reason"
+    }
+  ],
+  "deleted": 10
+}

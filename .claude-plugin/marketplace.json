@@ -8,7 +8,7 @@
     {
       "name": "vstack",
       "source": "./",
-      "description": "Personal agent skills: babysit (shepherd a PR to green or merged), html-plan (interactive HTML implementation plans) and review (read-only multi-lens code review)."
+      "description": "Personal agent skills: babysit (shepherd a PR to green or merged), html-plan (interactive HTML implementation plans), review (read-only multi-lens code review) and remove-comments (strictly delete comment noise, with a check that no code changed)."
     }
   ]
 }

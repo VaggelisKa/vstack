@@ -1,0 +1,19 @@
+{
+  "fixture": "yaml/before.yaml",
+  "protected": [
+    {
+      "id": "c1",
+      "text": "# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json",
+      "why": "yaml tool directive"
+    }
+  ],
+  "kept": [
+    {
+      "id": "c7",
+      "text": "# Pinned to a SHA: this action's tags were moved during the 2025 supply-chain incident",
+      "action": "keep"
+    }
+  ],
+  "needs_human": [],
+  "deleted": 8
+}
