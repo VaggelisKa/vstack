@@ -160,10 +160,14 @@ python3 -I "$RC/comments.py" apply "$TMP/decisions.json" --list "$TMP/comments.j
 
 It fails closed and changes nothing if any pending id lacks a decision, a
 decision targets a protected or out-of-scope comment, a rewrite isn't exactly
-one comment of the same kind, or an edit would change a code token. A file
-changed since `list` is skipped ("file changed since list"); re-run `list`
-and decide again for it. Each file is written atomically. Fix the decisions
-and re-run on exit 2; never work around it by editing files.
+one comment of the same kind, an edit would change a code token, or one of
+verify's cross-checks (step 4) says an edited file differs ("cross-check
+<tool> differs (...); file left untouched": the scanner misread that file).
+A file changed since `list` is skipped ("file changed since list"); re-run
+`list` and decide again for it. Each file is written atomically. Fix the
+decisions and re-run on exit 2; for a cross-check difference, keep that
+file's comments with reason "scanner: cross-check differs" and list the file
+under Needs a human. Never work around it by editing files.
 
 With `--dry-run`, stop after this step and report what would change.
 
@@ -177,19 +181,39 @@ It compares each file's snapshot (taken by `list`, so earlier uncommitted
 work isn't mistaken for your edit) with the working tree, after removing
 comments and normalising whitespace: the code tokens must be identical,
 including which tokens sit inside a C preprocessor directive and, in CSS,
-whether whitespace separates two tokens. Docstring edits are listed
-separately (`--strict` fails on them).
+whether whitespace separates two tokens (in SCSS a comment counts as
+whitespace, as it does for Sass, so apply turns `.a/**/.b` into `.a .b`).
+Docstring edits are listed separately (`--strict` fails on them).
 
 Because `apply` and the token check share one scanner, verify also asks
 tools that don't, for every edited file, and prints
-`cross-check <tool>: ok|differs|skipped (<reason>)`: Python's `ast`;
-TypeScript's emitter for JS/TS (when `node` is on PATH and the repo has
-`typescript` installed; plain `node --check`, syntax only, for `.js` files
-otherwise); `gcc`/`cc`/`clang -E` for C and C++; `gofmt -e` for Go (syntax
-only). Other languages say "skipped (no independent tool)". A missing tool
-is a skip, never a failure; `--no-cross-check` turns them off. None of
-these runs code from the repo, and neither do `list`, `apply` or `verify`
-themselves.
+`cross-check <tool>: <status> (<reason>)`, where status is
+
+- `ok`: an independent check found the same code: Python's `ast`,
+  TypeScript's emitter for JS/TS, `gcc`/`cc`/`clang -E` for C and C++;
+- `weak`: syntax only, the edited file parses but nothing shows it means the
+  same: `node --check` for `.js`/`.mjs`/`.cjs` when TypeScript isn't
+  available, `gofmt -e` for Go;
+- `skipped (<reason>)`: no independent check: other languages ("no
+  independent tool"), a missing tool, a before file the tool can't read
+  (a C file whose `#include "..."` isn't a system header);
+- `differs`: exit 1.
+
+The summary says how many edited files got each (`N edited file(s): A
+cross-checked ok, W syntax-only (weak), S no independent check`); report
+those counts, and don't call a weak or skipped file cross-checked. A missing
+tool is a skip, never a failure; `--no-cross-check` turns them off.
+
+The cross-checks run only tools from outside the repo: Python's `ast`
+in-process, and `node --check`, `gofmt -e` and `gcc -E` on copies or stdin in
+an empty scratch directory, with `NODE_OPTIONS`, `CPATH` and similar
+variables removed and PATH entries inside the repo dropped. TypeScript is
+loaded only from `RC_TS_ROOT` (a directory the user pins, whose
+`node_modules` has `typescript`) or the global npm root, and never when its
+real path is inside the repo: a `typescript` the repo installs or commits is
+repo code, so TS/TSX files are "skipped" unless one of those has it. `RC_TS_ROOT`
+inside the repo is refused. So `list`, `show`, `apply`, `verify` and `report`
+never run the repo's code; the formatter, lint and tests in step 5 do.
 
 Exit 1 means code changed or a cross-check differs: run
 `python3 -I "$RC/comments.py" restore --list "$TMP/comments.json"`, report
@@ -242,8 +266,9 @@ checks result. Print it in the chat; with `--report PATH`, pass
   unknown types, generated, minified and vendored files, and `<script>`/
   `<style>` contents in HTML. They appear under Skipped.
 - **Fail closed.** A file the scanner can't decide (unterminated string,
-  template, heredoc or block scalar, a JS `/` after `}` that could start a
-  regex or a division, non-UTF-8, bare CR) is an error and isn't touched; a
+  template, heredoc or block scalar, a JS `/` after `}` or a TS `/` after
+  type arguments that could start a regex or a division, non-UTF-8, bare CR)
+  is an error and isn't touched; a
   file name that isn't valid UTF-8 is skipped. If a listed "comment" looks like code or a string, keep it
   with reason "scanner: not a comment" and say so.
 - **No git side effects**: no add, commit, push, stash, reset or checkout

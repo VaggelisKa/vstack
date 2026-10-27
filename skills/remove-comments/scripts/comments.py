@@ -13,11 +13,17 @@ precheck refuses a dirty tree or an unfinished merge, rebase, cherry-pick,
 revert or bisect. list writes the comments in scope as JSON (plus a snapshot of
 every scanned file next to it), show prints them with each comment's text in
 an untrusted block, apply edits only inside comment spans and refuses to write
-a file whose code tokens would change, verify compares code tokens of the
-snapshot or a git ref against the working tree and cross-checks them with
-tools that don't share this scanner (Python's ast, TypeScript, the C
-preprocessor, gofmt) when they are installed. None of them runs code from the
-repository.
+a file whose code tokens would change or whose cross-check differs, verify
+compares code tokens of the snapshot or a git ref against the working tree.
+
+Both cross-check edits with tools that don't share this scanner: Python's ast,
+and, when installed outside the repository, TypeScript's emitter, the C
+preprocessor, node --check and gofmt -e. Those run in a scratch directory on
+copies or stdin, with variables like NODE_OPTIONS and CPATH removed and PATH
+entries inside the repository dropped; TypeScript loads only from RC_TS_ROOT or
+the global npm root, and never when its real path is inside the repository. So
+none of this runs code from the repository; the repo's own formatter, lint and
+tests do, which is why SKILL.md gates them.
 
 Exit codes: 0 ok; 1 verify found a code change, or apply skipped a file that
 changed since list; 2 bad arguments or decisions, git or scan errors, a dirty
@@ -32,7 +38,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import stat
 import subprocess
 import sys
@@ -394,7 +399,8 @@ def odd_backslash(line):
 def delete_inline(t, s, e, c, lang, directive=False):
     """Remove the comment at t[s:e] that shares its line with code. In a preprocessor
     directive a line break would end the directive; in CSS whitespace between two
-    tokens is a combinator, and a comment isn't whitespace."""
+    tokens is a combinator, and a comment isn't whitespace, but in SCSS it is
+    (Sass compiles .a/**/.b to .a .b), so there it leaves a space."""
     ls = t.rfind("\n", 0, s) + 1
     le = t.find("\n", e)
     le = len(t) if le < 0 else le
@@ -413,7 +419,7 @@ def delete_inline(t, s, e, c, lang, directive=False):
     if lang in CSS:
         if a < s or b > e:
             return t[:a] + " " + t[b:]
-        return t[:s] + (" " if css_merges(t[s - 1], t[e]) else "") + t[e:]
+        return t[:s] + (" " if lang == "scss" or css_merges(t[s - 1], t[e]) else "") + t[e:]
     if "\n" in t[s:e]:
         return t[:a] + (" " if directive else "\r\n" if "\r\n" in t[s:e] else "\n") + t[b if directive else e:]
     left, right = t[s - 1], t[e]
@@ -616,7 +622,7 @@ def normalize(text, lang):
             add(SENTINEL if lang in CSS else f" {SENTINEL} ", a)
             verbatim.append(text[a:b])
         elif lang in CSS:
-            add(CSS_GAP, a)
+            add(" " if lang == "scss" else CSS_GAP, a)
         elif not (c.jsx or c.kind == "html" or lang in LINE_MODE):
             add(" ", a)
         pos = b
@@ -663,7 +669,8 @@ def normalize(text, lang):
 
 def css_tokens(joined, line):
     """CSS tokens, with WS_TOKEN where whitespace separates two of them and can matter.
-    A comment (CSS_GAP) separates tokens without being whitespace."""
+    A CSS or Less comment (CSS_GAP) separates tokens without being whitespace; normalize
+    turns an SCSS comment into a space."""
     out, ws = [], None
     for m in CSS_TOKEN.finditer(joined):
         if m.group("gap") is not None:
@@ -903,6 +910,12 @@ def cmd_apply(a):
             (stale if is_stale else failed).append((rec["path"], err))
         else:
             plans.append((rec, new))
+    if not failed:
+        edits = [(rec["path"], rec["lang"], decode(open(os.path.join(doc["repo"], rec["path"]), "rb").read()),
+                  new.decode("utf-8"), None) for rec, new in plans if sha(new) != rec["sha256"]]
+        failed = [(path, f"cross-check {tool} differs ({reason}); file left untouched")
+                  for path, tool, status, reason in cross_checks(edits, untrusted_roots(doc["repo"]))
+                  if status == "differs"]
     if failed:
         print("remove-comments apply: refusing, no file was changed", file=sys.stderr)
         for path, err in failed:
@@ -953,8 +966,7 @@ def verify_pairs(a):
         if not lang:
             die(f"unsupported file type: {q(a.after)} (pass --lang)")
         here = os.path.dirname(os.path.abspath(a.after))
-        r = run_tool(["git", "-C", here, "rev-parse", "--show-toplevel"], here)
-        root = os.path.realpath(r[1].decode().strip()) if r and r[0] == 0 else here
+        root = toplevel(here) or here
         return root, [(a.after, lang, open(a.before, "rb").read(), open(a.after, "rb").read(),
                        os.path.abspath(a.after))], notes
     if a.base:
@@ -990,9 +1002,14 @@ def verify_pairs(a):
 
 
 TOOL_TIMEOUT = 30
-NODE_RESOLVE = ("const {createRequire} = require('module');"
-                "try { process.stdout.write(createRequire(process.argv[1]).resolve('typescript')); }"
+# Variables that make node, npm, a C compiler or gofmt load code, headers or flags from
+# somewhere else; a repo's .envrc can set them.
+TOOL_ENV_DROP = re.compile(r"NODE_.*|TS_NODE_.*|LD_.*|DYLD_.*|GCC_.*|GO.*|COMPILER_PATH|CPATH|C_INCLUDE_PATH"
+                           r"|CPLUS_INCLUDE_PATH|OBJC_INCLUDE_PATH|OBJCPLUS_INCLUDE_PATH|DEPENDENCIES_OUTPUT"
+                           r"|SUNPRO_DEPENDENCIES")
+NODE_RESOLVE = ("try { process.stdout.write(require.resolve('typescript', {paths: [process.argv[1]]})); }"
                 " catch (e) { process.exit(3); }")
+NO_TYPESCRIPT = "typescript isn't available outside the repo; set RC_TS_ROOT to a trusted install"
 NODE_TRANSPILE = r"""
 const ts = require(process.argv[1]);
 let input = '';
@@ -1016,9 +1033,43 @@ C_PP_TOKEN = re.compile(r"""[A-Za-z_]\w*|\.?\d(?:[eEpP][+-]|[\w.'])*|"(?:\\.|[^"
                         r"""|->\*?|<<=|>>=|\+\+|--|<<|>>|&&|\|\||##|::|\.\.\.|[-+*/%&|^!=<>]=|\S""")
 
 
-def run_tool(argv, scratch, data=b""):
-    """(exit code, stdout, stderr) of a checker run outside the repo, or None if it couldn't run."""
-    env = {k: v for k, v in os.environ.items() if k not in ("NODE_OPTIONS", "NODE_PATH")}
+def toplevel(where="."):
+    """Real path of the git work tree around where, or None (also when git is missing)."""
+    try:
+        r = subprocess.run(["git", "-C", where, "rev-parse", "--show-toplevel"], capture_output=True,
+                           stdin=subprocess.DEVNULL, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    out = r.stdout.decode("utf-8", "surrogateescape").strip()
+    return os.path.realpath(out) if r.returncode == 0 and out else None
+
+
+def untrusted_roots(root):
+    """Real paths of the repo being edited and of the work tree around the current
+    directory, if that is another one: no checker may be loaded from inside them."""
+    return sorted({os.path.realpath(root), toplevel() or os.path.realpath(root)})
+
+
+def tool_env(roots=()):
+    """The environment checkers run with: no TOOL_ENV_DROP variables, and a PATH of
+    absolute directories outside roots."""
+    env = {k: v for k, v in os.environ.items() if not TOOL_ENV_DROP.fullmatch(k)}
+    env["PATH"] = os.pathsep.join(d for d in os.environ.get("PATH", "").split(os.pathsep)
+                                  if os.path.isabs(d) and not any(inside(d, r) for r in roots))
+    return env
+
+
+def find_tool(name, env, roots=()):
+    """Absolute path of name on env's PATH whose real path is outside roots, or None."""
+    for d in env["PATH"].split(os.pathsep):
+        p = os.path.join(d, name)
+        if os.path.isfile(p) and os.access(p, os.X_OK) and not any(inside(p, r) for r in roots):
+            return p
+    return None
+
+
+def run_tool(argv, scratch, env, data=b""):
+    """(exit code, stdout, stderr) of a checker run in the scratch dir, or None if it couldn't run."""
     try:
         r = subprocess.run(argv, input=data, capture_output=True, cwd=scratch, env=env, timeout=TOOL_TIMEOUT)
     except (OSError, subprocess.SubprocessError):
@@ -1031,20 +1082,27 @@ def first_line(err):
     return q(lines[0][:120]) if lines else "no message"
 
 
-def find_typescript(node, root, scratch):
-    """(path of typescript.js, None) or (None, why not). Never a copy the repo commits."""
+def find_typescript(node, roots, scratch, env):
+    """(real path of typescript.js, None) or (None, why not). It comes from RC_TS_ROOT
+    if set, else from the global npm root, and never from inside roots: a typescript
+    in the checkout, or a symlink into it, is code the repo controls."""
     pinned = os.environ.get("RC_TS_ROOT")
-    base = os.path.abspath(pinned or root)
-    r = run_tool([node, "-e", NODE_RESOLVE, os.path.join(base, "noop.js")], scratch)
+    if pinned:
+        if any(inside(pinned, r) for r in roots):
+            return None, "RC_TS_ROOT is inside the repo"
+        base = os.path.realpath(pinned)
+    else:
+        npm = find_tool("npm", env, roots)
+        r = run_tool([npm, "root", "-g"], scratch, env) if npm else None
+        if not r or r[0] or not r[1].strip():
+            return None, NO_TYPESCRIPT
+        base = r[1].decode("utf-8", "surrogateescape").strip()
+    r = run_tool([node, "-e", NODE_RESOLVE, base], scratch, env)
     if not r or r[0] or not r[1]:
-        return None, "typescript isn't installed for this repo"
+        return None, "RC_TS_ROOT has no typescript" if pinned else NO_TYPESCRIPT
     path = os.path.realpath(r[1].decode("utf-8", "surrogateescape"))
-    if not pinned and inside(path, root):
-        pkg = path
-        while os.path.basename(pkg) != "typescript" and pkg != os.path.dirname(pkg):
-            pkg = os.path.dirname(pkg)
-        if git(root, "ls-files", "-z", "--", os.path.relpath(pkg, os.path.realpath(root)), check=False).stdout:
-            return None, "the repo commits its own typescript package, which is repo code"
+    if any(inside(path, root) for root in roots):
+        return None, "RC_TS_ROOT's typescript resolves into the repo" if pinned else NO_TYPESCRIPT
     return path, None
 
 
@@ -1060,33 +1118,37 @@ def c_items(out):
     return items
 
 
-def c_preprocessor(scratch):
+def c_preprocessor(scratch, env=None, roots=()):
     """argv for the first C preprocessor on PATH, in C++ mode if it has one (C++ lexes a
     superset of C: raw strings, digit separators), or None."""
-    for cc in ("gcc", "cc", "clang"):
-        if shutil.which(cc):
+    env = env or tool_env(roots)
+    for name in ("gcc", "cc", "clang"):
+        cc = find_tool(name, env, roots)
+        if cc:
             for mode in (["-x", "c++"], ["-x", "c", "-std=gnu2x"]):
-                r = run_tool([cc, "-E", *mode, "-"], scratch)
+                r = run_tool([cc, "-E", *mode, "-"], scratch, env)
                 if r and r[0] == 0:
                     return [cc, "-E", "-P", "-dD", *mode]
     return None
 
 
-def cross_check_c(before, after, src, argv, scratch):
+def cross_check_c(before, after, argv, scratch, env):
+    """Both sides through the preprocessor on stdin from the empty scratch dir, without
+    -I: an #include of a repo header isn't found and the check is skipped."""
     if not argv:
         return "c", "skipped", "no working gcc, cc or clang on PATH"
-    cc = argv[0]
-    argv = argv + (["-iquote", os.path.dirname(src)] if src else []) + ["-"]
-    b = run_tool(argv, scratch, before.encode("utf-8"))
+    cc = os.path.basename(argv[0])
+    b = run_tool(argv + ["-"], scratch, env, before.encode("utf-8"))
     if not b or b[0]:
         return cc, "skipped", "the before file doesn't preprocess: " + (first_line(b[2]) if b else "timed out")
-    a = run_tool(argv, scratch, after.encode("utf-8"))
+    a = run_tool(argv + ["-"], scratch, env, after.encode("utf-8"))
     if not a or a[0]:
         return cc, "differs", "the edited file doesn't preprocess: " + (first_line(a[2]) if a else "timed out")
     return (cc, "ok", None) if c_items(b[1]) == c_items(a[1]) else (cc, "differs", "preprocessed output differs")
 
 
-def cross_check_node(path, before, after, node, scratch):
+def cross_check_node(path, before, after, node, scratch, env):
+    """node --check on copies in the scratch dir: it parses, it runs nothing. Syntax only."""
     out = []
     for side, text in (("before", before), ("after", after)):
         d = os.path.join(scratch, side)
@@ -1094,43 +1156,55 @@ def cross_check_node(path, before, after, node, scratch):
         f = os.path.join(d, "check" + os.path.splitext(path)[1])
         with open(f, "w", encoding="utf-8") as fh:
             fh.write(text)
-        out.append(run_tool([node, "--check", f], scratch))
+        out.append(run_tool([node, "--check", f], scratch, env))
     if not out[0] or out[0][0]:
         return "node --check", "skipped", "the before file doesn't pass node --check"
     if not out[1] or out[1][0]:
         return "node --check", "differs", "the edited file has a syntax error: " + (
             first_line(out[1][2]) if out[1] else "timed out")
-    return "node --check", "ok", "syntax only"
+    return "node --check", "weak", "syntax only"
 
 
-def cross_checks(files, root):
-    """[(path, tool, ok|differs|skipped, reason)] from checkers that don't share the
-    scanner: Python's ast, TypeScript's emitter, the C preprocessor, gofmt."""
+def cross_check_python(before, after):
+    for side, text in (("before", before), ("edited", after)):
+        try:
+            ast.parse(text)
+        except SyntaxError:
+            return "python-ast", "skipped" if side == "before" else "differs", f"the {side} file doesn't parse"
+    return ("python-ast", "ok", None) if same_ast(before, after) else ("python-ast", "differs", "AST differs")
+
+
+def cross_checks(files, roots):
+    """[(path, tool, status, reason)] from checkers that don't share the scanner. status
+    is ok (an independent check found the same code: Python's ast, TypeScript's emitter,
+    the C preprocessor), weak (syntax only: node --check, gofmt -e), skipped or differs.
+    No checker is taken from inside roots."""
     results, js, cpp = {}, [], None
+    env = tool_env(roots)
     with tempfile.TemporaryDirectory(prefix="remove-comments-check-") as scratch:
-        node = shutil.which("node")
-        for k, (path, lang, before, after, src) in enumerate(files):
+        node = find_tool("node", env, roots)
+        for k, (path, lang, before, after, _) in enumerate(files):
             if lang == "python":
-                results[k] = ("python-ast", "ok" if same_ast(before, after) else "differs", None)
+                results[k] = cross_check_python(before, after)
             elif lang in JS:
                 js.append(k)
             elif lang == "c":
                 if cpp is None:
-                    cpp = c_preprocessor(scratch) or []
-                results[k] = cross_check_c(before, after, src, cpp, scratch)
-            elif lang == "go" and shutil.which("gofmt"):
-                b = run_tool(["gofmt", "-e"], scratch, before.encode("utf-8"))
-                a = run_tool(["gofmt", "-e"], scratch, after.encode("utf-8"))
+                    cpp = c_preprocessor(scratch, env, roots) or []
+                results[k] = cross_check_c(before, after, cpp, scratch, env)
+            elif lang == "go" and (gofmt := find_tool("gofmt", env, roots)):
+                b = run_tool([gofmt, "-e"], scratch, env, before.encode("utf-8"))
+                a = run_tool([gofmt, "-e"], scratch, env, after.encode("utf-8"))
                 results[k] = (("gofmt", "skipped", "the before file doesn't parse") if not b or b[0] else
                               ("gofmt", "differs", "the edited file doesn't parse") if not a or a[0] else
-                              ("gofmt", "ok", "syntax only"))
+                              ("gofmt", "weak", "syntax only"))
             else:
                 results[k] = (lang, "skipped", "no independent tool")
-        ts, why = find_typescript(node, root, scratch) if node and js else (None, "node isn't on PATH")
+        ts, why = find_typescript(node, roots, scratch, env) if node and js else (None, "node isn't on PATH")
         if ts:
             payload = json.dumps([[os.path.basename(files[k][0]) or "file.ts", files[k][2], files[k][3]]
                                   for k in js]).encode("utf-8", "surrogateescape")
-            r = run_tool([node, "-e", NODE_TRANSPILE, ts], scratch, payload)
+            r = run_tool([node, "-e", NODE_TRANSPILE, ts], scratch, env, payload)
             try:
                 emitted = json.loads(r[1]) if r and r[0] == 0 else None
             except ValueError:
@@ -1146,7 +1220,7 @@ def cross_checks(files, root):
                 continue
             path = files[k][0]
             if node and path.endswith((".js", ".mjs", ".cjs")):
-                results[k] = cross_check_node(path, files[k][2], files[k][3], node, scratch)
+                results[k] = cross_check_node(path, files[k][2], files[k][3], node, scratch, env)
             else:
                 results[k] = ("typescript", "skipped", why)
     return [(files[k][0], *results[k]) for k in sorted(results)]
@@ -1177,10 +1251,13 @@ def cmd_verify(a):
         docs += [f"{q(path)}: {d}" for d in res["docstrings"]]
         if bt != at:
             checked.append((path, lang, bt, at, src))
-    xs = [] if a.no_cross_check else cross_checks(checked, root)
+    xs = [] if a.no_cross_check else cross_checks(checked, untrusted_roots(root))
     xdiffs = [x for x in xs if x[2] == "differs"]
-    print(f"remove-comments verify: {same} file(s) with identical code tokens, {len(diffs)} changed, "
-          f"{len(errors)} error(s), {len(docs)} docstring change(s), {len(xdiffs)} cross-check difference(s)")
+    ok, weak = (sum(x[2] == s for x in xs) for s in ("ok", "weak"))
+    print(f"remove-comments verify: {same} file(s) with identical code tokens by this scanner, {len(diffs)} changed, "
+          f"{len(errors)} error(s), {len(docs)} docstring change(s)")
+    print(f"  {len(checked)} edited file(s): {ok} cross-checked ok, {weak} syntax-only (weak), "
+          f"{len(checked) - ok - weak - len(xdiffs)} no independent check, {len(xdiffs)} cross-check difference(s)")
     for n in notes:
         print(n)
     for d in diffs:

@@ -82,7 +82,9 @@ class Verify(unittest.TestCase):
     def test_css_whitespace_between_tokens(self):
         self.changed("a.css", ".a.b { x: y }\n", ".a .b { x: y }\n", "<whitespace>")
         self.changed("a.css", ".a .b { x: y }\n", ".a.b { x: y }\n", "<whitespace>")
-        self.changed("a.scss", ".a/* c */.b { x: y }\n", ".a .b { x: y }\n")
+        self.changed("a.scss", ".a/* c */.b { x: y }\n", ".a.b { x: y }\n", "<whitespace>")
+        self.same("a.scss", ".a/* c */.b { x: y }\n", ".a .b { x: y }\n")
+        self.changed("a.less", ".a/* c */.b { x: y }\n", ".a .b { x: y }\n", "<whitespace>")
         self.changed("a.css", "a { margin: 1/**/.5px }\n", "a { margin: 1.5px }\n")
         self.changed("a.css", "a { margin: 1/**/.5px }\n", "a { margin: 1 .5px }\n")
         self.changed("a.css", "a/**/b { x: y }\n", "ab { x: y }\n")
@@ -173,12 +175,14 @@ class CrossCheck(unittest.TestCase):
     def test_node_check_without_typescript(self):
         r = verify("a.js", "f(a); // c\n", "f(a);\n", env={"RC_TS_ROOT": str(tmpdir())})
         self.assertEqual(r.returncode, 0, r.stdout)
-        self.assertRegex(r.stdout.decode(), r"cross-check (node --check: ok \(syntax only\)|typescript: ok)")
+        self.line(r, "node --check", "weak (syntax only)")
+        self.assertIn(b"0 cross-checked ok, 1 syntax-only (weak)", r.stdout)
 
     @unittest.skipUnless(shutil.which("gofmt"), "gofmt isn't on PATH")
     def test_gofmt_syntax(self):
         r = verify("a.go", "package p\n\nvar x = 1 // c\n", "package p\n\nvar x = 1\n")
-        self.line(r, "gofmt", "ok (syntax only)")
+        self.line(r, "gofmt", "weak (syntax only)")
+        self.assertIn(b"1 edited file(s): 0 cross-checked ok, 1 syntax-only (weak), 0 no independent check", r.stdout)
 
     def test_missing_tools_never_fail(self):
         empty = tmpdir()
@@ -188,6 +192,27 @@ class CrossCheck(unittest.TestCase):
                 r = verify(name, before, after, env={"PATH": str(empty)})
                 self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
                 self.assertIn(b": skipped (", r.stdout)
+
+    def test_summary_counts_ok_weak_and_unchecked_apart(self):
+        repo = new_repo()
+        files = {"a.py": "x = 1\n", "b.rs": "fn f() {}\n", "c.js": "f(a);\n", "d.py": "y = 2\n"}
+        for name, text in files.items():
+            (repo / name).write_text(text)
+        commit_all(repo, "base")
+        for name, text in (("a.py", "x = 1  # c\n"), ("b.rs", "fn f() {} // c\n"), ("c.js", "f(a); // c\n")):
+            (repo / name).write_text(text)
+        r, doc, out = listing(repo, "--all")
+        self.assertEqual(run("apply", decide(out, {c: {"action": "delete"} for c in doc["pending"]}),
+                             "--list", out, cwd=repo).returncode, 0)
+        env = {"RC_TS_ROOT": str(tmpdir())}
+        r = run("verify", "--list", out, cwd=repo, env=env)
+        self.assertEqual(r.returncode, 0, r.stdout)
+        weak = 1 if shutil.which("node") else 0
+        self.assertIn(f"3 edited file(s): 1 cross-checked ok, {weak} syntax-only (weak), {2 - weak} no independent "
+                      "check, 0 cross-check difference(s)".encode(), r.stdout)
+        self.assertIn(b"cross-check rust: skipped (no independent tool)", r.stdout)
+        r = run("verify", "--list", out, "--no-cross-check", cwd=repo, env=env)
+        self.assertIn(b"3 edited file(s): 0 cross-checked ok, 0 syntax-only (weak), 3 no independent check", r.stdout)
 
     def test_no_cross_check(self):
         r = verify("a.py", "x = 1  # c\n", "x = 1\n", "--no-cross-check")

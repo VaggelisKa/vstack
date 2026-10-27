@@ -2,12 +2,19 @@
 
 ## First: whose code is this?
 
-`list`, `show`, `apply`, `verify` (with its cross-checks: Python's `ast`,
-TypeScript's `transpileModule`, `gcc -E`, `gofmt -e`, `node --check`) and
-`report` read the repo's files; they never run code from it. Everything
-below does: a formatter or linter loads the repo's config and plugins,
-`npm test` runs package scripts, pytest imports `conftest.py`, cargo runs
-`build.rs`, and any of them can trigger git hooks.
+`list`, `show`, `apply`, `verify` and `report` read the repo's files; they
+never run code from it. The cross-checks `apply` and `verify` run use only
+tools from outside the repo: Python's `ast`; `node --check`, `gofmt -e` and
+`gcc -E` on copies or stdin in an empty scratch directory (so `#include
+"x.h"` can't reach repo headers), with `NODE_OPTIONS`, `NODE_PATH`,
+`LD_PRELOAD`, `CPATH`, `GCC_*`, `GO*` and similar variables removed and PATH
+entries inside the repo dropped; and TypeScript's `transpileModule` only from
+`RC_TS_ROOT` or the global npm root, never when its real path is inside the
+repo (a `node_modules/typescript` the repo installs, commits or symlinks is
+repo code). Everything below does run repo code: a formatter or linter loads
+the repo's config and plugins, `npm test` runs package scripts, pytest
+imports `conftest.py`, cargo runs `build.rs`, and any of them can trigger
+git hooks. That is why the next section gates them.
 
 For a PR target, find out where the checked-out head comes from:
 

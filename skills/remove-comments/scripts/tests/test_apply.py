@@ -78,12 +78,11 @@ class Deletes(Base):
         self.assertEqual(self.deleted("a.html", "<p>a<!-- x -->b</p>\n<!-- own -->\n<p>c</p>\n"),
                          "<p>ab</p>\n<p>c</p>\n")
 
-    def test_css_comment_is_not_whitespace(self):
+    def test_css_and_less_comment_is_not_whitespace(self):
         cases = {
             ("a.css", ".a/* c */.b { color: red }\n"): ".a.b { color: red }\n",
             ("a.css", "a/**/.b { x: y }\n#id/**/.c { x: y }\na/**/:hover { x: y }\n"):
                 "a.b { x: y }\n#id.c { x: y }\na:hover { x: y }\n",
-            ("a.scss", ".a/**/.b { x: y }\n"): ".a.b { x: y }\n",
             ("a.less", ".a/* x\n */.b { x: y }\n"): ".a.b { x: y }\n",
             ("a.css", ".a /* c */ .b { x: f(/* c */ y) }\n"): ".a .b { x: f( y) }\n",
         }

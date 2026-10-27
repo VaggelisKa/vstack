@@ -210,7 +210,10 @@ cloned folder). Uninstall: `agy plugin uninstall vstack`, or delete the folder.
 The model decides which comments go; `skills/remove-comments/scripts/comments.py`
 lists them, shows them to the model inside untrusted blocks, applies the
 decisions only inside comment spans, and verifies that the code tokens didn't
-change, cross-checked by tools that don't share its scanner. Its tests are in
+change, cross-checked by tools that don't share its scanner and come from
+outside the repo (no cross-check runs the repo's own code; the formatter,
+lint and tests the skill runs afterwards do, which is why it skips them on
+fork PRs). Its tests are in
 `skills/remove-comments/scripts/tests/` and use only temp dirs and temp git
 repos:
 
@@ -218,12 +221,20 @@ repos:
 python3 -m unittest discover -s skills/remove-comments/scripts/tests
 ```
 
-That runs 138 tests in about 35 to 40 seconds; two of them (the TypeScript
-cross-check and the JS fuzz) skip unless `RC_TS_ROOT` names a directory
-whose `node_modules` has `typescript`. With `RC_TS_ROOT` set (TypeScript
-5.9.3, node 24) all 138 pass. The C tests used gcc 14 in C mode
-(`-std=gnu2x`, no C++ front end installed); the Go test used gofmt from
-Go 1.27. Tests whose tool is missing skip.
+That runs 164 tests in about 35 to 45 seconds. Four skip unless pointed at
+tools outside the repo: three (the TypeScript cross-check, a trusted
+`RC_TS_ROOT` being used, and the JS fuzz) need `RC_TS_ROOT` naming a
+directory whose `node_modules` has `typescript`, and the Sass oracle needs
+`RC_SASS_ROOT` (or `RC_TS_ROOT`) whose `node_modules` has `sass`:
+
+```bash
+RC_TS_ROOT=/path/with/node_modules RC_SASS_ROOT=/path/with/node_modules \
+  python3 -m unittest discover -s skills/remove-comments/scripts/tests
+```
+
+With both set (TypeScript 5.9.3, sass 1.106.1, node 24) all 164 pass. The C
+tests used gcc 14 in C mode (`-std=gnu2x`, no C++ front end installed); the
+Go test used gofmt from Go 1.27. Tests whose tool is missing skip.
 
 They cover:
 
@@ -248,7 +259,14 @@ They cover:
   of an `if`/`while`/`for`/`for await` head read as a regex
   (`if (p) /\//.test(s)`), a `/` after `}` scanned when both readings agree
   and an error when they don't (`function f(){}\n/\//.test(s)`), U+2028,
-  U+2029 and CRLF ending a JS `//` comment; the logical lines of C
+  U+2029 and CRLF ending a JS `//` comment; TypeScript's non-null assertion
+  before a division (`x = a! / b; /* c // d */` followed by a regex literal
+  with `//` and `/*`, in `.ts` and `.tsx`; `a!.b / c`, `a!! / b`,
+  `f()! / 2`, `a!=b`, `a !== b / c // d`) while a prefix `!` still starts a
+  regex (`if (!/re/.test(s))`, in JS always), a line break before `!`
+  making it prefix, `{}! / a` and type arguments before a `/`
+  (`a as Array<number> / 2`) scanned right or refused, never misread, and
+  `=>` or a comparison before a regex; the logical lines of C
   preprocessor directives (backslash continuations, comments running onto the
   next line, `#if 0` bodies);
 - protected detection: 35 directive cases across the languages (eslint,
@@ -269,10 +287,19 @@ They cover:
   children, HTML inline comments, a shell comment after a `\` continuation,
   Python comments and docstrings, a docstring followed by `; code`; a
   multi-line comment in a `#define` (also on a continuation line, and two of
-  them) replaced by one space so the directive stays one line; CSS comments
-  between tokens (`.a/* c */.b` becomes `.a.b`, not `.a .b`; `#id/**/.c`,
-  `a/**/:hover`, SCSS, Less, a multi-line one) and `1/**/.5px`, which no
-  comment-free text can keep as two tokens, refused; an escaped space before
+  them) replaced by one space so the directive stays one line; CSS and Less
+  comments between tokens (`.a/* c */.b` becomes `.a.b`, not `.a .b`;
+  `#id/**/.c`, `a/**/:hover`, a multi-line one) and `1/**/.5px`, which no
+  comment-free text can keep as two tokens, refused; SCSS comments, which
+  Sass reads as whitespace, leaving a space (13 cases: `.a/**/.b` to
+  `.a .b`, `&/**/.e`, `f/**/:hover`, `a/**/>/**/.b`, `1px/**/2px`,
+  `1px+/**/2px`, `1/**/.5px`, two comments in a row, a multi-line one), the
+  comment before a negative number (`$x/**/-1`, a subtraction, which
+  `$x -1` and `$x-1` aren't) protected, and, with `RC_SASS_ROOT`, Sass
+  compiling every case to the same CSS before and after; the cross-checks
+  run before writing, so an edit a fooled scanner passed (`edit` and
+  `compare` patched) is refused when Python's `ast` or `node --check`
+  disagrees and no file changes; an escaped space before
   a shell comment kept; a JS `//` comment ending at U+2028; blank-line
   collapsing (between blocks, after an opener, before a closer, at file start
   and end); BOM, CRLF and a missing final newline preserved; rewrites
@@ -287,16 +314,36 @@ They cover:
   removed, Python indentation, YAML indentation or a shell continuation
   changes, the Python AST changes, code moves into or out of a C directive
   (the `#define SUM` newline), or CSS gains or loses whitespace between two
-  tokens (`.a.b` vs `.a .b` both ways, `1.5px`, `1 .5px`, `ab`); docstring
+  tokens (`.a.b` vs `.a .b` both ways, `1.5px`, `1 .5px`, `ab`), where an
+  SCSS comment counts as whitespace (`.a/**/.b` to `.a.b` fails, to `.a .b`
+  passes; Less and CSS the other way round); docstring
   changes are reported separately and fail only with `--strict`; a scan
   error exits 2; the snapshot mode vs `--base HEAD`;
 - `verify` cross-checks: Python `ast` ok; `gcc -E` ok on a real edit,
   "differs" on the hand-made `#define` newline, "skipped" when the before
-  file doesn't preprocess; TypeScript's emitter ok on a TSX edit and
-  "differs" on a dropped statement and on a syntax error (with
-  `RC_TS_ROOT`); `node --check` (or TypeScript, if one is found) on `.js`;
-  `gofmt -e` syntax; with `PATH` emptied, C, TS, Go and Rust files all report
-  "skipped" and verify still exits 0; `--no-cross-check`;
+  file doesn't preprocess (also when it includes a header that sits next to
+  it in the repo); TypeScript's emitter ok on a TSX edit and "differs" on a
+  dropped statement and on a syntax error (with `RC_TS_ROOT`); `node
+  --check` on `.js` and `gofmt -e` reported as `weak` (syntax only), not
+  `ok`; the summary line counting edited files as cross-checked ok,
+  syntax-only (weak) and no independent check (Python, JS and Rust files:
+  1, 1, 1; with `--no-cross-check` 0, 0, 3); with `PATH` emptied, C, TS, Go
+  and Rust files all report "skipped" and verify still exits 0;
+  `--no-cross-check`;
+- repo code never runs: in a temp repo with a committed
+  `node_modules/typescript` symlink to repo code that writes a marker file
+  when loaded, `list`, `apply` and `verify` leave no marker, verify reports
+  "typescript: skipped (typescript isn't available outside the repo; set
+  RC_TS_ROOT to a trusted install)" and never `typescript: ok`; the same with
+  the repo's `bin/` (shims for node, npm, gcc, cc, clang, gofmt) and a
+  relative directory first on `PATH`, `NODE_OPTIONS=--require` a repo file
+  and `CPATH` set to the repo; `RC_TS_ROOT` inside the repo refused ("RC_TS_ROOT
+  is inside the repo"), and an `RC_TS_ROOT` outside it whose `typescript` is
+  a symlink back into the repo refused; an `RC_TS_ROOT` outside the repo used
+  (`typescript: ok`); the environment checkers get (`NODE_OPTIONS`,
+  `NODE_PATH`, `LD_PRELOAD`, `GCC_*`, `CPATH`, `C_INCLUDE_PATH`,
+  `CPLUS_INCLUDE_PATH`, `GOFLAGS`, `GOROOT`, `TS_NODE_*` removed, PATH reduced
+  to absolute directories outside the repo);
 - seeded fuzz (fixed seeds, small N): random C lines with comments, every
   comment deleted, compared with `gcc -E -P -dD` output whenever verify's token
   check passes (the same test finds 2 mismatches in the previous version of
@@ -376,14 +423,28 @@ the scripts and not repeated since:
 >   inside `<pre>` or `<textarea>` made by hand or a formatter goes unnoticed.
 > - Shell `let x=1<<2` reads as a heredoc and is a scan error (bash parses
 >   it the same way).
-> - The C cross-check preprocesses each file on its own, without the
->   build's `-D` flags or include paths beyond the file's directory: a file
->   whose headers aren't found is "skipped", and code under an `#if` that is
->   false without those flags isn't compared. The JS cross-check needs the repo's own `typescript` (one
->   committed to the repo is never loaded); without it, `.ts`/`.tsx`/`.jsx`
->   are "skipped" and `.js` gets a syntax-only `node --check`. Go gets a
->   syntax-only `gofmt -e`; C#, Java, Kotlin, Swift, Rust, Scala, Dart,
->   shell, YAML, TOML, Dockerfile, CSS and HTML have no cross-check.
+> - A TypeScript `/` right after a `>` (type arguments or a comparison)
+>   whose two readings find different comments or strings on the line is a
+>   scan error too (`x = a as Array<number> / 2; // c`).
+> - The C cross-check preprocesses each file on its own from stdin in an
+>   empty directory, without the build's `-D` flags and with no include path
+>   but the system's: a file that includes one of the repo's own headers is
+>   "skipped", and code under an `#if` that is false without those flags
+>   isn't compared. The JS cross-check needs a `typescript` outside the repo
+>   (`RC_TS_ROOT` or the global npm root); the repo's own `node_modules` is
+>   never used, so in a typical project without `RC_TS_ROOT`, `.ts`/`.tsx`/
+>   `.jsx` are "skipped" and `.js` gets only `node --check`, reported as
+>   `weak`. Go gets a `weak` `gofmt -e`; C#, Java, Kotlin, Swift, Rust,
+>   Scala, Dart, shell, YAML, TOML, Dockerfile, CSS, SCSS, Less and HTML have
+>   no cross-check, so apply's pre-write cross-check only guards Python, C,
+>   JS/TS and Go.
+> - SCSS: a comment right before a negative number (`$x/**/-1`) is
+>   protected, never deleted. Verify, as for CSS, treats whitespace after
+>   `:` as insignificant, so a hand edit or formatter turning `a:/**/hover`
+>   or `a: hover` into `a:hover` (a nested property vs a selector in Sass)
+>   passes; apply itself always leaves the space. The Sass rules were checked
+>   against dart-sass 1.106 only (and a 3,000-input fuzz, not part of the
+>   suite: 1,441 inputs that compile, none differing).
 > - `show` runs `wrap-untrusted.py` once per comment (8 at a time), about
 >   30 ms each.
 

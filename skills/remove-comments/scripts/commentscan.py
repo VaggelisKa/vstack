@@ -167,9 +167,22 @@ class JsScanner(Base):
     def __init__(self, text, lang):
         super().__init__(text, lang)
         self.jsx = lang in ("js", "jsx", "tsx")
-        self.prev = None          # None | punct | kw | value | brace: a regex or JSX can't follow a value
+        self.ts = lang in ("ts", "tsx")
+        self.prev = None          # None | punct | kw | value | brace | angle: a regex or JSX can't follow a value
         self.after_dot = False
         self.ctrl = False         # the last token was if/while/for/with
+        self.tok_end = 0
+
+    def postfix_bang(self, j, prev, gap):
+        """Whether the "!" at j is TypeScript's non-null assertion (a!), which ends a
+        value, rather than logical not. gap is the text since the previous token."""
+        if not self.ts or self.s.startswith("!=", j) or any(ch in JS_EOL for ch in gap):
+            return False
+        if prev == "value":
+            return True
+        if prev == "brace" and re.match(r"\s*/(?![/*])", self.s[j + 1:j + 64]):
+            self.fail("ambiguous '!' after '}': can't tell a non-null assertion from a logical not", j)
+        return False
 
     def eol(self, j):
         while j < self.n and self.s[j] not in JS_EOL:
@@ -201,11 +214,13 @@ class JsScanner(Base):
                 self.template()
                 self.prev = "value"
             elif c == "/":
-                if self.prev == "value" or (self.prev == "brace" and not self.brace_regex()):
+                if self.prev == "value" or (self.prev in ("brace", "angle") and not self.brace_regex()):
                     self.i, self.prev = self.i + 1, "punct"
                 else:
                     self.regex()
                     self.prev = "value"
+            elif c == "!" and self.postfix_bang(self.i, self.prev, s[self.tok_end:self.i]):
+                self.i, self.prev = self.i + 1, "value"
             elif (c == "<" and self.jsx and self.prev not in ("value", "brace")
                   and (nx == ">" or (nx and (nx.isalpha() or nx in "_$")))):
                 self.jsx_element()
@@ -234,7 +249,10 @@ class JsScanner(Base):
                 self.i, self.prev = self.i + 2, "value"
             else:
                 self.after_dot = c == "."
-                self.i, self.prev = self.i + 1, "punct"
+                # In TypeScript a ">" can close type arguments (a as Array<T> / 2) or compare.
+                angle = c == ">" and self.ts and s[self.i - 1] != "="
+                self.i, self.prev = self.i + 1, "angle" if angle else "punct"
+            self.tok_end = self.i
         if stop or stack:
             self.fail(f"missing '{stop or {'(': ')', '[': ']', '{': '}'}[stack[-1][0]]}'")
 
@@ -272,9 +290,10 @@ class JsScanner(Base):
         self.i = end
 
     def brace_regex(self):
-        """Whether the "/" at i, right after a "}", starts a regex: after a block it does,
-        after an object or function expression it is a division. When both readings scan
-        and find different comments or strings on the line, raises ScanError."""
+        """Whether the "/" at i, right after a "}" (or a TypeScript ">"), starts a regex:
+        after a block (or a comparison) it does, after an object or function expression
+        (or type arguments) it is a division. When both readings scan and find different
+        comments or strings on the line, raises ScanError."""
         j, eol = self.i, self.eol(self.i)
         end = self.regex_end(j)
         as_regex = None if end is None else self.line_events(end, eol, "value")
@@ -283,7 +302,8 @@ class JsScanner(Base):
             return False
         if as_division is None:
             return True
-        self.fail("ambiguous '/' after '}': can't tell a regular expression from a division")
+        after = "}" if self.prev == "brace" else ">"
+        self.fail(f"ambiguous '/' after '{after}': can't tell a regular expression from a division")
 
     def line_events(self, j, eol, prev):
         """Where comments, strings and templates start on the rest of the line when j is
@@ -339,6 +359,8 @@ class JsScanner(Base):
                 j, prev = j + 1, "value"
             elif s.startswith(("++", "--"), j):
                 j, prev = j + 2, "value"
+            elif c == "!" and self.ts and prev == "value" and s[j + 1:j + 2] != "=":
+                j += 1
             else:
                 j, prev = j + 1, "punct"
             after_dot = c == "."
@@ -1403,6 +1425,9 @@ ADDRESSES_AGENT = rx(
     r"[^\n]{0,80}?\b(?:ignore|disregard|do\s*n[o']?t|never|must|always|keep|retain|preserve|leave|skip|approve|instructions?)\b"
     r"|\b(?:ignore|disregard|forget)\s+(?:all\s+|any\s+)?(?:previous|prior|above|earlier|preceding|the)\s+(?:instructions|prompts?|rules)"
     r"|\b(?:do\s*n[o']?t|never)\s+(?:remove|delete|strip|touch|modify|edit)\s+(?:this|these|the|any)\s+comments?", re.I)
+# Sass reads "1px/**/-1" as a subtraction and "1px -1" as a list: no comment-free text
+# keeps a comment's meaning right before a negative number.
+SASS_MINUS = rx(r"-\.?\d")
 TODO = rx(r"\b(?:TODO|FIXME|HACK|XXX)\b")
 TODO_OWNER = rx(r"\b(?:TODO|FIXME|HACK|XXX)\s*[(\[][^)\]]+[)\]]|@\w+|#\d+|\b[A-Z][A-Z0-9]+-\d+\b|https?://")
 CHANGE_LOG = rx(r"(?:added|updated|changed|fixed|new:|now\s|as requested|removed|refactored|modified|replaced|moved|renamed|previously|changed from)\b", re.I)
@@ -1469,6 +1494,8 @@ def classify(text, sc):
             c.protected = "cloud-init header"
         elif c.meta.get("in_pre"):
             c.protected = "inside <pre>: removing it changes the preformatted text"
+        elif lang == "scss" and c.kind == "block" and SASS_MINUS.match(text, c.end):
+            c.protected = "before a '-' Sass reads as a minus: without it the '-' starts a negative number"
         else:
             for langs, pat, label, reason in DIRECTIVES:
                 if lang not in langs or c.kind == "docstring":
