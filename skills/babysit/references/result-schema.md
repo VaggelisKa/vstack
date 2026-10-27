@@ -65,6 +65,7 @@ When the run ends, the first match sets `status`:
   `passing`, `ci.state` `passing` or `none`, no `changes_requested` and no
   open thread. With no required checks, `ci.state` must be `none`.
 - `failed`: an unrecoverable error, or checks still failing when it ended.
+  Never when everything `green` needs holds: that's `green`.
 - `handed_back`: anything else: an escalation or limit stopped progress, it
   timed out waiting, or the PR was closed. `last_action` says which.
 
@@ -74,8 +75,9 @@ escalations and caps are `handed_back`; `pending` and `failing` mid-run are
 
 The script rejects unknown fields, wrong types, a `ci.state` that doesn't
 follow `required_checks`, a `green` that misses any of its conditions, a
-duplicate thread id or check name, a control character in `last_action` or a
-thread id, and a resolved thread with decision `escalated`. Exit 2 lists every
+`failed` when everything `green` needs holds, a duplicate thread id or check
+name, a control character in `last_action` or a thread id, and a resolved
+thread with decision `escalated`. Exit 2 lists every
 problem on stderr and writes nothing; exit 4 is an internal error.
 
 The file is a cache, not an attestation: anyone with write access to the git
@@ -89,6 +91,8 @@ dir can edit it. A merge gate must re-derive the decision from live PR state
   any non-zero exit, 4 included, means don't use the file), or do what it does:
 - Require `head_sha` and `base_sha` to equal the PR's current full SHAs; any
   mismatch means stale, so the result doesn't apply.
+- Recompute `git merge-base --all base_sha head_sha` (fetch both first) and
+  refuse the file unless it gives exactly one commit, equal to `merge_base`.
 - Check `skill` is `babysit` and `schema_version` is an integer they know;
   refuse a newer one. Ignore unknown fields.
 - Validate the rest as the writer does (the reader loads `write-result.py`'s

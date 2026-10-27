@@ -12,7 +12,7 @@ import subprocess
 import sys
 import unittest
 
-from helpers import GIT_ENV, SCRIPTS, git, pr_repo, tmpdir
+from helpers import GIT_ENV, SCRIPTS, criss_cross_repo, git, pr_repo, tmpdir
 
 SKILL = "babysit"
 OTHER = "fedcba9876543210fedcba9876543210fedcba98"
@@ -92,6 +92,29 @@ class ReadResult(unittest.TestCase):
         self.assertIn("head", self.read(head=OTHER, code=3))
         self.assertIn("base", self.read(base=OTHER, code=3))
         self.assertIn("stale", self.read(head=self.base, base=self.head, code=3))
+
+    def test_merge_base_recomputed(self):
+        self.write()
+        self.edit(merge_base=self.head)
+        self.assertIn("merge_base doesn't match", self.read(code=2))
+        with self.assertRaises(reader.Unsupported):
+            reader.read_result(42, self.head, self.base, self.gitdir)
+
+    def test_merge_base_needs_the_commits(self):
+        self.write()
+        self.edit(head_sha=OTHER)
+        self.assertIn("can't recompute merge_base", self.read(head=OTHER, code=2))
+
+    def test_several_merge_bases_refused(self):
+        self.write()
+        with open(self.out) as f:
+            data = json.load(f)
+        repo, base, head = criss_cross_repo()
+        out = os.path.join(os.path.realpath(repo / ".git"), "vstack", "42", f"{SKILL}.json")
+        os.makedirs(os.path.dirname(out))
+        with open(out, "w") as f:
+            json.dump({**data, "head_sha": head, "base_sha": base, "merge_base": base}, f)
+        self.assertIn("several merge bases", self.read(head=head, base=base, cwd=repo, code=2))
 
     def test_ignores_unknown_fields(self):
         self.write()

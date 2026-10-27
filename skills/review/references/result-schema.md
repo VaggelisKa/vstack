@@ -72,6 +72,8 @@ run the review itself, and never merge on the file alone.
   any non-zero exit, 4 included, means don't use the file), or do what it does:
 - Require `head_sha` and `base_sha` to equal the PR's current full SHAs; any
   mismatch means stale, so the result doesn't apply.
+- Recompute `git merge-base --all base_sha head_sha` (fetch both first) and
+  refuse the file unless it gives exactly one commit, equal to `merge_base`.
 - Check `skill` is `review` and `schema_version` is an integer they know;
   refuse a newer one. Ignore unknown fields.
 - Validate the rest as the writer does (the reader loads `write-result.py`'s
