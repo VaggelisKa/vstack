@@ -30,7 +30,9 @@ or babysit.json already exists for the PR, unless --fresh.
 
 A round is clean when review's merge_ok is true (Ship: no blocker, no major,
 no unreviewed area) and it has no blocker or major. Caps: 3 review rounds, 6
-fix rounds (review fixes plus babysit's commits, counted along first parents),
+fix rounds (review fixes plus babysit's own commits, the first-parent commits
+with a `vstack:babysit:<item>` marker line; another fixer's commits and merges
+from the base don't count),
 2 hours from started_at. A finding that returns in a review after it was
 marked fixed, or a new commit that puts a file a recorded fix touched back to
 its content before that fix, is oscillation. A review round whose blocker plus
@@ -80,6 +82,7 @@ ESCALATIONS = ("security_blocker", "ci_unreproducible", "conflict_judgement", "d
                "escalated")
 SECURITY_RULES = ("security", "data-integrity")
 BABYSIT_READER = os.path.join(c.HERE, "..", "..", "babysit", "scripts", "read-result.py")
+COORDINATION = c.COORDINATION
 RESULT_FILES = ("review.json", "babysit.json")
 KEYS = ("schema_version", "skill", "pr", "merge", "started_at", "updated_at", "caps", "counters", "last_head",
         "rounds", "findings", "fixes", "threads", "ci", "stop")
@@ -351,6 +354,23 @@ def reverted(prior, commits):
     return None
 
 
+def babysit_commits(commits):
+    """The commits babysit marked as its own (coordination.py's marker)."""
+    if not commits:
+        return []
+    if not os.path.exists(COORDINATION):
+        raise c.Usage("babysit's coordination.py isn't installed next to this skill")
+    coord = c.load_module("vstack_babysit_coordination", COORDINATION)
+    own = []
+    for sha in commits:
+        r = git("show", "-s", "--format=%B", sha)
+        if r.returncode != 0:
+            raise c.Usage(f"can't read commit {sha[:12]}")
+        if coord.is_babysit_commit(r.stdout):
+            own.append(sha)
+    return own
+
+
 def fix_commits(s):
     return [x for f in s["fixes"] for x in f["commits"]]
 
@@ -566,11 +586,12 @@ def cmd_record_babysit(top, a):
     except reader.Unusable as e:
         raise c.Usage(f"no usable babysit.json: {c.one_line(e, 300)}")
     commits = first_parent_commits(s["last_head"], a.head_sha)
+    own = babysit_commits(commits)
     prior = fix_commits(s)
-    if commits:
-        s["counters"]["fix_rounds"] += len(commits)
+    if own:
+        s["counters"]["fix_rounds"] += len(own)
         s["fixes"].append({"round": s["counters"]["fix_rounds"], "source": "babysit", "head": a.head_sha,
-                           "commits": commits, "at": stamp()})
+                           "commits": own, "at": stamp()})
     s["threads"] = [{k: t[k] for k in ("id", "author", "is_bot", "state", "decision", "reply_url")}
                     for t in b["threads"]]
     s["ci"].append({"head": a.head_sha, "state": b["ci"]["state"], "failing_checks": b["ci"]["failing_checks"],
@@ -579,7 +600,8 @@ def cmd_record_babysit(top, a):
     s["last_head"] = a.head_sha
     enforce_caps(top, s)
     save(top, s)
-    return {"outcome": "ok", "babysit_status": b["status"], "new_commits": len(commits), **summary(s)}
+    return {"outcome": "ok", "babysit_status": b["status"], "new_commits": len(commits), "babysit_commits": len(own),
+            **summary(s)}
 
 
 def cmd_escalate(top, a):

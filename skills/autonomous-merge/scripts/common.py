@@ -27,11 +27,13 @@ REASONS = (
     "branch_protection", "checks_failing", "unresolved_threads", "changes_requested", "not_approved",
     "conflicts", "draft", "not_open", "needs_review", "escalated", "cap_reached", "oscillation", "no_progress",
     "security_blocker", "ci_unreproducible", "conflict_judgement", "design_change", "scope_change",
-    "merge_unsupported_host", "merge_failed", "unknown",
+    "merge_unsupported_host", "merge_failed", "not_settled", "claimed_items", "conflicting_fixer", "stale_claim",
+    "unknown",
 )
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REVIEW_READER = os.path.join(HERE, "..", "..", "review", "scripts", "read-result.py")
+COORDINATION = os.path.join(HERE, "..", "..", "babysit", "scripts", "coordination.py")
 
 NAME = re.compile(r"[A-Za-z0-9_.-]+")
 PR_NUM = re.compile(r"#?([1-9][0-9]{0,9})")

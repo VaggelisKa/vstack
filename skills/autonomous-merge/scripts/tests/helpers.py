@@ -199,6 +199,28 @@ def github_view(head, base, **over):
 
 
 VIEW_MATCH = ["pr view 42 -R github.com/o/r --json state,isDraft,mergeable"]
+COORD_MATCH = ["pr view 42 -R github.com/o/r --json headRefOid,commits"]
+
+
+def coord_view(head, **over):
+    """gh pr view as babysit's coordination.py reads it: settled, nothing claimed."""
+    v = {"headRefOid": head, "url": "https://github.com/o/r/pull/42", "author": {"login": "me"},
+         "commits": [{"oid": head, "messageHeadline": "head", "messageBody": "", "committedDate": "2026-10-27T10:00:00Z",
+                      "authors": [{"login": "me"}]}],
+         "statusCheckRollup": [{"__typename": "CheckRun", "name": "test", "status": "COMPLETED",
+                                "conclusion": "SUCCESS"}],
+         "reviews": [], "comments": []}
+    v.update(over)
+    return v
+
+
+def seed_coordination(repo, head, pr=42):
+    """babysit's coordination state after a poll that saw head, so the gate's look is settled."""
+    d = os.path.join(os.path.realpath(repo / ".git"), "vstack", str(pr))
+    os.makedirs(d, exist_ok=True)
+    with open(os.path.join(d, "coordination.json"), "w") as f:
+        json.dump({"schema_version": 1, "pr": pr, "last_head": head, "polls": 1, "items": {}, "claims": {},
+                   "self_subjects": [], "working": {}, "files": {}}, f)
 
 
 def github_rules(head, base, **over):
@@ -218,6 +240,8 @@ def github_rules(head, base, **over):
         "view": gh_rule(VIEW_MATCH, github_view(head, base)),
         "checks": gh_rule(["pr checks 42 -R github.com/o/r --required"], [{"name": "test", "bucket": "pass"}]),
         "threads": gh_rule(["api graphql"], [threads_page(thread(resolved=True))]),
+        "coord_view": gh_rule(COORD_MATCH, coord_view(head)),
+        "pr_reactions": gh_rule(["issues/42/reactions"], [[]]),
         "disable": gh_rule(["pr merge 42 -R github.com/o/r --disable-auto"], ""),
         "merge": gh_rule(["pr merge 42"], ""),
     }

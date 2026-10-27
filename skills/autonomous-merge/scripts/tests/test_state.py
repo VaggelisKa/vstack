@@ -58,10 +58,10 @@ class State(unittest.TestCase):
         with open(self.path, "w") as f:
             json.dump(s, f)
 
-    def commit(self, text=None):
+    def commit(self, text=None, marker=None):
         self.n += 1
         (self.repo / "src/a.py").write_text(text or f"x = {self.n + 10}\n")
-        return commit_all(self.repo, f"fix {self.n}")
+        return commit_all(self.repo, f"fix {self.n}" + (f"\n\n{marker}" if marker else ""))
 
     def reviewed(self, head, *findings):
         write_result(REVIEW_WRITER, self.repo, 42, head, self.base, review(*findings))
@@ -280,13 +280,26 @@ class State(unittest.TestCase):
     def test_babysit_commits_count_toward_the_fix_cap(self):
         self.st("init")
         self.reviewed(self.head)
-        heads = [self.commit() for _ in range(6)]
+        heads = [self.commit(marker=f"vstack:babysit:check:test {i}") for i in range(6)]
         write_result(BABYSIT_WRITER, self.repo, 42, heads[-1], self.base, babysit())
         out = self.st("record-babysit", "--head-sha", heads[-1], "--base-sha", self.base)
         self.assertEqual((out["new_commits"], out["fix_rounds"], out["babysit_status"]), (6, 6, "green"))
-        head = self.commit()
+        head = self.commit(marker="vstack:babysit:thread:PRRT_1")
         write_result(BABYSIT_WRITER, self.repo, 42, head, self.base, babysit())
         self.handback("cap_reached", "record-babysit", "--head-sha", head, "--base-sha", self.base)
+
+    def test_only_babysit_marked_commits_are_fix_rounds(self):
+        self.st("init")
+        self.reviewed(self.head)
+        self.commit()
+        self.commit(marker="vstack:autonomous-merge:0123456789abcdef")
+        self.commit(marker="see vstack:babysit:check:test")
+        own = self.commit(marker="vstack:babysit:check:test\nvstack:babysit:thread:PRRT_1")
+        head = self.commit()
+        write_result(BABYSIT_WRITER, self.repo, 42, head, self.base, babysit())
+        out = self.st("record-babysit", "--head-sha", head, "--base-sha", self.base)
+        self.assertEqual((out["new_commits"], out["babysit_commits"], out["fix_rounds"]), (5, 1, 1))
+        self.assertEqual(self.load()["fixes"][-1]["commits"], [own])
 
     def test_record_babysit(self):
         self.st("init")

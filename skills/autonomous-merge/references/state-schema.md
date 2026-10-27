@@ -39,12 +39,12 @@ the gate never reads it.
 | `started_at` | Start of the 2-hour window; `init --continue` restarts it |
 | `counters.review_rounds` | Review rounds recorded; a 4th is refused |
 | `caps` | Always `{"review_rounds": 3, "fix_rounds": 6, "minutes": 120}`; any other value fails the checks |
-| `counters.fix_rounds` | Review fix rounds (one per `fix-round`) plus babysit's commits (first-parent, so `gh pr update-branch` counts once); must equal that sum over `fixes`; over 6 stops the run |
+| `counters.fix_rounds` | Review fix rounds (one per `fix-round`) plus babysit's own commits (first-parent, with a `vstack:babysit:<item>` line; other fixers' commits and base merges don't count); must equal that sum over `fixes`; over 6 stops the run |
 | `last_head` | The head last recorded; the next fix or babysit record counts commits from here |
 | `rounds[]` | One per reviewed head and base: review's `status`, `verdict`, severity counts and `merge_ok` |
 | `findings[].fingerprint` | First 16 hex of SHA-256 over file, lower-cased rule, and the summary lower-cased with digit runs as `#` and punctuation and spacing collapsed |
 | `findings[].status` | `open` (blocker or major, not handled), `fixed` (with `commit`), `rejected` (with `reason`), `deferred` (minors and nits, automatically) |
-| `fixes[]` | Each recorded push with its commits; `source` is `review` or `babysit` |
+| `fixes[]` | Each recorded push with its commits (for `babysit`, only its marked ones); `source` is `review` or `babysit` |
 | `threads[]` | Copied from babysit's result at each `record-babysit` |
 | `ci[]` | One entry per `record-babysit` |
 | `stop` | `null`, or `{"outcome": "merged" \| "ready" \| "handback", "reason", "detail", "at"}` |

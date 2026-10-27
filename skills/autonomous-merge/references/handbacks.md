@@ -39,6 +39,10 @@ handback.
 | `cap_reached` | state | 3 review rounds, 6 fix rounds or 2 hours used | Finish by hand, `init --continue` or `reset` |
 | `oscillation` | state | A fixed finding came back, or a commit put a file back to how it was before a fix | Decide which version is right |
 | `no_progress` | state | A review round didn't reduce the blocker plus major count | Fix or decide the findings by hand |
+| `not_settled` | gate | babysit's coordination says the PR isn't settled: checks still running, a new head since babysit last looked (or babysit never looked), or another actor still working | Let babysit keep polling, then rerun |
+| `claimed_items` | gate | A failing check or thread is claimed by another fixer (or by babysit) and not addressed yet | Wait for them to finish, then rerun |
+| `conflicting_fixer` | gate, babysit | A check fixed by one fixer broke again after the other's commit (or after foreign commits twice) | Pick one fixer and pause the other |
+| `stale_claim` | gate, babysit | Another fixer claimed an item and went quiet (2 CI cycles or 3 polls) | Fix it yourself, or rerun babysit asking it to take over |
 | `merge_unsupported_host` | gate | A Bitbucket PR passed every check; autonomous-merge never merges there (no head-pinned merge, no babysit gate, merge permission only known at merge time) | Merge it yourself in Bitbucket |
 | `merge_failed` | gate | `gh pr merge` failed for another reason (gh's message is in `detail`), or auto-merge hadn't merged when the poll delays or the 8-minute deadline ran out (it's then disabled) | Read the message |
 | `unknown` | any | Anything else (no git remote, mergeability still unknown after re-polling, the base branch's rulesets unreadable, the PR unreadable after auto-merge was enabled, the gate interrupted by Ctrl-C or SIGTERM or an internal error while auto-merge was pending, network, an internal error) | Read `detail` |
@@ -54,7 +58,8 @@ run `gh pr merge N --disable-auto` (or check `autoMergeRequest` with
 The gate collects every block it finds, reports the first in the table's gate
 order (not_open, draft, conflicts, changes_requested, not_approved,
 checks_failing, unresolved_threads, branch_protection, unknown, needs_review,
-then merge_unsupported_host on Bitbucket)
+then coordination's conflicting_fixer or stale_claim, not_settled, claimed_items
+on GitHub, or merge_unsupported_host on Bitbucket)
 and lists the rest in `detail` after "also".
 
 No script prompts, logs in, or prints a token. A Bitbucket token goes to curl

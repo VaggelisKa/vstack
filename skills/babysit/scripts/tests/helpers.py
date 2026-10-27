@@ -1,6 +1,8 @@
 """Shared helpers for the babysit skill's script tests. Everything runs in temp dirs."""
+import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -87,3 +89,49 @@ def criss_cross_repo():
     git(repo, "checkout", "-q", "x")
     git(repo, "merge", "-q", "--no-edit", y)
     return repo, git(repo, "rev-parse", "HEAD").decode().strip(), head
+
+
+GH_STUB = r'''#!%(python)s
+import json, os, sys
+d = os.environ["STUB_DIR"]
+args = sys.argv[1:]
+with open(os.path.join(d, "log.jsonl"), "a") as f:
+    f.write(json.dumps(args) + "\n")
+joined = " ".join(args)
+with open(os.path.join(d, "rules.json")) as f:
+    rules = json.load(f)
+for rule in rules:
+    if all(m in joined for m in rule["match"]):
+        break
+else:
+    sys.stderr.write("stub: no rule for gh %%s\n" %% joined)
+    sys.exit(99)
+out = rule.get("stdout", "")
+sys.stdout.write(out if isinstance(out, str) else json.dumps(out))
+sys.stderr.write(rule.get("stderr", ""))
+sys.exit(rule.get("code", 0))
+'''
+
+
+class FakeGh:
+    """A PATH holding git and a fake gh that answers from rules (first match wins) and logs its argv."""
+
+    def __init__(self):
+        self.dir = tmpdir() / "bin"
+        self.dir.mkdir()
+        os.symlink(shutil.which("git"), self.dir / "git")
+        p = self.dir / "gh"
+        p.write_text(GH_STUB % {"python": sys.executable})
+        p.chmod(0o755)
+        self.set([])
+
+    def set(self, rules):
+        (self.dir / "rules.json").write_text(json.dumps(rules))
+
+    def calls(self):
+        log = self.dir / "log.jsonl"
+        return [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
+
+    def env(self):
+        env = {k: v for k, v in GIT_ENV.items() if not k.startswith(("GH_", "GITHUB_"))}
+        return {**env, "PATH": str(self.dir), "STUB_DIR": str(self.dir)}

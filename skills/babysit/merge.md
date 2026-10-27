@@ -30,6 +30,8 @@ gh pr view <pr> --json headRefOid,isDraft,mergeable,mergeStateStatus,reviewDecis
 6. **No hold label.** Case-insensitive exact match against: `hold`, `on-hold`,
    `do-not-merge`, `do not merge`, `DNM`, `wip`.
 7. **No open escalations** from the loop.
+8. **Settled, nothing claimed:** the last `coordination.py poll` was settled
+   with `claimed_count` 0 (SKILL.md, Coordination).
 
 ## Arming
 
@@ -52,7 +54,8 @@ normal cadence. Disarm and go back to the loop if any of these appears:
 - a hold label,
 - a new changes-requested review,
 - an unresolved thread,
-- a new escalation.
+- a new escalation,
+- a claimed item.
 
 ```bash
 gh pr merge <pr> --disable-auto

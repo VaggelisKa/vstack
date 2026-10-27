@@ -20,9 +20,9 @@ import time
 import unittest
 from unittest import mock
 
-from helpers import (BB, REVIEW_WRITER, SCRIPTS, SHIP, VIEW_MATCH, Stubs, bb_pr, bb_rule, bitbucket_rules, finding,
-                     gh_review, gh_rule, github_rules, github_view, pr_repo, review, run, thread, threads_page,
-                     write_result)
+from helpers import (BB, COORD_MATCH, REVIEW_WRITER, SCRIPTS, SHIP, VIEW_MATCH, Stubs, bb_pr, bb_rule,
+                     bitbucket_rules, coord_view, finding, gh_review, gh_rule, github_rules, github_view, pr_repo,
+                     review, run, seed_coordination, thread, threads_page, write_result)
 
 spec = importlib.util.spec_from_file_location("am_gate", SCRIPTS / "gate.py")
 gate = importlib.util.module_from_spec(spec)
@@ -39,6 +39,7 @@ class Gate(unittest.TestCase):
         self.repo, self.base, self.head = pr_repo()
         self.stubs = Stubs()
         write_result(REVIEW_WRITER, self.repo, 42, self.head, self.base, SHIP)
+        seed_coordination(self.repo, self.head)
 
     def tearDown(self):
         for call in self.stubs.calls():
@@ -177,7 +178,7 @@ class Gate(unittest.TestCase):
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
             limit = time.monotonic() + 30
-            while len([c for c in self.stubs.calls("gh") if "graphql" in c["argv"]]) < 2:
+            while len([c for c in self.stubs.calls("gh") if "graphql" in c["argv"]]) < 3:
                 self.assertIsNone(proc.poll(), "the gate exited before it polled")
                 self.assertLess(time.monotonic(), limit, "the gate never polled")
                 time.sleep(0.05)
@@ -361,6 +362,54 @@ class Gate(unittest.TestCase):
         with open(out, "w") as f:
             json.dump(data, f)
         self.assertIn("merge_base", self.handback("needs_review", "--merge")["detail"])
+
+    def coord_item(self, **item):
+        path = os.path.join(os.path.realpath(self.repo / ".git"), "vstack", "42", "coordination.json")
+        with open(path) as f:
+            st = json.load(f)
+        st["items"]["check:lint"] = {"state": "open", "since_head": self.base, "state_head": self.base, **item}
+        with open(path, "w") as f:
+            json.dump(st, f)
+
+    def lint(self, message="Fix lint", author="copilot-swe-agent"):
+        """The coordination view: lint failing on head, a commit by another fixer on top of base."""
+        commits = [{"oid": self.base, "messageHeadline": "base", "authors": [{"login": "me"}]},
+                   {"oid": self.head, "messageHeadline": message, "authors": [{"login": author}]}]
+        rollup = [{"__typename": "CheckRun", "name": "lint", "status": "COMPLETED", "conclusion": "FAILURE"}]
+        return gh_rule(COORD_MATCH, coord_view(self.head, commits=commits, statusCheckRollup=rollup))
+
+    def test_not_settled(self):
+        os.unlink(os.path.join(os.path.realpath(self.repo / ".git"), "vstack", "42", "coordination.json"))
+        data = self.handback("not_settled", "--merge")
+        self.assertIn("first_look", data["detail"])
+        self.assertEqual(self.gate()[0], 0)
+        working = coord_view(self.head, comments=[{"author": {"login": "alice"}, "body": "I'm working on this",
+                                                   "createdAt": "2026-10-27T11:00:00Z"}])
+        self.assertIn("working: alice", self.handback("not_settled", coord_view=gh_rule(COORD_MATCH, working))["detail"])
+        running = coord_view(self.head, statusCheckRollup=[{"__typename": "CheckRun", "name": "e2e",
+                                                            "status": "IN_PROGRESS"}])
+        self.assertIn("checks_running: e2e",
+                      self.handback("not_settled", coord_view=gh_rule(COORD_MATCH, running))["detail"])
+
+    def test_claimed_items(self):
+        self.coord_item()
+        data = self.handback("claimed_items", "--merge", coord_view=self.lint())
+        self.assertIn("check:lint (copilot-swe-agent)", data["detail"])
+
+    def test_stale_claim_and_conflicting_fixer(self):
+        self.coord_item(state="claimed", claimed_since_head=self.base, cycle_heads=["c" * 40], claimant="x")
+        data = self.handback("stale_claim", "--merge", coord_view=self.lint())
+        self.assertIn("take over", data["action"])
+        self.assertIn("also claimed_items", data["detail"])
+        self.coord_item(state="addressed", addressed_by="own")
+        data = self.handback("conflicting_fixer", "--merge", coord_view=self.lint("Refactor"))
+        self.assertIn("check:lint", data["detail"])
+
+    def test_coordination_unreadable_is_unknown(self):
+        path = os.path.join(os.path.realpath(self.repo / ".git"), "vstack", "42", "coordination.json")
+        with open(path, "w") as f:
+            f.write("{")
+        self.assertIn("coordination", self.handback("unknown", "--merge")["detail"])
 
     def test_review_file_cannot_override_live_state(self):
         self.handback("checks_failing", "--merge", checks=gh_rule(["pr checks"], [{"name": "t", "bucket": "fail"}], 1))
