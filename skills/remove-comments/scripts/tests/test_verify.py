@@ -2,14 +2,17 @@
 any code change, reports docstring changes separately, exits 2 on scan errors.
 Its cross-checks (Python's ast, TypeScript, the C preprocessor, gofmt) fail it
 on a difference; a missing tool is reported as skipped and never fails it.
+TypeScript runs on TS_CHUNK files at a time, and a run that doesn't finish says so.
 
 Run from the repo root: python3 -m unittest discover -s skills/remove-comments/scripts/tests
 """
+import json
 import os
 import shutil
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 from helpers import SCRIPTS, commit_all, decide, listing, new_repo, run, tmpdir
 
@@ -214,6 +217,55 @@ class CrossCheck(unittest.TestCase):
         self.assertIn(b"cross-check rust: skipped (no independent tool)", r.stdout)
         r = run("verify", "--list", out, "--no-cross-check", cwd=repo, env=env)
         self.assertIn(b"3 edited file(s): 0 cross-checked ok, 0 syntax-only (weak), 3 no independent check", r.stdout)
+
+    def ts_files(self, n):
+        return [(f"f{k}.ts", "ts", f"f({k}); // c\n", f"f({k});\n", None) for k in range(n)]
+
+    def fake_runs(self, results):
+        """cross_checks with node and typescript found, and each TypeScript run's
+        result taken from results in turn: None (didn't finish), a negative exit
+        code (killed), or "ok" (every file emits the same). Returns its output and
+        the number of files each run got."""
+        sizes, results = [], iter(results)
+
+        def run_tool(argv, scratch, env, data=b""):
+            sizes.append(len(json.loads(data)))
+            r = next(results)
+            if r == "ok":
+                return 0, json.dumps([{"same": True, "before": 0, "after": 0}] * sizes[-1]).encode(), b""
+            return r
+
+        with mock.patch.object(comments, "find_tool", lambda name, env, roots=(): "/node" if name == "node" else None), \
+                mock.patch.object(comments, "find_typescript", lambda *a: ("/typescript.js", None)), \
+                mock.patch.object(comments, "run_tool", run_tool), mock.patch.object(comments, "TS_CHUNK", 2):
+            return comments.cross_checks(self.ts_files(5), [str(tmpdir())]), sizes
+
+    def test_typescript_runs_in_chunks(self):
+        out, sizes = self.fake_runs(["ok", "ok", "ok"])
+        self.assertEqual(sizes, [2, 2, 1])
+        self.assertEqual(out, [(f"f{k}.ts", "typescript", "ok", None) for k in range(5)])
+
+    def test_a_typescript_run_that_does_not_finish_says_so(self):
+        out, sizes = self.fake_runs(["ok", None, (-9, b"", b"")])
+        self.assertEqual(sizes, [2, 2, 1])
+        self.assertEqual([r[2:] for r in out], [("ok", None)] * 2 + [("skipped", comments.TS_FAILED)] * 3)
+        self.assertEqual(comments.TS_FAILED, "typescript check didn't finish: timed out, was killed, or wrote too much")
+        out, _ = self.fake_runs([(1, b"", b"boom")] * 3)
+        self.assertEqual({r[2:] for r in out}, {("skipped", "the TypeScript run failed")})
+
+    def test_finding_typescript_that_does_not_finish_says_so(self):
+        for result, why in ((None, comments.TS_FAILED), ((-9, b"", b""), comments.TS_FAILED),
+                            ((3, b"", b""), "RC_TS_ROOT has no typescript")):
+            with self.subTest(result=result), mock.patch.object(comments, "run_tool", lambda *a, **k: result), \
+                    mock.patch.dict(os.environ, RC_TS_ROOT=str(tmpdir())):
+                self.assertEqual(comments.find_typescript("/node", [str(tmpdir())], str(tmpdir()), {}), (None, why))
+
+    @unittest.skipUnless(os.environ.get("RC_TS_ROOT") and shutil.which("node"),
+                         "set RC_TS_ROOT to a directory whose node_modules has typescript")
+    def test_typescript_chunks_with_real_typescript(self):
+        with mock.patch.object(comments, "TS_CHUNK", 2):
+            out = comments.cross_checks(self.ts_files(5), [str(tmpdir())])
+        self.assertEqual(out, [(f"f{k}.ts", "typescript", "ok", None) for k in range(5)])
 
     def test_no_cross_check(self):
         r = verify("a.py", "x = 1  # c\n", "x = 1\n", "--no-cross-check")

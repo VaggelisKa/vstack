@@ -1435,6 +1435,9 @@ LESS_SPACE = " \t\r\n"
 LESS_IN_BRACKETS = ("Less: inside parentheses or brackets, where lessc copies some text as it is (:not(...)) and "
                     "matches some with one pattern (:extend(.b all /**/ ) extends nothing)")
 LESS_AFTER_AT = "Less: between an @name and its ':' or '(' (@x /**/ : 3 is an at-rule, @x : 3 a variable)"
+LESS_LINE_THEN_BLOCK = ("Less: a // comment and a /* */ one right after it in a value, where lessc drops the "
+                        "/* */ comment only while the // one is there (@x: 3 // c, then /**/; on the next line, "
+                        "is 3; without // c it is '3 /**/')")
 LESS_TOUCHING = ("Less: it touches code with no whitespace between, and lessc reads the character next to a token "
                  "(.a /**/.b is .a.b, 1 /**/-2 is -1, @x -/**/ 1 is a list)")
 TODO = rx(r"\b(?:TODO|FIXME|HACK|XXX)\b")
@@ -1470,28 +1473,37 @@ def body_lines(raw, c):
     return out
 
 
-def less_risk(text, c):
+def less_risk(text, c, before, after):
     """Why deleting comment c could change what lessc reads, or None. lessc skips
     comments with whitespace between tokens, then tests the one character next to a
     token: before it for a descendant combinator or a negative number, after it for
     an operator. So only whitespace on both sides survives the deletion, or a
     statement start: after ';', a '{' that isn't @{...} interpolation, or the start
-    of the file. Some constructs are one regex that a comment breaks."""
+    of the file, with only whitespace and comments between. In a value lessc drops a
+    /* */ comment that follows a // one, so neither of the two can go alone. Some
+    constructs are one regex that a comment breaks. before maps each comment's end
+    to its start, after its start to its end."""
     if c.meta.get("in_brackets"):
         return LESS_IN_BRACKETS
-    i = c.start
-    while i > 0 and text[i - 1] in LESS_SPACE:
-        i -= 1
+    i, k = c.start, c.end
+    while i > 0 and (text[i - 1] in LESS_SPACE or i in before):
+        i = i - 1 if text[i - 1] in LESS_SPACE else before[i]
     if i == 0 or i == 1 and text[0] == "\ufeff" or text[i - 1] == ";" \
             or text[i - 1] == "{" and text[i - 2:i - 1] not in ("@", "$"):
         return None
-    if i == c.start or c.end < len(text) and text[c.end] not in LESS_SPACE:
+    if text[c.start - 1] not in LESS_SPACE or k < len(text) and text[k] not in LESS_SPACE:
         return LESS_TOUCHING
-    j, k = i, c.end
-    while j > 0 and (text[j - 1].isalnum() or text[j - 1] in "_-"):
-        j -= 1
+    h = c.start
+    while text[h - 1] in LESS_SPACE:
+        h -= 1
     while k < len(text) and text[k] in LESS_SPACE:
         k += 1
+    if text.startswith("//", c.start) and text.startswith("/*", k) and k in after \
+            or text.startswith("/*", c.start) and h in before and text.startswith("//", before[h]):
+        return LESS_LINE_THEN_BLOCK
+    j = i
+    while j > 0 and (text[j - 1].isalnum() or text[j - 1] in "_-"):
+        j -= 1
     if j < i and text[j - 1:j] == "@" and text[k:k + 1] in (":", "("):
         return LESS_AFTER_AT
     return None
@@ -1511,6 +1523,7 @@ def classify(text, sc):
                 hi = mid - 1
         return lo + 1
 
+    before, after = {c.end: c.start for c in comments}, {c.start: c.end for c in comments}
     for c in comments:
         c.meta["line"], c.meta["end_line"] = line_no(c.start), line_no(max(c.start, c.end - 1))
         raw = text[c.start:c.end]
@@ -1532,7 +1545,7 @@ def classify(text, sc):
             c.protected = "inside <pre>: removing it changes the preformatted text"
         elif lang == "scss" and c.kind == "block" and SASS_MINUS.match(text, c.end):
             c.protected = "before a '-' Sass reads as a minus: without it the '-' starts a negative number"
-        elif lang == "less" and (why := less_risk(text, c)):
+        elif lang == "less" and (why := less_risk(text, c, before, after)):
             c.protected = why
         else:
             for langs, pat, label, reason in DIRECTIVES:

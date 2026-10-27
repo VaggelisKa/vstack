@@ -1035,7 +1035,10 @@ TOOL_OUTPUT = 16 << 20
 TOOL_ENV_KEEP = ("HOME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "TMP", "TEMP", "NPM_CONFIG_PREFIX",
                  "npm_config_prefix", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "APPDATA",
                  "LOCALAPPDATA")
-TOOL_FAILED = "didn't finish: timed out, or wrote too much"
+TOOL_FAILED = "didn't finish: timed out, was killed, or wrote too much"
+TS_FAILED = "typescript check " + TOOL_FAILED
+# Files per TypeScript run: each run gets one TOOL_TIMEOUT and TOOL_MEMORY, whatever its size.
+TS_CHUNK = 200
 NODE_RESOLVE = ("try { process.stdout.write(require.resolve('typescript', {paths: [process.argv[1]]})); }"
                 " catch (e) { process.exit(3); }")
 NO_TYPESCRIPT = "typescript isn't available outside the repo; set RC_TS_ROOT to a trusted install"
@@ -1142,6 +1145,11 @@ def run_tool(argv, scratch, env, data=b""):
     return p.returncode, stdout, stderr
 
 
+def unfinished(r):
+    """Whether a run_tool result is a run that didn't finish: no result, or killed by a signal."""
+    return r is None or r[0] < 0
+
+
 def first_line(err):
     lines = [l for l in err.decode("utf-8", "replace").splitlines() if l.strip()]
     return q(lines[0][:120]) if lines else "no message"
@@ -1159,11 +1167,15 @@ def find_typescript(node, roots, scratch, env):
     else:
         npm = find_tool("npm", env, roots)
         r = run_tool([npm, "root", "-g"], scratch, env) if npm else None
+        if npm and unfinished(r):
+            return None, TS_FAILED
         if not r or r[0] or not r[1].strip():
             return None, NO_TYPESCRIPT
         base = r[1].decode("utf-8", "surrogateescape").strip()
     r = run_tool([node, "-e", NODE_RESOLVE, base], scratch, env)
-    if not r or r[0] or not r[1]:
+    if unfinished(r):
+        return None, TS_FAILED
+    if r[0] or not r[1]:
         return None, "RC_TS_ROOT has no typescript" if pinned else NO_TYPESCRIPT
     path = os.path.realpath(r[1].decode("utf-8", "surrogateescape"))
     if any(inside(path, root) for root in roots):
@@ -1244,7 +1256,7 @@ def cross_checks(files, roots):
     is ok (an independent check found the same code: Python's ast, TypeScript's emitter,
     the C preprocessor), weak (syntax only: node --check, gofmt -e), skipped or differs.
     No checker is taken from inside roots."""
-    results, js, cpp = {}, [], None
+    results, js, cpp, whys = {}, [], None, {}
     env = tool_env(roots)
     with tempfile.TemporaryDirectory(prefix="remove-comments-check-") as scratch:
         node = find_tool("node", env, roots)
@@ -1266,20 +1278,22 @@ def cross_checks(files, roots):
             else:
                 results[k] = (lang, "skipped", "no independent tool")
         ts, why = find_typescript(node, roots, scratch, env) if node and js else (None, "node isn't on PATH")
-        if ts:
+        for i in range(0, len(js) if ts else 0, TS_CHUNK):
+            chunk = js[i:i + TS_CHUNK]
             payload = json.dumps([[os.path.basename(files[k][0]) or "file.ts", files[k][2], files[k][3]]
-                                  for k in js]).encode("utf-8", "surrogateescape")
+                                  for k in chunk]).encode("utf-8", "surrogateescape")
             r = run_tool([node, "-e", NODE_TRANSPILE, ts], scratch, env, payload)
             try:
-                emitted = json.loads(r[1]) if r and r[0] == 0 else None
+                emitted = json.loads(r[1]) if r and r[0] == 0 else []
             except ValueError:
-                emitted = None
-            for k, e in zip(js, emitted or []):
+                emitted = []
+            for k, e in zip(chunk, emitted):
                 results[k] = (("typescript", "skipped", "TypeScript can't parse the before file") if e["before"] else
                               ("typescript", "differs", "the edited file has syntax errors") if e["after"] else
                               ("typescript", "ok", None) if e["same"] else
                               ("typescript", "differs", "emitted JavaScript differs"))
-            why = why or "the TypeScript run failed"
+            for k in chunk[len(emitted):]:
+                whys[k] = TS_FAILED if unfinished(r) else "the TypeScript run failed"
         for k in js:
             if k in results:
                 continue
@@ -1287,7 +1301,7 @@ def cross_checks(files, roots):
             if node and path.endswith((".js", ".mjs", ".cjs")):
                 results[k] = cross_check_node(path, files[k][2], files[k][3], node, scratch, env)
             else:
-                results[k] = ("typescript", "skipped", why)
+                results[k] = ("typescript", "skipped", whys.get(k, why))
     return [(files[k][0], *results[k]) for k in sorted(results)]
 
 

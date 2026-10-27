@@ -186,10 +186,11 @@ comments and normalising whitespace: the code tokens must be identical,
 including which tokens sit inside a C preprocessor directive and, in CSS,
 whether whitespace separates two tokens (in SCSS a comment counts as
 whitespace, as it does for Sass, so apply turns `.a/**/.b` into `.a .b`).
-A Less comment that touches code, sits inside `( )` or `[ ]`, or sits
-between an `@name` and its `:` or `(` is protected, because lessc can read
-it as code (`.a-b /**/.c` compiles to `.a-b.c`, `1 /**/-2` to `-1`); verify
-fails if one goes.
+A Less comment that touches code, sits inside `( )` or `[ ]`, sits
+between an `@name` and its `:` or `(`, or is a `//` comment with a `/* */`
+one right after it in a value (both are) is protected, because lessc can
+read it as code (`.a-b /**/.c` compiles to `.a-b.c`, `1 /**/-2` to `-1`);
+verify fails if one goes.
 Docstring edits are listed separately (`--strict` fails on them).
 
 Because `apply` and the token check share one scanner, verify also asks

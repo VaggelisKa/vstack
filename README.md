@@ -221,9 +221,10 @@ repos:
 python3 -m unittest discover -s skills/remove-comments/scripts/tests
 ```
 
-That runs 181 tests in about 45 seconds, about 55 with all the tools below.
-Six skip unless pointed at tools outside the repo: three (the TypeScript
-cross-check, a trusted `RC_TS_ROOT` being used, and the JS fuzz) need
+That runs 186 tests in about 45 seconds, about 55 with all the tools below.
+Seven skip unless pointed at tools outside the repo: four (the TypeScript
+cross-check, its runs in chunks, a trusted `RC_TS_ROOT` being used, and the
+JS fuzz) need
 `RC_TS_ROOT` naming a directory whose `node_modules` has `typescript`, the
 Sass oracle needs `RC_SASS_ROOT` (or `RC_TS_ROOT`) whose `node_modules` has
 `sass`, and the two Less oracles need `RC_LESS_ROOT` (or `RC_TS_ROOT`) whose
@@ -236,7 +237,7 @@ RC_TS_ROOT=/path/with/node_modules RC_SASS_ROOT=/path/with/node_modules \
 ```
 
 With all three set (TypeScript 5.9.3, sass 1.106.1, less 4.9.1, node 24) all
-181 pass. The C
+186 pass. The C
 tests used gcc 14 in C mode (`-std=gnu2x`, no C++ front end installed); the
 Go test used gofmt from Go 1.27. Tests whose tool is missing skip.
 
@@ -339,7 +340,12 @@ They cover:
   syntax-only (weak) and no independent check (Python, JS and Rust files:
   1, 1, 1; with `--no-cross-check` 0, 0, 3); with `PATH` emptied, C, TS, Go
   and Rust files all report "skipped" and verify still exits 0;
-  `--no-cross-check`;
+  `--no-cross-check`; TypeScript runs on at most 200 files at a time (with
+  the chunk size set to 2, five files take three runs of 2, 2 and 1 files and
+  all five get a status, with `RC_TS_ROOT` too); a run that times out or is
+  killed reports "typescript check didn't finish: timed out, was killed, or
+  wrote too much" for its own files only, and so does finding typescript,
+  instead of "isn't available" or "RC_TS_ROOT has no typescript";
 - repo code never runs: in a temp repo with a committed
   `node_modules/typescript` symlink to repo code that writes a marker file
   when loaded, `list`, `apply` and `verify` leave no marker, verify reports
@@ -374,16 +380,23 @@ They cover:
   `.@{n} /**/.c`; a multi-line one), one inside parentheses or brackets
   (`:not( // c` + newline + `.b)`, which lessc copies into the CSS;
   `:extend(.b all /**/ )`, which then extends nothing) and one between an
-  `@name` and its `:` or `(` (`@x /**/ : 3` is an at-rule); delete and
+  `@name` and its `:` or `(` (`@x /**/ : 3` is an at-rule); a `;` or `{`
+  inside an earlier comment is no statement start (`1 // note;` + newline +
+  `/**/-2` and `.a // x;` + newline + `/**/.b` stay protected); a `//`
+  comment and a `/* */` one right after it in a value both stay (`@x: 3 //
+  c` + newline + `/**/ ;` is 3, `3 /**/` without the `//` one); delete and
   rewrite of them are refused through the CLI; own-line comments, trailing
   ones after whitespace, `.a /* c */ {`, comments between declarations
-  (also `x:y;/* c */z:w`), after `{`, at the start of the file and `//`
-  comments after whitespace are deleted (17 golden cases); with
+  (also `x:y;/* c */z:w`), after `{`, at the start of the file, `//`
+  comments after whitespace, runs of comments after `;` or `{` (`// one`,
+  `// two`, then `/* three */.b`; `/* a */ /* b */.b`) and an own-line
+  `/**/` after `y; // z;` are deleted (20 golden cases); with
   `RC_LESS_ROOT`, lessc compiles every golden case to the same CSS before
-  and after, every protected case to different CSS without its comment, and
-  a fuzz inserting nine comment forms at every position of nine stylesheets
-  (about 2,500 edits that delete something) finds no difference (comments
-  lessc copies through and whitespace are left out of the comparison);
+  and after, every protected case to different CSS without its comment(s),
+  and a fuzz inserting eleven comment forms (two of them a `// c;` or `//
+  c{` line before a `/**/`) at every position of nine stylesheets (about
+  2,700 edits that delete something) finds no difference (comments lessc
+  copies through and whitespace are left out of the comparison);
 - seeded fuzz (fixed seeds, small N): random C lines with comments, every
   comment deleted, compared with `gcc -E -P -dD` output whenever verify's token
   check passes (the same test finds 2 mismatches in the previous version of
@@ -478,10 +491,12 @@ the scripts and not repeated since:
 >   Scala, Dart, shell, YAML, TOML, Dockerfile, CSS, SCSS, Less and HTML have
 >   no cross-check (lessc and sass are only test oracles), so apply's
 >   pre-write cross-check only guards Python, C, JS/TS and Go.
-> - Less: comments that touch code, sit inside `( )` or `[ ]`, or sit
->   between an `@name` and its `:` or `(` are protected, never deleted, even
->   where lessc would compile the same CSS without them (`a:not( /* c */
->   .b)`, `.m(1, // c` + newline + `2)`). The rule was derived from less 4.9's
+> - Less: comments that touch code, sit inside `( )` or `[ ]`, sit
+>   between an `@name` and its `:` or `(`, or are a `//` comment and a
+>   `/* */` one right after it outside a statement start are protected,
+>   never deleted, even where lessc would compile the same CSS without them
+>   (`a:not( /* c */ .b)`, `.m(1, // c` + newline + `2)`, `@x: // c` +
+>   newline + `/**/ 3;`). The rule was derived from less 4.9's
 >   parser (it tests the single character next to a token, and some
 >   constructs are one regex) and checked with lessc 4.9.1 only, on files
 >   that compile: a file lessc rejects can compile after a deletion.
@@ -494,6 +509,12 @@ the scripts and not repeated since:
 >   tools run with the user's permissions and can read what the user can, and
 >   on Windows only the timeout (which kills the tool, not what it started)
 >   and the refusal of output over 16 MiB apply.
+> - The C cross-check runs the preprocessor twice per file (before and
+>   after), each run allowed the full 30 s, so a file whose includes are slow
+>   to preprocess can add up to a minute to apply's pre-write check and to
+>   verify, and many such files add up. TypeScript runs 200 files at a time,
+>   each run with the same 30 s; a run that doesn't finish leaves its files
+>   "skipped" (`.js` files fall back to `node --check`).
 > - SCSS: a comment right before a negative number (`$x/**/-1`) is
 >   protected, never deleted. Verify, as for CSS, treats whitespace after
 >   `:` as insignificant, so a hand edit or formatter turning `a:/**/hover`

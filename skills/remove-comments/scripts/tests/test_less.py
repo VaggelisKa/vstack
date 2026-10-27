@@ -46,6 +46,9 @@ GOLDEN = {
     "/* a\n   b */\n.a { x: y } /* c */\n": ".a { x: y }\n",
     "a {\n  box-shadow:\n    /* one */\n    0 0 1px red,\n    0 0 2px blue;\n}\n":
         "a {\n  box-shadow:\n    0 0 1px red,\n    0 0 2px blue;\n}\n",
+    "a {\n  x: y;\n  // one\n  // two\n  /* three */.b { z: w }\n}\n": "a {\n  x: y;\n  .b { z: w }\n}\n",
+    ".a{/* a */ /* b */.b{x:y}}\n": ".a{ .b{x:y}}\n",
+    "a {\n  x: y; // z;\n  /**/-webkit-z: w;\n}\n": "a {\n  x: y;\n  -webkit-z: w;\n}\n",
 }
 # Each protected case, what deleting its comment would give, and the reason's first words.
 PROTECTED = {
@@ -65,6 +68,17 @@ PROTECTED = {
                                                          "Less: inside parentheses"),
     "@x /**/ : 3;\na { b: 1 }\n": ("@x : 3;\na { b: 1 }\n", "Less: between an @name"),
 }
+# Cases with two comments: what deleting both gives, what deleting the unprotected
+# ones gives, and each comment's reason's first words. A ';' or '{' inside an earlier
+# comment is no statement start, and a // comment decides whether lessc keeps the
+# /* */ comment after it in a value, so both stay.
+NEIGHBOURS = {
+    "a { p: 1 // note;\n/**/-2; }\n": ("a { p: 1\n-2; }\n", None, ["Less: a // comment", "Less: it touches"]),
+    ".a // x;\n/**/.b { x: y }\n": (".a\n.b { x: y }\n", None, ["Less: a // comment", "Less: it touches"]),
+    ".a /* { */ /**/.b { x: y }\n": (".a  .b { x: y }\n", ".a /**/.b { x: y }\n", [None, "Less: it touches"]),
+    "@x: 3 // c\n/**/ ;\na { n: @x - 1 }\n": ("@x: 3\n/**/ ;\na { n: @x - 1 }\n", None,
+                                             ["Less: a // comment", "Less: a // comment"]),
+}
 FUZZ_BANK = [
     "@x: 3; a { m: @x -1; n: @x - 1; o: 1-2; p: 1 -2; q: (1)-2; r: 1+2; s: 1 +2; t: a-b; u: -@x; v: 1px-2px }",
     ".a-b .c > .d + .e ~ .f { x: y; &:hover, &.g { x: y } &-suf { x: y } }",
@@ -76,7 +90,8 @@ FUZZ_BANK = [
     "@d: { a: b }; .c { @d(); } #ns { .m() { c: d } } e { #ns > .m(); }",
     "@media screen and (min-width: 1px) { .a { b: c } }",
 ]
-FUZZ_COMMENTS = ["/**/", " /**/", "/**/ ", " /**/ ", "\n/**/", "/**/\n", "\n/**/\n", "// c\n", " // c\n"]
+FUZZ_COMMENTS = ["/**/", " /**/", "/**/ ", " /**/ ", "\n/**/", "/**/\n", "\n/**/\n", "// c\n", " // c\n",
+                 "// c;\n/**/", " // c{\n/**/"]
 NODE_LESS = r"""
 const less = require(process.argv[1]);
 const css = s => less.render(s, {compress: true}).then(r => r.css, e => 'ERROR ' + e.message);
@@ -144,6 +159,16 @@ class Less(unittest.TestCase):
         self.assertFalse(comments.compare("a { p:1 /**/-2 }\n", "a { p:1 -2 }\n", "less")["ok"])
         self.assertTrue(comments.compare("a { m: 1px /* c */ 2px }\n", "a { m: 1px 2px }\n", "less")["ok"])
 
+    def test_comments_next_to_other_comments(self):
+        for src, (naive, kept, whys) in NEIGHBOURS.items():
+            with self.subTest(src=src):
+                found = [c.protected for c in commentscan.scan(src, "less").comments]
+                self.assertEqual(len(found), len(whys))
+                for why, want in zip(found, whys):
+                    self.assertTrue(why == want or why and want and why.startswith(want), why)
+                self.assertEqual(strip_all(src), kept or src)
+                self.assertFalse(comments.compare(src, naive, "less")["ok"])
+
     def test_comment_between_an_at_name_and_a_paren_is_protected(self):
         [c] = commentscan.scan(".c { @d /**/ (); }\n@d: { a: b };\n", "less").comments
         self.assertTrue(c.protected.startswith("Less: between an @name"))
@@ -182,14 +207,15 @@ class Less(unittest.TestCase):
 
     @unittest.skipUnless(find_less(), "set RC_LESS_ROOT to a directory whose node_modules has less")
     def test_lessc_compiles_deletes_the_same_and_protected_cases_differently(self):
-        pairs = [[b, a] for b, a in GOLDEN.items()] + [[b, a] for b, (a, _) in PROTECTED.items()]
-        for (src, new), (b, a) in zip(pairs, lessc(pairs)):
-            with self.subTest(src=src):
+        same = [[b, a] for b, a in GOLDEN.items()] + [[b, k] for b, (_, k, _) in NEIGHBOURS.items() if k]
+        differ = [[b, a] for b, (a, _) in PROTECTED.items()] + [[b, a] for b, (a, _, _) in NEIGHBOURS.items()]
+        for i, ((src, new), (b, a)) in enumerate(zip(same + differ, lessc(same + differ))):
+            with self.subTest(src=src, new=new):
                 self.assertFalse(b.startswith("ERROR"), b)
-                if src in GOLDEN:
-                    self.assertEqual(a, b, new)
+                if i < len(same):
+                    self.assertEqual(a, b)
                 else:
-                    self.assertNotEqual(a, b, new)
+                    self.assertNotEqual(a, b)
 
     @unittest.skipUnless(find_less(), "set RC_LESS_ROOT to a directory whose node_modules has less")
     def test_lessc_fuzz(self):
