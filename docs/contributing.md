@@ -45,3 +45,7 @@ separately as a personal skill (for Claude Code, copy it to
    add a `NOTICE.md` with the source repo, path and commit, record any changes as
    `Modified by <name>, <date>: <what>` lines, and list it in the root `NOTICE`.
 3. Open a pull request.
+
+## Releasing
+
+Codex caches installs by the `version` in `.codex-plugin/plugin.json`, so bump it when releasing changes. If an update doesn't show up, remove and re-add the plugin (`codex plugin remove vstack@vaggeliska`, then `codex plugin add vstack@vaggeliska`).

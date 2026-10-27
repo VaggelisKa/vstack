@@ -16,7 +16,7 @@ claude plugin marketplace add VaggelisKa/vstack
 claude plugin install vstack@vaggeliska
 ```
 
-Use `/vstack:<skill>`. Update with `claude plugin update vstack@vaggeliska`, remove with `claude plugin uninstall vstack@vaggeliska`.
+Use `/vstack:<skill>`. Update with `claude plugin marketplace update vaggeliska` then `claude plugin update vstack@vaggeliska`, remove with `claude plugin uninstall vstack@vaggeliska`.
 
 ### Codex
 
@@ -36,9 +36,9 @@ copilot plugin marketplace add VaggelisKa/vstack
 copilot plugin install vstack@vaggeliska
 ```
 
-Use `/<skill>`. Update with `copilot plugin update vstack@vaggeliska`, remove with `copilot plugin uninstall vstack@vaggeliska`.
+Verified with Copilot CLI 1.0.104 (add, install, update, uninstall, marketplace remove). Update with `copilot plugin marketplace update vaggeliska` then `copilot plugin update vstack@vaggeliska`, remove with `copilot plugin uninstall vstack`. Invoke a skill by name, e.g. `/review` (per the docs; not run in a session).
 
-VS Code (experimental, untested): add `"chat.plugins.marketplaces": ["VaggelisKa/vstack"]` to settings (needs `chat.plugins.enabled`), or run "Chat: Install Plugin From Source"; skills appear as `/vstack:<skill>`.
+VS Code (experimental, untested): add `"chat.plugins.marketplaces": ["VaggelisKa/vstack"]` to settings (needs `chat.plugins.enabled`), or install from the Extensions view (`@agentPlugins`), or run "Chat: Install Plugin From Source" with the Git URL; skills appear as `/vstack:<skill>`.
 
 Cloud agent (untested): in the target repo's `.github/copilot/settings.json`, set `extraKnownMarketplaces` to `{"vaggeliska": {"source": {"source": "github", "repo": "VaggelisKa/vstack"}}}` and `enabledPlugins` to `{"vstack@vaggeliska": true}`.
 
