@@ -1,4 +1,5 @@
 """Shared helpers for the review skill's script tests. Everything runs in temp dirs."""
+import atexit
 import contextlib
 import os
 import pathlib
@@ -30,21 +31,37 @@ def git(repo, *args, check=True):
     return r.stdout if check else r
 
 
-def rmtree(path):
-    """Remove path, making read-only dirs and files (git objects, permission tests) writable first."""
-    def fix(func, p, _):
-        for q in [p] + ([os.path.dirname(p)] if p != path else []):
-            if not os.path.islink(q):
-                with contextlib.suppress(OSError):
-                    os.chmod(q, stat.S_IRWXU)
+_LIVE = set()  # this run's tmpdir() dirs not yet removed; swept at exit if a run is interrupted
+
+
+def _writable(p):
+    if not os.path.islink(p):
         with contextlib.suppress(OSError):
-            func(p)
-    shutil.rmtree(path, **{"onexc" if sys.version_info >= (3, 12) else "onerror": fix})
+            os.chmod(p, stat.S_IRWXU)
+
+
+def rmtree(path):
+    """Remove path, making read-only or unreadable dirs and files (git objects, permission tests) usable first.
+    Dirs are fixed top-down, before os.walk lists them, and symlinks are never followed."""
+    path = os.fspath(path)
+    _writable(path)
+    for root, dirs, files in os.walk(path, followlinks=False):
+        for name in dirs + files:
+            _writable(os.path.join(root, name))
+    shutil.rmtree(path, ignore_errors=True)
+    _LIVE.discard(path)
+
+
+@atexit.register
+def _sweep():
+    for d in list(_LIVE):
+        rmtree(d)
 
 
 def tmpdir(test):
     """A fresh dir, removed when test finishes (or, given a TestCase class in setUpClass, when the class does)."""
     d = tempfile.mkdtemp(prefix="review-test-")
+    _LIVE.add(d)
     (test.addClassCleanup if isinstance(test, type) else test.addCleanup)(rmtree, d)
     return pathlib.Path(d)
 
