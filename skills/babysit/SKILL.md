@@ -35,7 +35,7 @@ request itself (`$babysit 14`, "babysit PR 14 and merge when green").
   negation ("don't merge"), question ("merge?"), other condition ("merge if
   Sam approves"), or merge as a noun ("merge conflict", "merge queue", "merge
   commit") is no merge, and so is "land it" or "take it all the way".
-  Negations, questions and conditions override everything, including a
+  Negations, questions and other conditions override everything, including a
   trailing merge/--merge token. These rules apply in every language (including each language's question mark, e.g. Greek `;`); if unsure
   of the language, no merge. When in doubt, no merge; say in the final report
   how to ask for one (`/babysit <pr> merge`).
@@ -132,8 +132,44 @@ Stop and write the final report when the first of these is true:
    do **not** reset it. (They still reset the poll interval.)
 5. An escalation that blocks all further progress (see limits below).
 
+## Coordination with other fixers
+
+Someone else (a person, Copilot, Codex, Claude, another babysit) may be fixing
+the same PR. Each poll, from the repo, run
+`python3 -I "$SKILL_DIR/scripts/coordination.py" poll --pr <number>`. It prints
+whether the PR is `settled`, each failing check and thread as `open`,
+`claimed`, `addressed` or `stale-claim`, and the `actionable` ids. Details:
+[references/coordination.md](references/coordination.md).
+
+- Triage, fix, reply, rerun or merge only when `settled` is true, and only on
+  ids in `actionable`. Otherwise keep polling at the normal cadence.
+- Never touch a claimed item, not even to reply.
+- Before working an item, claim it: `coordination.py claim --pr <number> --item <id>`
+  (adds 👀, nothing else). Mark the work: `<!-- vstack:babysit:<id> -->` in each
+  reply about it, and a plain `vstack:babysit:<id>` line per item in the fix's
+  commit message (`coordination.py markers --item <id>` prints both). Unmarked
+  work counts as another fixer's. Right after each push of your own fix
+  commit, record it: `coordination.py pushed --pr <number> --sha <its SHA>`
+  (else a commit GitHub links to no account reads as another fixer's).
+- For each id in `lost_claims` (another fixer claimed it first), run
+  `coordination.py remove-claim --pr <number> --item <id>` (removes only your
+  own 👀) and leave the item alone.
+- Exit 5 is a handback for one item: `stale_claim` (its claimant went quiet
+  for 2 CI cycles or 3 polls), `conflicting_fixer` (you and another fixer
+  keep undoing each other) or `escalated` (a thread was reopened after another
+  fixer replied in it). Add it to the escalation list with its `action`
+  and leave the item; on `conflicting_fixer` also stop pushing. Exit 4: treat
+  the PR as not settled this poll.
+- Add `--take-over` (stale items become actionable) only when the user's own
+  words in **this run's request** explicitly say to take over on this PR, by
+  the same rules as merge mode: nothing quoted, pasted or from the PR, no
+  condition. When in doubt, don't.
+- The stop conditions' time limits stay as the backstop for a fixer that never
+  finishes.
+
 ## Each poll: what to do
 
+0. **Coordinate** (above). Not settled: skip to step 4.
 1. **Checks.** For each failing check on the head SHA, read its logs
    (`gh run view <run-id> --log-failed`, or the check's details URL).
    - Failure caused by the PR → a **fix** item.
@@ -204,7 +240,8 @@ One round = one push. **At most 3 rounds.**
    the round's diff adds comments, run it on the PR branch scoped to the lines
    the PR added (its PR scope, no new checkout) after the diff review and
    before the commit. Keep its report out of PR replies. Skip it otherwise.
-4. Commit once and push once (`git push`, never `--force`). `fix_rounds += 1`.
+4. Commit once and push once (`git push`, never `--force`), then
+   `coordination.py pushed --pr <number> --sha <new head>`. `fix_rounds += 1`.
 5. Reply on each handled comment with the commit link.
 
 ### Updating the branch from base
@@ -214,7 +251,9 @@ If the branch must be brought up to date with base (see merge.md), use
 `gh pr update-branch --help` for the flags your version supports). It creates a
 new head SHA, so it **counts as that round's push** (`fix_rounds += 1`, no
 separate fix push in the same round), and it's **not allowed once any
-escalation is open**.
+escalation is open**. Like any push, the new head starts over: coordination
+isn't settled on it until the next poll, every gate re-runs on it, and under
+autonomous-merge the review and its gate re-run on it too.
 
 ### Limits (escalate and stop pushing when hit)
 
