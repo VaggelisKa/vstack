@@ -1,14 +1,14 @@
-"""Shared helpers for the remove-comments script tests. Everything runs in temp dirs."""
-import atexit
-import contextlib
+"""Shared helpers for the remove-comments script tests. Everything runs in temp dirs.
+
+The common helpers are shared by every skill's tests and live in
+lib/testing.py at the plugin root, loaded by path; this file configures them
+for remove-comments (git gets no stdin and a timeout), re-exports what the
+tests import and adds the comments.py runner and scanner fixtures."""
+import importlib.util
 import json
-import os
 import pathlib
-import shutil
-import stat
 import subprocess
 import sys
-import tempfile
 
 SCRIPTS = pathlib.Path(__file__).resolve().parent.parent
 SKILL = SCRIPTS.parent
@@ -16,79 +16,19 @@ sys.path.insert(0, str(SCRIPTS))
 
 import commentscan  # noqa: E402 - must follow the sys.path line
 
-# Test repos ignore the user's global and system git config, so a
-# diff.noprefix or init.defaultBranch there can't change the results.
-GIT_ENV = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+_spec = importlib.util.spec_from_file_location("vstack_testing", SKILL.parent.parent / "lib" / "testing.py")
+T = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(T)
+T.configure(SCRIPTS, "remove-comments-test-", stdin=subprocess.DEVNULL, timeout=120)
+
+GIT_ENV = T.GIT_ENV
+git, rmtree, tmpdir, scratch, new_repo, commit_all = T.git, T.rmtree, T.tmpdir, T.scratch, T.new_repo, T.commit_all
 
 
 def run(*args, cwd=None, env=None, script=None):
     return subprocess.run([sys.executable, "-I", str(script or SCRIPTS / "comments.py"), *map(str, args)],
                           capture_output=True, cwd=cwd, env={**GIT_ENV, **(env or {})},
                           stdin=subprocess.DEVNULL, timeout=120)
-
-
-def git(repo, *args, check=True):
-    r = subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
-                        "-c", "commit.gpgsign=false", *args],
-                       capture_output=True, env=GIT_ENV, stdin=subprocess.DEVNULL, timeout=120)
-    if check and r.returncode:
-        raise AssertionError(f"git {args} exited {r.returncode}: {r.stderr.decode()}")
-    return r.stdout if check else r
-
-
-_LIVE = set()  # this run's tmpdir() dirs not yet removed; swept at exit if a run is interrupted
-
-
-def _writable(p):
-    if not os.path.islink(p):
-        with contextlib.suppress(OSError):
-            os.chmod(p, stat.S_IRWXU)
-
-
-def rmtree(path):
-    """Remove path, making read-only or unreadable dirs and files (git objects, permission tests) usable first.
-    Dirs are fixed top-down, before os.walk lists them, and symlinks are never followed."""
-    path = os.fspath(path)
-    _writable(path)
-    for root, dirs, files in os.walk(path, followlinks=False):
-        for name in dirs + files:
-            _writable(os.path.join(root, name))
-    shutil.rmtree(path, ignore_errors=True)
-    _LIVE.discard(path)
-
-
-@atexit.register
-def _sweep():
-    for d in list(_LIVE):
-        rmtree(d)
-
-
-def tmpdir(test):
-    """A fresh dir, removed when test finishes (or, given a TestCase class in setUpClass, when the class does)."""
-    d = tempfile.mkdtemp(prefix="remove-comments-test-")
-    _LIVE.add(d)
-    (test.addClassCleanup if isinstance(test, type) else test.addCleanup)(rmtree, d)
-    return pathlib.Path(d)
-
-
-@contextlib.contextmanager
-def scratch():
-    """A dir for a probe outside any test (a skip decorator's check), removed when the block ends."""
-    with tempfile.TemporaryDirectory(prefix="remove-comments-test-", ignore_cleanup_errors=True) as d:
-        yield pathlib.Path(d)
-
-
-def new_repo(test):
-    repo = tmpdir(test) / "repo"
-    repo.mkdir()
-    git(repo, "init", "-q", "-b", "main")
-    return repo
-
-
-def commit_all(repo, msg):
-    git(repo, "add", "-A")
-    git(repo, "commit", "-qm", msg)
-    return git(repo, "rev-parse", "HEAD").decode().strip()
 
 
 def texts(src, lang):

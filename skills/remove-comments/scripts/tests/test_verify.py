@@ -9,7 +9,6 @@ Run from the repo root: python3 -m unittest discover -s skills/remove-comments/s
 import json
 import os
 import shutil
-import subprocess
 import sys
 import unittest
 from unittest import mock

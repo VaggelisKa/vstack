@@ -12,6 +12,7 @@ there are no symlinks; the manifests just point at the repo root.
 plugin.json                       # Antigravity plugin manifest (name and description only)
 gemini-extension.json             # Gemini CLI extension manifest (name, version, description; skills/ is scanned automatically)
 .agents/plugins/marketplace.json  # Codex marketplace, one entry, source.path "./"
+lib/                              # shared Python for the skills' scripts, loaded by path
 skills/
   <skill-name>/
     SKILL.md                      # name, description and instructions

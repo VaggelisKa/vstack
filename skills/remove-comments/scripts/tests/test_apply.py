@@ -3,7 +3,6 @@ it leaves, preserves encoding details, and refuses anything it can't do safely.
 
 Run from the repo root: python3 -m unittest discover -s skills/remove-comments/scripts/tests
 """
-import json
 import unittest
 
 from helpers import commit_all, decide, listing, new_repo, run
