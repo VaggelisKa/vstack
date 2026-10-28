@@ -23,5 +23,8 @@ governs, this copy also complies with it.
 - Modified by Evangelos Karavasileiadis, 2026-10-26: `SKILL.md` no longer uses the
   harness-specific `$ARGUMENTS` placeholder; it reads the request from the user's message so the
   skill works across agent harnesses. A header comment in `SKILL.md` marks the change.
+- Modified by Evangelos Karavasileiadis, 2026-10-28: `SKILL.md` gains an `argument-hint`
+  frontmatter field, and its pack step uses `${CLAUDE_SKILL_DIR}` for the skill's folder, with a
+  sentence explaining it. The header comment in `SKILL.md` records this change too.
 
 All other files are unmodified.

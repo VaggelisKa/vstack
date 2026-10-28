@@ -1,9 +1,11 @@
 ---
 name: html-plan
+argument-hint: "[what to plan]"
 description: Write an implementation plan as one interactive HTML page - a tree of claims (why › what › how › where), each proved by one exhibit (UI mockup, state machine, call stack, schema or code), with the decisions the user has to make placed on the claim they change. Use when the user types /html-plan, or asks for a plan, RFC or design before building something that touches more than a couple of files.
 ---
 
-<!-- Modified by Evangelos Karavasileiadis, 2026-10-26: the request is now read from the user's message instead of a harness-specific arguments placeholder. Otherwise unchanged from upstream; see NOTICE.md. -->
+<!-- Modified by Evangelos Karavasileiadis, 2026-10-26: the request is now read from the user's message instead of a harness-specific arguments placeholder. Otherwise unchanged from upstream; see NOTICE.md.
+Modified by Evangelos Karavasileiadis, 2026-10-28: `argument-hint` added and the pack step uses `${CLAUDE_SKILL_DIR}` for the skill's folder. -->
 
 # html-plan
 
@@ -18,6 +20,8 @@ You write **one HTML file by hand**. It holds a tree of claims. A small runtime 
   references/blocks.md                ← every block, with syntax. Read it before you write.
   examples/scheduled-send.html        ← a full plan. Copy its shape.
 ```
+
+`${CLAUDE_SKILL_DIR}` is this skill's folder, the one holding this SKILL.md. Claude Code fills it in; on other harnesses use that folder's absolute path.
 
 ## The tree
 
@@ -128,7 +132,7 @@ These are not STE and stay as they are: the words of the user in a `doc-quote`, 
 1. **Read first.** Find the entrypoints, records and screens the change touches. Note exact paths, lines and the user's words.
 2. **Write the level-1 claims** and read them aloud. Fix them before anything else.
 3. **Add the how and where claims, then the exhibits, then the decisions.** Read `references/blocks.md` for syntax. Save the page where the project keeps docs, or in a scratch folder.
-4. **Pack.** `node <skill dir>/runtime/pack.mjs plan.html --root <repo>`. It reports errors and warnings by line or claim number. Fix them. It writes `plan.packed.html`, one file that works offline.
+4. **Pack.** `node "${CLAUDE_SKILL_DIR}/runtime/pack.mjs" plan.html --root <repo>`. It reports errors and warnings by line or claim number. Fix them. It writes `plan.packed.html`, one file that works offline.
 5. **Look at it** in a browser if you can: closed, with each claim open, and at each decision (the “to answer” button goes to them). Check that mockups are not clipped and arrows do not cross labels.
 6. **Hand it over** (next section) with one line: “Four decisions. The defaults are what I would build.”
 7. **Act on the response.** Apply changed decisions, schema edits, struck calls and each comment. Refer to claims by number. If the answers change the shape of the plan, update the page and send it again. Then build.
