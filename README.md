@@ -21,7 +21,7 @@ claude plugin marketplace add VaggelisKa/vstack
 claude plugin install vstack@vaggeliska
 ```
 
-Use `/vstack:<skill>`. Update with `claude plugin marketplace update vaggeliska` then `claude plugin update vstack@vaggeliska`, remove with `claude plugin uninstall vstack@vaggeliska`.
+Use `/vstack:<skill>`. Update with `claude plugin marketplace update vaggeliska` then `claude plugin update vstack@vaggeliska`, remove with `claude plugin uninstall vstack@vaggeliska`. Claude Code doesn't auto-update third-party marketplaces unless you turn it on (`/plugin` → Marketplaces → vaggeliska → Enable auto-update), and `claude plugin marketplace update` alone refreshes the listing without updating the installed plugin. After `claude plugin update`, restart Claude Code or run `/reload-plugins`. The plugin has no `version`, so Claude Code versions it by commit: `claude plugin list` shows the commit SHA it has installed.
 
 ### Codex
 
@@ -63,7 +63,7 @@ Use `/vstack:<skill>`. Update by uninstalling and installing again; remove with 
 gemini extensions install https://github.com/VaggelisKa/vstack
 ```
 
-Skills are discovered from the extension (check with `gemini skills list`) and activated by the model when a request matches. Update with `gemini extensions update vstack`, remove with `gemini extensions uninstall vstack`. Install and discovery tested with Gemini CLI 0.65.0; skills not run in a session.
+Skills are discovered from the extension (check with `gemini skills list`) and activated by the model when a request matches. Update with `gemini extensions update vstack`, remove with `gemini extensions uninstall vstack`. Updates only work for an install from the GitHub URL (`Type: git` in `gemini extensions list`), which compares your installed commit with the repo's `HEAD`. An install from a local path (`Type: local`) is a copy that compares `version` with that folder's `gemini-extension.json`, so it reports up to date until that folder's version changes (pull it, then `gemini extensions update vstack`); reinstall from the URL to switch to `Type: git`. A linked install (`gemini extensions link`, `Type: link`) reads the folder live, so `git pull` in that folder updates it right away; `gemini extensions update vstack` still prints "already up to date", because a linked install is never updated. Install and discovery tested with Gemini CLI 0.65.0; skills not run in a session.
 
 ## Docs
 
