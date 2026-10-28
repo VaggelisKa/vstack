@@ -83,8 +83,8 @@ SHA (40 or 64 hex) of an own fix commit just pushed in the state's `pushed`
 list (the last MAX_PUSHED kept), so poll reads it as own even when GitHub
 links no account to its author; it touches nothing on GitHub. It exits 2 and
 writes nothing unless the SHA is a commit in this clone, its author email is
-this clone's `git config user.email` (any case; unset fails), and it is HEAD
-or @{push}.
+this clone's `git config user.email` (any case; unset fails), and this
+clone's reflog has a `commit:` or `commit (amend):` entry for it.
 
 Never prints a token. Exits 0 ok, 5 handback, 2 usage (also -h, or a state
 file that fails its checks), 4 internal error (after printing an `unknown`
@@ -952,8 +952,9 @@ def remove_claim(pr, item, repo_arg=None, gh=default_gh):
 
 
 def check_pushable(sha):
-    """Usage unless sha is a local commit by this repo's `git config user.email` (any case) that is
-    HEAD or @{push}: a fetched commit of another clone sharing the email isn't."""
+    """Usage unless sha is a local commit by this repo's `git config user.email` (any case) that this
+    clone's reflog says it committed (committed_here): a fetched or reset-to commit of another clone
+    sharing the email isn't."""
     r = local_git("cat-file", "-e", f"{sha}^{{commit}}")
     if r is None or r.returncode != 0:
         raise Usage(f"{sha} is not a commit in this clone")
@@ -964,11 +965,8 @@ def check_pushable(sha):
     r = local_git("log", "-1", "--format=%ae", sha, "--")
     if r is None or r.returncode != 0 or r.stdout.strip().lower() != mine:
         raise Usage(f"{sha}'s author email is not this clone's git config user.email")
-    for ref in ("HEAD", "@{push}"):
-        r = local_git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
-        if r is not None and r.returncode == 0 and r.stdout.strip() == sha:
-            return
-    raise Usage(f"{sha} is neither HEAD nor @{{push}}")
+    if sha not in committed_here():
+        raise Usage(f"{sha} has no `commit:` or `commit (amend):` reflog entry in this clone")
 
 
 def record_pushed(pr, sha):

@@ -383,11 +383,13 @@ class Coordination(unittest.TestCase):
                 self.assertEqual(self.cmd(*args)[0], 2)
         self.assertEqual(self.cmd("pushed", "--pr", 42, "--sha", self.head, cwd=tmpdir())[0], 2)
         tree = git(self.repo, "rev-parse", "HEAD^{tree}").decode().strip()
+        git(self.repo, "config", "user.email", "t@t")
+        loose = git(self.repo, "commit-tree", "-m", "loose", tree).decode().strip()
         cases = [("no user.email", None, self.head, "user.email is not set"),
                  ("not a commit in this clone", "t@t", "c" * 40, "not a commit"),
                  ("a tree, not a commit", "t@t", tree, "not a commit"),
                  ("another author email", "me@example.com", self.head, "author email"),
-                 ("neither HEAD nor @{push}", "t@t", self.base, "neither HEAD nor @{push}")]
+                 ("no commit reflog entry", "t@t", loose, "reflog entry")]
         for why, email, sha, error in cases:
             with self.subTest(why):
                 if email:
@@ -407,7 +409,7 @@ class Coordination(unittest.TestCase):
                          (0, {"pr": 42, "pushed": self.head, "recorded": 1}))
         self.assertEqual(self.cmd("pushed", "--pr", 42, "--sha", later)[1]["recorded"], 2)
         self.assertEqual(self.cmd("pushed", "--pr", 42, "--sha", self.head)[1]["recorded"], 2)
-        self.assertEqual(self.cmd("pushed", "--pr", 42, "--sha", self.base)[0], 2)
+        self.assertEqual(self.cmd("pushed", "--pr", 42, "--sha", loose)[0], 2)
         self.settle()
         st = self.state_file()
         self.assertEqual((st["pushed"], st["polls"]), ([self.head, later], 2))
@@ -424,6 +426,23 @@ class Coordination(unittest.TestCase):
             json.dump(st, f)
         self.assertEqual(self.poll()["settled"], True)
         self.assertEqual(self.state_file()["pushed"], [])
+
+    def test_pushed_rejects_a_reset_to_sibling_commit(self):
+        """B shares A's email and pushes; A fetches and reset --hard to B's commit, so it is HEAD,
+        @{push}, local and under A's email, but A never committed it: pushed exits 2."""
+        other = self.fork()
+        for clone in (self.repo, other):
+            git(clone, "config", "user.email", "t@t")
+        (other / "src/lint.py").write_text("b\n")
+        theirs = commit_all(other, "Fix lint\n\nvstack:babysit:check:lint")
+        git(other, "push", "-q", "origin", "feature")
+        git(self.repo, "fetch", "-q", "origin")
+        git(self.repo, "reset", "-q", "--hard", theirs)
+        self.assertEqual(git(self.repo, "rev-parse", "HEAD", "@{push}").decode().split(), [theirs, theirs])
+        rc, out, err = self.cmd("pushed", "--pr", 42, "--sha", theirs)
+        self.assertEqual((rc, out), (2, None), err)
+        self.assertIn("reflog entry", err)
+        self.assertFalse(os.path.exists(os.path.join(os.path.realpath(self.repo / ".git"), "vstack")))
 
     @unittest.skipUnless(sha256_supported(), "git without sha256 support")
     def test_pushed_sha256_head(self):

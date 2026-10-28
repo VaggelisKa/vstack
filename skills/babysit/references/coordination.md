@@ -117,8 +117,9 @@ commit just pushed to the state file's `pushed` list (last 500 kept; atomic
 write, nothing on GitHub). Run it from the clone that pushed, right after each
 push of your own marked fix commit. It exits 2 and writes nothing unless the
 SHA is a commit in this clone, its author email (`%ae`) equals this clone's
-`git config user.email` (case-insensitive; unset fails), and it is `HEAD` or
-`@{push}`.
+`git config user.email` (case-insensitive; unset fails), and this clone's
+reflog has a `commit:` or `commit (amend):` entry for it (a fetched or
+reset-to commit of a sibling clone doesn't).
 
 `gh pr view --json commits` has no committer. `poll` reads it with
 `gh api repos/O/R/commits/<sha>` only where it decides: a marked commit whose
