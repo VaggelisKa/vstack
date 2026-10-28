@@ -58,7 +58,15 @@ All of:
   `claude`, `claude[bot]`. The
   viewer's comments carrying an own marker
   (`<!-- vstack:babysit:… -->`, `<!-- vstack:autonomous-merge:… -->`) are
-  never working signals, mentions in them included;
+  never working signals, mentions in them included.
+  A "working" comment says "on it", "working on this", "I'll take this",
+  "looking into" or the like, or has a 👀. A negation ("not", "no longer",
+  "isn't", "am not", "stopped") in the 5 words before the phrase, in the same
+  clause, cancels it ("I'm not working on this" is no claim). So does "based",
+  "depends", "depending", "relies" or "rely" right before "on it" ("Based on
+  it, ..."). "WIP" and "in progress" count only when they start the comment or
+  the comment is under 40 characters: "WIP" is a claim, "The CI is in
+  progress, please wait before reviewing" is not;
 - the threads and reactions could all be read.
 
 `settled_reasons` says what's missing. Not settled means `actionable` is empty.

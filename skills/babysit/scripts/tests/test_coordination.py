@@ -159,6 +159,11 @@ class Coordination(unittest.TestCase):
 
     def test_working_signals(self):
         self.settle()
+        for body in ("Based on it, I think we should revert.", "I'm not working on this, someone else should.",
+                     "The CI is in progress, please wait before reviewing"):
+            with self.subTest(body):
+                self.comments = [{"author": {"login": "alice"}, "body": body, "createdAt": at(5)}]
+                self.assertTrue(self.poll()["settled"])
         self.comments = [{"author": {"login": "alice"}, "body": "I'm working on this", "createdAt": at(5)}]
         self.assertEqual(self.poll()["settled_reasons"], ["working: alice said they're working on the PR"])
         self.comments.append({"author": {"login": "alice"}, "body": "Done, pushed", "createdAt": at(6)})
@@ -921,6 +926,32 @@ class QueryBudget(unittest.TestCase):
         for n in re.findall(r"first:(\d+)", mod.THREADS_QUERY):
             total *= int(n)
         self.assertLessEqual(total, 500_000)
+
+
+class WorkingSignals(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("coord_working", SCRIPTS / "coordination.py")
+        cls.mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.mod)
+
+    def test_working(self):
+        for body in ("on it", "On it!", "WIP", "[WIP] fixing lint", "I'll take this one", "I'm working on this",
+                     "Fix in progress", "WIP: the flaky test needs a longer timeout, will push it soon enough",
+                     "Looking into the failure now", "👀", "Taking this, should be quick"):
+            with self.subTest(body):
+                self.assertTrue(self.mod.says_working(body))
+
+    def test_not_working(self):
+        for body in ("Based on it, I think we should revert.", "I'm not working on this, someone else should.",
+                     "The CI is in progress, please wait before reviewing", "This depends on it.",
+                     "The whole module relies on it, so be careful", "I am no longer working on it",
+                     "I stopped working on this", "Alice isn't on it anymore", "I'm not going to be working on this",
+                     "Please don't merge yet, the migration plan is still a wip on our side",
+                     "Looks good to me", "Not on it today, sorry"):
+            with self.subTest(body):
+                self.assertFalse(self.mod.says_working(body))
 
 
 if __name__ == "__main__":

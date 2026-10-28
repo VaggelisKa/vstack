@@ -30,7 +30,13 @@ requested reviewer who hasn't started doesn't count; a bot's comment,
 __typename Bot or a login ending in [bot], is never a "working" one, except
 from the coding agents in AGENTS (Copilot, Codex, Claude), whose working reply
 is a claim). The viewer's comments with an own marker are never working
-signals, mentions in them included. A thread with more comments than one page
+signals, mentions in them included. A "working" comment says "on it",
+"working on this", "I'll take this", "looking into" or the like, or has a 👀;
+a negation ("not", "no longer", "isn't", "am not", "stopped") in the few words
+before the phrase, in the same clause, cancels it, and so does "based",
+"depends" or "relies" right before "on it". "WIP" and "in progress" count only
+when they start the comment or the comment is under 40 characters ("The CI is
+in progress, please wait" is not a claim). A thread with more comments than one page
 leaves threads unreadable (threads_unreadable). Not settled means actionable
 is empty.
 
@@ -118,8 +124,14 @@ DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
 COMMIT_MARKER = re.compile(r"^vstack:(babysit|autonomous-merge):(\S.*?)\s*$", re.M)
 COMMENT_MARKER = re.compile(r"<!-- vstack:(babysit|autonomous-merge):(.+?) -->")
-WORKING = re.compile(r"(?i)👀|\b(on it|working on (it|this|that)|i'?m working|i'?ll (take|fix|handle|look into|address)"
-                     r"|looking into|taking (a look|this|it)|wip|in progress)\b")
+WORKING = re.compile(r"(?i)\b(working on (it|this|that)|i['’]?m working|i['’]?ll (take|fix|handle|look into|address)"
+                     r"|looking into|taking (a look|this|it)|on it|wip|in progress)\b")
+WEAK_WORKING = {"wip", "in progress"}
+SHORT_COMMENT = 40
+NEGATION_WORDS = 5
+NOT_ON_IT = {"based", "depends", "depending", "relies", "rely", "relying"}
+NEGATION = re.compile(r"(?i)\b(not|no longer|isn['’]?t|am not|stopped)\b")
+CLAUSE_END = re.compile(r"[.,;:!?\n]")
 DONE = re.compile(r"(?i)\b(done|fixed|addressed|pushed|resolved|finished|completed)\b")
 MENTION = re.compile(r"(?i)(?<![\w@/])@(copilot|codex|claude)\b")
 AGENTS = {"copilot", "copilot-swe-agent", "copilot-swe-agent[bot]", "chatgpt-codex-connector",
@@ -184,9 +196,32 @@ def is_agent(x):
     return str(login(x) or "").lower() in AGENTS
 
 
+def says_working(body):
+    """Does this text say its author is working on it? A 👀 always does. A
+    phrase doesn't when a negation ("not", "no longer", "isn't", "am not",
+    "stopped") is among the 5 words before it in the same clause, nor "on it"
+    right after "based", "depends", "relies" and the like. "wip" and "in
+    progress" count only when they start the comment or the comment is shorter
+    than SHORT_COMMENT characters."""
+    if "👀" in body:
+        return True
+    for m in WORKING.finditer(body):
+        before = body[:m.start()]
+        words = CLAUSE_END.split(before)[-1].split()
+        if NEGATION.search(" ".join(words[-NEGATION_WORDS:])):
+            continue
+        phrase = m.group(1).lower()
+        if phrase == "on it" and words and words[-1].lower() in NOT_ON_IT:
+            continue
+        if phrase in WEAK_WORKING and len(body.strip()) >= SHORT_COMMENT and re.search(r"\w", before):
+            continue
+        return True
+    return False
+
+
 def is_working(c):
     """Does comment c say its author is working on it? Bots' comments never do, coding agents' do."""
-    return (not is_bot(c) or is_agent(c)) and bool(WORKING.search((c or {}).get("body") or ""))
+    return (not is_bot(c) or is_agent(c)) and says_working((c or {}).get("body") or "")
 
 
 def own_comment(c, viewer, item=None):
