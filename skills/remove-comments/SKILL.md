@@ -68,7 +68,6 @@ deciding.** It has the examples and the docstring rules.
 
 `${CLAUDE_SKILL_DIR}` is this skill's folder, the one holding this SKILL.md.
 Claude Code fills it in; on other harnesses use that folder's absolute path.
-`$RC` below stands for `${CLAUDE_SKILL_DIR}/scripts`.
 
 Set up once; scratch files live outside the repo:
 
