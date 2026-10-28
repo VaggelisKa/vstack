@@ -292,6 +292,9 @@ class SkillText(unittest.TestCase):
         self.assertNotIn("A coverage note starting `skipped:` comes first", skill)
         contract = re.sub(r"\s+", " ", (SKILL / "references/reviewer-contract.md").read_text())
         self.assertIn("for ui-live only, skipped", contract)
+        self.assertIn("Every file in your list counts, binaries and images included", contract)
+        self.assertIn("with your image-reading tool", contract)
+        self.assertIn('leave it out of files_reviewed and report "partial"', contract)
 
 
 if __name__ == "__main__":

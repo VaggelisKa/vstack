@@ -2,7 +2,7 @@
 
 `/vstack:autonomous-merge <pr> [merge]` (`$autonomous-merge` in Codex), or in plain words ("... and merge when green"). It merges only when that run's request explicitly asks to.
 
-- 93 script tests, with fake `gh` and `curl` on a `PATH` holding only git, in temp repos:
+- 106 script tests, with fake `gh` and `curl` on a `PATH` holding only git, in temp repos:
   `python3 -m unittest discover -s skills/autonomous-merge/scripts/tests`.
 - `preflight.py`: GitHub and Bitbucket ok paths, host from URL or remote, one test per handback
   (`no_cli`, `auth_missing`, `auth_expired`, `insufficient_permission`, `not_open`, `host_unsupported`,
@@ -18,7 +18,10 @@
 - `state.py`: resume, fingerprints, the three caps from constants only, both oscillation cases,
   `no_progress`, `security_blocker`, `escalate` for each immediate-handback code, a file with other caps, a
   future `started_at` or a mismatched `fix_rounds` refused, atomic and symlink-safe writes, and only
-  babysit's marked commits counted as fix rounds.
+  babysit's marked commits counted as fix rounds. A fresh review of the same head and base supersedes a
+  round that isn't clean and has nothing to fix (in a real run, an Incomplete from one partial reviewer
+  dead-ended there), counting toward the cap and still checked for oscillation and `no_progress`; a stale
+  review.json or a round with open findings just repeats.
 
 > Not yet verified: a live run on a real GitHub or Bitbucket PR (responses are modelled on the
 > docs and `gh` 2.103 `--help`), `gh pr merge --auto --match-head-commit` and `--disable-auto` against a

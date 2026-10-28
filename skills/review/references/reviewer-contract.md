@@ -130,7 +130,12 @@ else "needs_changes" if any major, else "approved".
 
 Coverage: list every file you actually read in coverage.files_reviewed. Set
 status "complete" only if you reviewed every file in your area under your
-lens; otherwise "partial" and say what you missed in coverage.note. List in
+lens; otherwise "partial" and say what you missed in coverage.note. Every
+file in your list counts, binaries and images included: open each image
+(snapshot PNGs, screenshots, icons) with your image-reading tool and check it
+against the change. If you have no tool that shows images, don't guess at its
+content: leave it out of files_reviewed and report "partial", naming it in
+coverage.note. List in
 coverage.unreadable every input you tried to open and could not (a file, the
 diff, anything you were pointed to); leave it empty if you read everything.
 Fill these honestly: a gap you report gets re-checked, a gap you hide doesn't.

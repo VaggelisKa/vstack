@@ -21,7 +21,7 @@ the gate never reads it.
   "last_head": "<sha>",
   "rounds": [{"round": 1, "head": "<sha>", "base": "<sha>", "status": "fix",
               "verdict": "Ship with fixes", "counts": {"blocker": 0, "major": 1, "minor": 1, "nit": 0},
-              "merge_ok": false, "at": "…"}],
+              "merge_ok": false, "review_written_at": "…", "at": "…"}],
   "findings": [{"fingerprint": "3f9a0c1d2e4b5a67", "file": "src/a.py", "line": 3, "rule": "bug-hunt",
                 "summary": "Off by one in loop", "severity": "major", "first_round": 1, "last_round": 1,
                 "status": "fixed", "commit": "<sha>", "reason": null}],
@@ -43,7 +43,7 @@ the gate never reads it.
 | `counters.fix_rounds` | Review fix rounds (one per `fix-round`) plus babysit's own commits: first-parent, with a `vstack:babysit:<item>` line, and that are the viewer's by `gh api repos/O/R/commits/<sha>`: the author or committer login is the viewer (`gh api user`), or the author or committer email is the viewer's noreply address (`<id>+<login>@` or `<login>@users.noreply.github.com`) or in `gh api user/emails` (skipped on a 403 or 404). Fail closed: a commit with no account linked to its author or committer (an unlinked email; a `web-flow` committer stands for the author) counts as the viewer's. A marker on anyone else's commit is foreign; other fixers' commits and base merges don't count. Must equal that sum over `fixes`; over 6 stops the run |
 | `viewer_commits` | Backstop: every commit the viewer pushed to the PR in this run, marked or not (all of `fix-round`'s, and the viewer's among those `record-babysit` and, on GitHub, `record-review` see, by the identity rule above, unlinked commits included). The limit is state.py's constant `MAX_VIEWER_COMMITS` = 12, never the file's: more than 12 stops the run (`cap_reached`), and `check --before fix` refuses at 12. Optional in older files (read as empty) |
 | `last_head` | The head last recorded; the next fix or babysit record counts commits from here |
-| `rounds[]` | One per reviewed head and base: review's `status`, `verdict`, severity counts and `merge_ok` |
+| `rounds[]` | One per recorded review: review's `status`, `verdict`, severity counts, `merge_ok` and `written_at` (as `review_written_at`, optional in older files). Usually one per head and base; a round that isn't clean with nothing left to fix can be followed by a fresh review of the same head and base, recorded as a new round with `supersedes` set to the old round's number |
 | `findings[].fingerprint` | First 16 hex of SHA-256 over file, lower-cased rule, and the summary lower-cased with digit runs as `#` and punctuation and spacing collapsed |
 | `findings[].status` | `open` (blocker or major, not handled), `fixed` (with `commit`), `rejected` (with `reason`), `deferred` (minors and nits, automatically) |
 | `fixes[]` | Each recorded push with its commits (for `babysit`, only its marked ones); `source` is `review` or `babysit` |
@@ -61,6 +61,14 @@ file).
 previous round had blockers or majors and this one, not clean, has at least as
 many. It also stops at once (`security_blocker`) on a blocker whose rule is
 `security` or `data-integrity`.
+
+**Same head re-review.** `record-review` on the last round's head and base
+returns that round (`repeat: true`) unless it isn't clean and has nothing to
+fix (`next: review`). Then a `review.json` whose `written_at` is later than the
+round's `review_written_at` (or, in older files, its `at`) is recorded as a new
+round, which counts toward the 3-round cap; an older one repeats the round.
+Recording a round that isn't clean, has nothing to fix and leaves no review
+round stops the run (`cap_reached`).
 
 **Resume.** A new session runs `init` and continues from `counters`,
 `last_head` and the open findings. After a `ready` stop, `init` clears it (say,

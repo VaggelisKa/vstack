@@ -65,6 +65,7 @@
   1 MB inputs, a ui-live skip, file names with form feeds or U+2028, and an
   internal error (exit 4, treated as `retry`). 92 tests in total (48 before).
 - For a PR, `write-result.py` writes the outcome to `vstack/<pr>/review.json` in the git common dir and `read-result.py` reads it back, refusing it as stale unless head and base match; both are tested against real temp repos and worktrees.
+- The result's `partial` says some reviewer was partial; `partial_k3` says it happened on a K=3 area and is what rules out Ship and `merge_ok`, as step 5 says. Before, any partial reviewer blocked Ship, so a K=2 area whose bug-hunt reviewer skipped a snapshot PNG could only be written as Incomplete. Reviewers are now told that images count toward coverage and to open them or report partial.
 
 > Not yet verified: `--cross` (running reviewers through codex, gemini or agy),
 > gemini's stdin prompt (help only), agy's stream-json stdin (not used),

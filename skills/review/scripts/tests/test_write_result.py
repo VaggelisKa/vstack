@@ -28,7 +28,8 @@ def finding(**over):
 
 def result(**over):
     r = {"status": "fix", "verdict": "Ship with fixes, based on 1 unverified major", "score": 6.5,
-         "findings": [finding()], "unreviewed_areas": [], "partial": False}
+         "findings": [finding()], "unreviewed_areas": [], "partial": False,
+         "partial_k3": False}
     r.update(over)
     return r
 
@@ -69,7 +70,7 @@ class WriteResult(unittest.TestCase):
         out = self.ok(result(), "--pr", 42, *self.shas)
         self.assertEqual(list(out), ["schema_version", "skill", "pr", "head_sha", "base_sha", "merge_base",
                                      "written_at", "status", "verdict", "score", "findings",
-                                     "unreviewed_areas", "partial", "merge_ok"])
+                                     "unreviewed_areas", "partial", "partial_k3", "merge_ok"])
         self.assertEqual(out, {**result(), "schema_version": 1, "skill": "review", "pr": 42,
                                "head_sha": self.head, "base_sha": self.base, "merge_base": self.base,
                                "written_at": out["written_at"], "merge_ok": False})
@@ -83,7 +84,7 @@ class WriteResult(unittest.TestCase):
              {"partial": True, "unreviewed_areas": ["api/auth"]}),
             ("rethink", "Rethink, based on 1 unverified blocker", [finding(severity="blocker")], {}),
             ("unreviewed", "Incomplete", [finding()],
-             {"score": None, "partial": True, "unreviewed_areas": ["api/auth"]}),
+             {"score": None, "partial": True, "partial_k3": True, "unreviewed_areas": ["api/auth"]}),
         ]
         for status, verdict, findings, over in cases:
             with self.subTest(verdict=verdict):
@@ -99,6 +100,26 @@ class WriteResult(unittest.TestCase):
                            "as text": ship(merge_ok="true")}.items():
             with self.subTest(name):
                 self.assertIn("merge_ok", self.refused(data, "--pr", 42, *self.shas))
+
+    def test_partial_below_k3_can_ship(self):
+        out = self.ok(ship(partial=True), "--pr", 42, *self.shas)
+        self.assertEqual((out["status"], out["partial"], out["partial_k3"], out["merge_ok"]),
+                         ("ship", True, False, True))
+
+    def test_partial_k3_is_incomplete(self):
+        err = self.refused(ship(partial=True, partial_k3=True), "--pr", 42, *self.shas)
+        self.assertIn("partial K=3", err)
+        self.assertFalse(os.path.exists(self.vstack))
+        out = self.ok(result(status="unreviewed", verdict="Incomplete", score=None, findings=[],
+                             partial=True, partial_k3=True), "--pr", 42, *self.shas)
+        self.assertIs(out["merge_ok"], False)
+        self.assertIn("merge_ok", self.refused(ship(partial=True, partial_k3=True, merge_ok=True),
+                                               "--pr", 42, *self.shas))
+
+    def test_partial_k3_required(self):
+        data = ship()
+        del data["partial_k3"]
+        self.assertIn("partial_k3: missing", self.refused(data, "--pr", 42, *self.shas))
 
     def test_printable_text_allowed(self):
         f = finding(id="C-1 (a)", rule="data-integrity", summary="Ünïcode – “quotes” and ~ are fine")
@@ -198,7 +219,10 @@ class WriteResult(unittest.TestCase):
             "Rethink without a blocker": result(status="rethink", verdict="Rethink"),
             "Incomplete with a blocker": result(status="unreviewed", verdict="Incomplete",
                                                 findings=[finding(severity="blocker")]),
-            "Ship partial": ship(partial=True),
+            "Ship with a partial K=3 area": ship(partial=True, partial_k3=True),
+            "Ship with fixes with a partial K=3 area": result(partial=True, partial_k3=True),
+            "partial_k3 without partial": result(status="unreviewed", verdict="Incomplete", score=None,
+                                                 partial_k3=True),
             "Ship with unreviewed areas": ship(unreviewed_areas=["api"]),
             "null score for Ship": ship(score=None),
             "null score for Ship with fixes": result(score=None),
@@ -231,6 +255,7 @@ class WriteResult(unittest.TestCase):
             "verified as text": result(findings=[finding(verified="yes")]),
             "areas not strings": result(unreviewed_areas=[1]),
             "partial null": result(partial=None),
+            "partial_k3 null": result(partial_k3=None),
             "schema_version true": result(schema_version=True),
             "written_at not UTC": result(written_at="2026-01-31T12:00:00+02:00"),
             "written_at no zone": result(written_at="2026-01-31T12:00:00"),
