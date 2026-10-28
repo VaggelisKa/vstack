@@ -248,7 +248,8 @@ class Skeptic(unittest.TestCase):
 class SkillText(unittest.TestCase):
     """The docs use the session folder and check-result.py, never /tmp scratch files."""
 
-    DOCS = ("SKILL.md", "references/harnesses.md", "references/reviewer-contract.md", "lenses/ui-live.md")
+    DOCS = ("SKILL.md", "references/harnesses.md", "references/reviewer-contract.md",
+            "references/report.md", "lenses/ui-live.md")
 
     def test_no_tmp_scratch(self):
         allowed = re.compile(r"/tmp/(x|q[0-9*])")   # git-read.sh's --output attack examples
@@ -270,9 +271,10 @@ class SkillText(unittest.TestCase):
     def test_skill_uses_the_scripts(self):
         skill = (SKILL / "SKILL.md").read_text()
         for needle in ("scripts/check-result.py", 'scripts/session.py" new', 'scripts/session.py" clean',
-                       'check-result.py" reviewer', "check-result.py skeptic",
-                       "## Failed and partial reviewers", "UNREVIEWED"):
+                       'check-result.py" reviewer', "check-result.py skeptic", "UNREVIEWED"):
             self.assertIn(needle, skill)
+        self.assertIn("(references/report.md)", skill)
+        self.assertIn("## Failed and partial reviewers", (SKILL / "references/report.md").read_text())
         harn = (SKILL / "references/harnesses.md").read_text()
         self.assertIn('< "$SESSION/R3.prompt"', harn)
 

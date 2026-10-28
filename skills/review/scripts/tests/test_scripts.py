@@ -398,6 +398,7 @@ class HarnessSnippets(unittest.TestCase):
         (repo / "readme draft.md").write_text("hello\n")
         (repo / "locked.txt").write_text("x\n")
         (repo / "locked.txt").chmod(0)                    # git exits 128 (unless run as root)
+        root = os.getuid() == 0                           # root reads it anyway: a normal hunk
         tmp = tmpdir(self)
         (tmp / "untracked").write_bytes(b"deploy.sh\0readme draft.md\0missing.txt\0locked.txt\0")  # NUL-separated, as git ls-files -z
         r = subprocess.run(["bash", "-c", snippet("# untracked-diff:", 'done < "$UNTRACKED"')],
@@ -406,11 +407,12 @@ class HarnessSnippets(unittest.TestCase):
                                 "UNTRACKED": str(tmp / "untracked")})
         self.assertEqual(r.returncode, 0, r.stderr)
         held = (tmp / "A1.untracked-held").read_text().split("\n")[:-1]
-        self.assertEqual(held, ["missing.txt"] + (["locked.txt"] if os.getuid() else []))
+        self.assertEqual(held, ["missing.txt"] + ([] if root else ["locked.txt"]))
         hunks, rows, scan = split_and_scan(self, (tmp / "A1.diff").read_bytes())
-        self.assertEqual([p for _, p, _ in rows], ["deploy.sh", "readme draft.md"])
+        self.assertEqual([p for _, p, _ in rows],
+                         ["deploy.sh", "readme draft.md"] + (["locked.txt"] if root else []))
         self.assertEqual(scan.returncode, 0)
-        self.assertEqual(scan.stdout, b"1.patch\n")                                # deploy.sh flagged
+        self.assertEqual(scan.stdout, b"1.patch\n")      # deploy.sh flagged; locked.txt has no token
 
 
 class DocsUseTheseCommands(unittest.TestCase):

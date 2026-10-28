@@ -63,7 +63,14 @@
   truncated, fenced and prose-wrapped JSON, schema and range failures, wrong
   or missing sentinels and ids, manifest gaps, injected text (never echoed),
   1 MB inputs, a ui-live skip, file names with form feeds or U+2028, and an
-  internal error (exit 4, treated as `retry`). 92 tests in total (48 before).
+  internal error (exit 4, treated as `retry`). The whole suite is 140 tests;
+  4 of them skip when run as root, since root ignores file permissions.
+- Without `--out`, the report now goes to `vstack/reports/` in the git common
+  dir, next to the result file, so a later `git add .` can't commit it. The
+  live run above used `--out`; the default path hasn't been run live.
+- Scripts are called through `${CLAUDE_SKILL_DIR}`, which Claude Code fills in
+  with the skill's folder; on other harnesses the coordinator uses that folder's
+  absolute path. Not yet checked in a live run.
 - For a PR, `write-result.py` writes the outcome to `vstack/<pr>/review.json` in the git common dir and `read-result.py` reads it back, refusing it as stale unless head and base match; both are tested against real temp repos and worktrees.
 - The result's `partial` says some reviewer was partial; `partial_k3` says it happened on a K=3 area and is what rules out Ship and `merge_ok`, as step 5 says. Before, any partial reviewer blocked Ship, so a K=2 area whose bug-hunt reviewer skipped a snapshot PNG could only be written as Incomplete. Reviewers are now told that images count toward coverage and to open them or report partial.
 

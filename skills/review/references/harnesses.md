@@ -153,7 +153,7 @@ Split each area diff into one file per hunk, so a hit maps back to a hunk
 without anyone printing the secret:
 
 ```bash
-python3 -I "$SKILL_DIR/scripts/split-hunks.py" "$SESSION/A1.diff" "$SESSION/hunks/A1"
+python3 -I "${CLAUDE_SKILL_DIR}/scripts/split-hunks.py" "$SESSION/A1.diff" "$SESSION/hunks/A1"
 # -> $SESSION/hunks/A1/<n>.patch and index.tsv: "<n>.patch<TAB><path><TAB><@@ header @@>"
 # A non-zero exit here holds back the whole area, like a scanner error.
 ```
@@ -175,7 +175,7 @@ trufflehog filesystem "$SESSION/hunks/A1" --json --no-verification --no-update \
 echo $? > "$SESSION/A1.scan.exit"
 
 # Neither installed: token regex fallback (tested).
-python3 -I "$SKILL_DIR/scripts/scan-secrets.py" "$SESSION/hunks/A1" > "$SESSION/A1.flagged"
+python3 -I "${CLAUDE_SKILL_DIR}/scripts/scan-secrets.py" "$SESSION/hunks/A1" > "$SESSION/A1.flagged"
 echo $? > "$SESSION/A1.scan.exit"
 ```
 
@@ -222,7 +222,7 @@ should report it by file and line, with the value redacted.
 
 ```bash
 REPO=$(git rev-parse --show-toplevel)
-SKILL_DIR=<absolute path of this skill>        # the folder holding SKILL.md
+SKILL_DIR="${CLAUDE_SKILL_DIR}"   # Claude Code fills this in; elsewhere, the folder holding SKILL.md
 GIT_READ="$SKILL_DIR/scripts/git-read.sh"      # {{git_read}} in the prompts
 SESSION=$(cd "$REPO" && python3 -I "$SKILL_DIR/scripts/session.py" new)   # in the repo, ignores itself
 # Per reviewer: write the filled prompt from reviewer-contract.md to $SESSION/<id>.prompt
@@ -233,7 +233,7 @@ Keep every scratch file in the session folder, never in `/tmp`: CLIs and
 subagents run in the repo and may refuse files outside it as untrusted. Only CLIs read prompt
 files; in-harness subagents get the prompt inline.
 
-If `$SKILL_DIR` contains spaces or shell metacharacters, copy `git-read.sh`
+If the skill folder's path contains spaces or shell metacharacters, copy `git-read.sh`
 into `$SESSION` and point `GIT_READ` there, so the allow rule below and the
 command reviewers type match without quoting. If `$SESSION`'s path has them
 too, skip the claude harness and say so.
@@ -263,7 +263,7 @@ the prompt on stdin through the `-` argument:
 ```bash
 timeout 900 codex exec -s read-only --skip-git-repo-check --ephemeral \
   -C "$REPO" -m "$MODEL" -c model_reasoning_effort="high" \
-  --output-schema "$SKILL_DIR/references/reviewer.schema.json" \
+  --output-schema "${CLAUDE_SKILL_DIR}/references/reviewer.schema.json" \
   -o "$SESSION/R3.json" \
   - < "$SESSION/R3.prompt" > "$SESSION/R3.log" 2>&1
 ```
@@ -277,7 +277,7 @@ timeout 900 codex exec -s read-only --skip-git-repo-check --ephemeral \
 - `-c key=value` sets config values. `model_reasoning_effort` (low, medium or
   high) is a Codex config key, not a `--help` flag. If the CLI rejects it, drop
   it and note the effort as "default".
-- Skeptics: pass `--output-schema "$SKILL_DIR/references/skeptic.schema.json"`.
+- Skeptics: pass `--output-schema "${CLAUDE_SKILL_DIR}/references/skeptic.schema.json"`.
 
 ## claude
 
@@ -312,7 +312,7 @@ if [ "$CHECKED_OUT" = 1 ]; then CLAUDE_ALLOW+=(Read Grep Glob); fi   # 1 = head 
   --allowed-tools "${CLAUDE_ALLOW[@]}" \
   --disallowed-tools "${CLAUDE_DENY[@]}" \
   --output-format json \
-  --json-schema "$(cat "$SKILL_DIR/references/reviewer.schema.json")" \
+  --json-schema "$(cat "${CLAUDE_SKILL_DIR}/references/reviewer.schema.json")" \
   < "$SESSION/R4.prompt") > "$SESSION/R4.out.json" 2> "$SESSION/R4.err"
 ```
 
@@ -370,7 +370,7 @@ gets the prompt **as an argument** read from the file:
 (cd "$REPO" && timeout 930 agy -p "$(cat "$SESSION/R6.prompt")" \
   --model "$MODEL" --effort high --mode plan --sandbox \
   --output-format json \
-  --json-schema "$SKILL_DIR/references/reviewer.schema.json" \
+  --json-schema "${CLAUDE_SKILL_DIR}/references/reviewer.schema.json" \
   --print-timeout 15m) \
   > "$SESSION/R6.out.json" 2> "$SESSION/R6.err"
 ```
