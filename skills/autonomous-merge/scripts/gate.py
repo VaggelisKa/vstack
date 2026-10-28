@@ -12,7 +12,8 @@ true; the file can't make a blocked PR pass.
 GitHub blocks: closed or merged, draft, conflicts, changes requested (by
 reviewDecision, or by any human reviewer whose latest approving, dismissed or
 changes-requested review is CHANGES_REQUESTED), a missing approval, a required
-check not passing (all checks, if the required ones can't be read), any
+check not passing (all checks, if none are required or the required ones
+can't be read), any
 unresolved review thread (a human's stays until a human resolves it),
 mergeStateStatus BLOCKED or BEHIND, unknown mergeability (re-polled first, after
 each delay in VSTACK_POLL_DELAYS, comma-separated seconds, default 2,4,8,16),
@@ -78,6 +79,11 @@ _spec.loader.exec_module(c)
 SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 PASS = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 BUCKET = {"pass": "passing", "skipping": "passing", "pending": "pending", "fail": "failing", "cancel": "failing"}
+# gh pr checks --required exits 1 with this message when the branch has no required checks.
+NO_REQUIRED = re.compile(r"no required checks reported", re.IGNORECASE)
+CHECK_SCOPES = {"required": "required check(s)",
+                "none_required": "check(s) (no required checks configured, all treated as required)",
+                "unreadable": "check(s) (required ones unreadable, all treated as required)"}
 METHODS = (("merge", "allow_merge_commit"), ("squash", "allow_squash_merge"), ("rebase", "allow_rebase_merge"))
 BB_CONFLICT = {"merge conflict", "local deleted", "remote deleted"}
 POLL_DELAYS = (2, 4, 8, 16)
@@ -132,15 +138,20 @@ def check_state(item):
 
 
 def github_checks(t, view):
+    """(checks, scope): scope is "required" when the required checks were read, else every check in the
+    rollup is treated as required, with scope "none_required" (an empty list, or gh's own "no required
+    checks reported") or "unreadable" (gh failed or printed something that isn't a list)."""
     r = c.gh("pr", "checks", str(t["pr"]), "-R", c.gh_repo(t), "--required", "--json", "name,bucket")
     try:
         required = json.loads(r.stdout)
     except ValueError:
         required = None
     if isinstance(required, list) and required:
-        return [(x.get("name") or "?", BUCKET.get(x.get("bucket"), "failing")) for x in required], True
+        return [(x.get("name") or "?", BUCKET.get(x.get("bucket"), "failing")) for x in required], "required"
+    none = required == [] or NO_REQUIRED.search(r.stderr or "") is not None
     rollup = view.get("statusCheckRollup") or []
-    return [(x.get("name") or x.get("context") or "?", check_state(x)) for x in rollup], False
+    checks = [(x.get("name") or x.get("context") or "?", check_state(x)) for x in rollup]
+    return checks, "none_required" if none else "unreadable"
 
 
 def github_threads(t):
@@ -344,10 +355,10 @@ def github_blocks(t, view, head, base, settled=True):
                    "Resolve the conflicts with the base branch, then rerun.")
     need = required_approvals(t, view.get("baseRefName"))
     approval_block(blocks, view, github_reviews(t), head, need)
-    checks, from_protection = github_checks(t, view)
+    checks, source = github_checks(t, view)
     bad = [f"{n} ({s})" for n, s in checks if s != "passing"]
     if bad:
-        scope = "required check(s)" if from_protection else "check(s) (required ones unreadable, all treated as required)"
+        scope = CHECK_SCOPES[source]
         blocks.add("checks_failing", f"{len(bad)} {scope} not passing: {', '.join(bad[:10])}",
                    "Fix or rerun the failing checks (babysit does this) and wait for pending ones, then rerun.")
     thread_block(blocks, github_threads(t))

@@ -308,15 +308,27 @@ class Gate(unittest.TestCase):
         self.assertIn("test (pending)", self.handback("checks_failing", checks=pending)["detail"])
 
     def test_checks_fall_back_to_every_check(self):
-        none = gh_rule(["pr checks"], "", 1, "no required checks reported on the 'feature' branch")
         rollup = [{"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "SUCCESS"},
                   {"__typename": "StatusContext", "context": "ci/legacy", "state": "FAILURE"},
                   {"__typename": "CheckRun", "name": "slow", "status": "IN_PROGRESS", "conclusion": None}]
-        data = self.handback("checks_failing", checks=none, view=self.view(statusCheckRollup=rollup))
-        self.assertIn("ci/legacy (failing)", data["detail"])
-        self.assertIn("slow (pending)", data["detail"])
-        self.assertIn("all treated as required", data["detail"])
-        self.assertEqual(self.gate(checks=none)[0], 0)
+        configured = "(no required checks configured, all treated as required)"
+        unreadable = "(required ones unreadable, all treated as required)"
+        cases = {"gh: none reported": (gh_rule(["pr checks"], "", 1, "no required checks reported on the 'feature' "
+                                                                      "branch"), configured),
+                 "empty list": (gh_rule(["pr checks"], []), configured),
+                 "gh error": (gh_rule(["pr checks"], "", 1, "HTTP 502"), unreadable),
+                 "not JSON": (gh_rule(["pr checks"], "<html>"), unreadable),
+                 "not a list": (gh_rule(["pr checks"], {"message": "x"}), unreadable)}
+        for name, (rule, scope) in cases.items():
+            with self.subTest(name):
+                self.stubs.clear()
+                data = self.handback("checks_failing", checks=rule, view=self.view(statusCheckRollup=rollup))
+                self.assertIn("ci/legacy (failing)", data["detail"])
+                self.assertIn("slow (pending)", data["detail"])
+                self.assertIn(scope, data["detail"])
+                self.assertNotIn(unreadable if scope == configured else configured, data["detail"])
+                self.stubs.clear()
+                self.assertEqual(self.gate(checks=rule)[0], 0)
 
     def test_unresolved_threads(self):
         human = gh_rule(["api graphql"], [threads_page(thread(bot=True, resolved=True)), threads_page(thread())])
