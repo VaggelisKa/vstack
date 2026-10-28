@@ -13,7 +13,7 @@
         "Gives the K=3, C>=2 auth area more than one security reviewer, with copies differing by model or persona, using the strongest tier",
         "Plans the README change as a cheap-tier bug-hunt (or folds it into a trivial area) and keeps the total within the default budget of 8",
         "Starts all reviewers in parallel and does not edit files, commit, push or post PR comments",
-        "Writes the report to ./review-pr-142-<YYYYMMDD-HHMM>.md and prints decision, score, top findings and the report path"
+        "Writes the report to vstack/reports/review-pr-142-<YYYYMMDD-HHMM>.md under the git common dir (not the working tree) and prints decision, score, top findings and the report's absolute path"
       ]
     },
     {
@@ -25,7 +25,7 @@
         "Uses git diff HEAD (uncommitted changes) as the scope",
         "Treats the change as trivial and plans exactly one reviewer in total",
         "Uses the cheap tier (e.g. haiku / low effort) for that reviewer",
-        "Does not modify docs/setup.md or any other file except the report and a self-ignoring .review-session-<hex> folder that it removes at the end",
+        "Does not modify docs/setup.md or any other file in the working tree except a self-ignoring .review-session-<hex> folder that it removes at the end; the report goes under the git common dir",
         "Decision is Ship when no major or blocker finding stands"
       ]
     },
@@ -102,7 +102,7 @@
         "Keeps the web/invoices finding at major and marks it unverified, never presenting it as confirmed or skeptic-checked",
         "The report has a 'Failed and partial reviewers' section between 'Reviewers' and 'Refuted and dropped', with rows for R1 and R2 (still failed, area UNREVIEWED) and the C1 skeptic (still failed, cluster unverified), each with the check-result reason",
         "The chat summary mentions that 3 reviewers or skeptics failed",
-        "git status --porcelain at the end matches the start apart from the report"
+        "git status --porcelain at the end matches the start (the report is under the git common dir, outside the working tree)"
       ]
     }
   ]
