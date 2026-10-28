@@ -1,5 +1,7 @@
 # vstack
 
+![CI](https://github.com/VaggelisKa/vstack/actions/workflows/ci.yml/badge.svg)
+
 Personal agent skills, packaged as one plugin (`vstack`) for Claude Code, Codex, GitHub Copilot, Antigravity and Gemini CLI.
 
 - `autonomous-merge`: run `review` and `babysit` in a capped loop, then a live merge gate; stops at ready (`/autonomous-merge <pr> merge` to merge on GitHub; Bitbucket PRs are handed back for you to merge), hands back anything that needs you
