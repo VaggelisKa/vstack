@@ -18,8 +18,8 @@ BB_URL = "https://bitbucket.org/ws/r/pull-requests/42"
 
 class Preflight(unittest.TestCase):
     def setUp(self):
-        self.repo, self.base, self.head = pr_repo()
-        self.stubs = Stubs()
+        self.repo, self.base, self.head = pr_repo(self)
+        self.stubs = Stubs(self)
 
     def go(self, *rules, arg="42", env=None, cwd=None, **over):
         self.stubs.set(list(rules) or github_rules(self.head, self.base, **over))
@@ -55,7 +55,7 @@ class Preflight(unittest.TestCase):
         self.handback("insufficient_permission", repo=repo, viewer=viewer)
 
     def test_no_cli(self):
-        stubs = Stubs(tools=())
+        stubs = Stubs(self, tools=())
         stubs.set([])
         data = self.handback("no_cli", env=stubs.env())
         self.assertIn("gh auth login", data["action"])
@@ -95,7 +95,7 @@ class Preflight(unittest.TestCase):
         self.assertEqual(self.stubs.calls(), [])
 
     def test_unknown_without_a_remote(self):
-        repo, _, _ = pr_repo(remote=None)
+        repo, _, _ = pr_repo(self, remote=None)
         self.handback("unknown", cwd=repo)
 
     def test_internal_error_prints_an_unknown_handback_first(self):
@@ -160,7 +160,7 @@ class Preflight(unittest.TestCase):
                 self.assertEqual((code, data["reason"]), (5, reason), (out, err))
                 if reason == "auth_missing":
                     self.assertIn("BITBUCKET_TOKEN", data["action"])
-        stubs = Stubs(tools=("gh",))
+        stubs = Stubs(self, tools=("gh",))
         stubs.set([])
         code, data, _, _ = run("preflight.py", BB_URL, cwd=self.repo, env=stubs.env(BITBUCKET_TOKEN=TOKEN))
         self.assertEqual((code, data["reason"]), (5, "no_cli"))
@@ -181,7 +181,7 @@ class Preflight(unittest.TestCase):
         self.assertNotIn(gh_token, " ".join(" ".join(c["argv"]) for c in self.stubs.calls()))
 
     def test_outside_a_repo_with_a_url(self):
-        cwd = tmpdir()
+        cwd = tmpdir(self)
         self.assertEqual(self.go(arg="https://github.com/o/r/pull/42", cwd=cwd)[0], 0)
 
 

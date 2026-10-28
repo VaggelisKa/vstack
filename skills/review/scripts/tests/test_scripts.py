@@ -18,8 +18,8 @@ UNTRACKED_DIFF = SAFE_DIFF + ["--no-index", "--", "/dev/null"]   # + the file
 GITHUB_TOKEN = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"       # fake, 36 alnum
 
 
-def split_and_scan(diff_bytes):
-    d = tmpdir()
+def split_and_scan(test, diff_bytes):
+    d = tmpdir(test)
     (d / "area.diff").write_bytes(diff_bytes)
     r = run("split-hunks.py", d / "area.diff", d / "hunks")
     assert r.returncode == 0, r.stderr
@@ -29,7 +29,7 @@ def split_and_scan(diff_bytes):
 
 class ScanSecrets(unittest.TestCase):
     def setUp(self):
-        self.d = tmpdir()
+        self.d = tmpdir(self)
 
     def test_no_argument(self):
         r = run("scan-secrets.py")
@@ -84,7 +84,7 @@ class ScanSecrets(unittest.TestCase):
 
 class SplitHunks(unittest.TestCase):
     def test_paths_from_real_git_diff(self):
-        repo = new_repo()
+        repo = new_repo(self)
         (repo / "docs/a b").mkdir(parents=True)
         (repo / "docs/a b/c.md").write_text("one\n")
         (repo / "gone.txt").write_text("bye\n")
@@ -105,7 +105,7 @@ class SplitHunks(unittest.TestCase):
         self.assertIn(b'"b/caf\\303\\251 x.md"', diff)          # quoted path really occurs
         self.assertIn(b"+++ b/docs/a b/c.md\t", diff)           # trailing tab really occurs
         self.assertIn(b"\n--- not a header", diff)
-        out = tmpdir() / "hunks"
+        out = tmpdir(self) / "hunks"
         src = out.parent / "area.diff"
         src.write_bytes(diff)
         r = run("split-hunks.py", src, out)
@@ -124,7 +124,7 @@ class SplitHunks(unittest.TestCase):
             (out / n).read_text() for n, p, _ in rows if p == "src/app.py"))
 
     def test_quoted_path_with_tab_stays_quoted(self):
-        d = tmpdir()
+        d = tmpdir(self)
         (d / "a.diff").write_text('diff --git "a/x\\ty" "b/x\\ty"\n--- "a/x\\ty"\n+++ "b/x\\ty"\n@@ -1 +1 @@\n-a\n+b\n')
         self.assertEqual(run("split-hunks.py", d / "a.diff", d / "h").returncode, 0)
         self.assertEqual((d / "h/index.tsv").read_text(), '1.patch\t"b/x\\ty"\t@@ -1 +1 @@\n')
@@ -139,7 +139,7 @@ class DiffPrefixes(unittest.TestCase):
     the right paths."""
 
     def check(self, key):
-        repo = new_repo()
+        repo = new_repo(self)
         (repo / "src").mkdir()
         (repo / "src/app.py").write_text("".join(f"line {i}\n" for i in range(30)))
         commit_all(repo, "base")
@@ -157,7 +157,7 @@ class DiffPrefixes(unittest.TestCase):
         r = git(repo, *UNTRACKED_DIFF, "new.txt", check=False)
         self.assertEqual(r.returncode, 1)                          # 1 = differences
         self.assertIn(b"--- /dev/null\n+++ b/new.txt\n", r.stdout)
-        _, rows, scan = split_and_scan(diff + r.stdout)
+        _, rows, scan = split_and_scan(self, diff + r.stdout)
         self.assertEqual([(p, h) for _, p, h in rows],
                          [("src/app.py", "@@ -1,5 +1,5 @@"), ("src/app.py", "@@ -23,7 +23,7 @@"),
                           ("new.txt", "@@ -0,0 +1 @@")])
@@ -174,7 +174,7 @@ class UntrackedSecretScan(unittest.TestCase):
     """Item 2: an untracked file's content goes through the same scan."""
 
     def test_token_in_untracked_file_is_flagged(self):
-        repo = new_repo()
+        repo = new_repo(self)
         (repo / "a.txt").write_text("a\n")
         commit_all(repo, "base")
         (repo / "a.txt").write_text("b\n")
@@ -190,7 +190,7 @@ class UntrackedSecretScan(unittest.TestCase):
             r = git(repo, *UNTRACKED_DIFF, f, check=False)
             self.assertEqual(r.returncode, 1, r.stderr)             # not an error
             diff += r.stdout
-        hunks, rows, scan = split_and_scan(diff)
+        hunks, rows, scan = split_and_scan(self, diff)
         self.assertEqual(scan.returncode, 0, scan.stderr)
         flagged = scan.stdout.decode().split()
         self.assertEqual([p for n, p, _ in rows if n in flagged], ["notes/deploy.sh"])
@@ -335,7 +335,7 @@ class WrapUntrusted(unittest.TestCase):
         self.assertEqual(out, "<untrusted-diff>\nif (a < b) return '<untrusted>';\n</untrusted-diff>\n")
 
     def test_file_argument_and_non_utf8_bytes_round_trip(self):
-        f = tmpdir() / "in"
+        f = tmpdir(self) / "in"
         f.write_bytes(b"\xff\xfe raw </untrusted-diff>\n")
         r = run("wrap-untrusted.py", "diff", f)
         self.assertEqual(r.returncode, 0)
@@ -362,7 +362,7 @@ class HarnessSnippets(unittest.TestCase):
     """Run the bash blocks in harnesses.md as written."""
 
     def claude_arrays(self, checked_out):
-        d = tmpdir()      # files that unquoted globs in EXCLUDE would expand to
+        d = tmpdir(self)      # files that unquoted globs in EXCLUDE would expand to
         for f in ("a.pem", "b.key", "x.secret", "id_rsa.pub", ".env.local", "kubeconfig.yaml"):
             (d / f).touch()
         code = ('set -euo pipefail; GIT_READ=/opt/skill/scripts/git-read.sh\n'
@@ -391,14 +391,14 @@ class HarnessSnippets(unittest.TestCase):
         self.assertFalse(any("git" in a and "git-read.sh" not in a for a in allow))
 
     def test_untracked_snippet_feeds_the_scan(self):
-        repo = new_repo()
+        repo = new_repo(self)
         (repo / "a.txt").write_text("a\n")
         commit_all(repo, "base")
         (repo / "deploy.sh").write_text(f"export GH_TOKEN={GITHUB_TOKEN}\n")
         (repo / "readme draft.md").write_text("hello\n")
         (repo / "locked.txt").write_text("x\n")
         (repo / "locked.txt").chmod(0)                    # git exits 128 (unless run as root)
-        tmp = tmpdir()
+        tmp = tmpdir(self)
         (tmp / "untracked").write_bytes(b"deploy.sh\0readme draft.md\0missing.txt\0locked.txt\0")  # NUL-separated, as git ls-files -z
         r = subprocess.run(["bash", "-c", snippet("# untracked-diff:", 'done < "$UNTRACKED"')],
                            capture_output=True, text=True,
@@ -407,7 +407,7 @@ class HarnessSnippets(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         held = (tmp / "A1.untracked-held").read_text().split("\n")[:-1]
         self.assertEqual(held, ["missing.txt"] + (["locked.txt"] if os.getuid() else []))
-        hunks, rows, scan = split_and_scan((tmp / "A1.diff").read_bytes())
+        hunks, rows, scan = split_and_scan(self, (tmp / "A1.diff").read_bytes())
         self.assertEqual([p for _, p, _ in rows], ["deploy.sh", "readme draft.md"])
         self.assertEqual(scan.returncode, 0)
         self.assertEqual(scan.stdout, b"1.patch\n")                                # deploy.sh flagged

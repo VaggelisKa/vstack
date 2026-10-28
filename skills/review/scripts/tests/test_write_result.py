@@ -46,7 +46,7 @@ def write(cwd, data, *args, env=None):
 
 class WriteResult(unittest.TestCase):
     def setUp(self):
-        self.repo, self.base, self.head = pr_repo()
+        self.repo, self.base, self.head = pr_repo(self)
         self.gitdir = os.path.realpath(self.repo / ".git")
         self.vstack = os.path.join(self.gitdir, "vstack")
         self.out = os.path.join(self.vstack, "42", "review.json")
@@ -115,7 +115,7 @@ class WriteResult(unittest.TestCase):
                                                                "--pr", 42, *self.shas))
 
     def test_file_option_and_subdirectory(self):
-        f = tmpdir() / "result.json"
+        f = tmpdir(self) / "result.json"
         f.write_text(json.dumps(result()))
         self.assertEqual(self.ok("", "--pr", 42, *self.shas, "--file", f, cwd=self.repo / "src")["pr"], 42)
 
@@ -160,8 +160,8 @@ class WriteResult(unittest.TestCase):
     def test_merge_base_computed(self):
         self.assertEqual(self.ok(result(), "--pr", 42, *self.shas)["merge_base"], self.base)
         self.refused(result(), "--pr", 42, *self.shas, "--merge-base", self.base)
-        for name, (repo, base, head) in {"no merge base": unrelated_repo(),
-                                         "several merge bases": criss_cross_repo()}.items():
+        for name, (repo, base, head) in {"no merge base": unrelated_repo(self),
+                                         "several merge bases": criss_cross_repo(self)}.items():
             with self.subTest(name):
                 r = write(repo, result(), "--pr", 42, "--head-sha", head, "--base-sha", base)
                 self.assertEqual(r.returncode, 2, r.stderr)
@@ -170,7 +170,7 @@ class WriteResult(unittest.TestCase):
 
     @unittest.skipUnless(sha256_supported(), "git can't make sha256 repos")
     def test_sha256_repo(self):
-        repo, base, head = pr_repo("sha256")
+        repo, base, head = pr_repo(self, "sha256")
         self.assertEqual(len(head), 64)
         r = write(repo, result(), "--pr", 42, "--head-sha", head, "--base-sha", base)
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -286,27 +286,27 @@ class WriteResult(unittest.TestCase):
         self.assertEqual(git(self.repo, "status", "--porcelain"), b"")
 
     def test_shared_across_worktrees(self):
-        wt = tmpdir() / "wt"
+        wt = tmpdir(self) / "wt"
         git(self.repo, "worktree", "add", "-q", "--detach", str(wt), self.head)
         self.ok(result(), "--pr", 42, *self.shas, cwd=wt)
         self.assertFalse((wt / "vstack").exists())
         self.assertEqual(git(wt, "status", "--porcelain", "-uall", "--ignored"), b"")
 
     def test_refuses_symlinked_vstack(self):
-        elsewhere = tmpdir()
+        elsewhere = tmpdir(self)
         os.symlink(elsewhere, self.vstack)
         self.assertIn("refusing", self.refused(result(), "--pr", 42, *self.shas))
         self.assertEqual(os.listdir(elsewhere), [])
 
     def test_refuses_symlinked_pr_dir(self):
-        elsewhere = tmpdir()
+        elsewhere = tmpdir(self)
         os.mkdir(self.vstack)
         os.symlink(elsewhere, os.path.join(self.vstack, "42"))
         self.assertIn("refusing", self.refused(result(), "--pr", 42, *self.shas))
         self.assertEqual(os.listdir(elsewhere), [])
 
     def test_refuses_dangling_symlink_and_file(self):
-        missing = tmpdir() / "missing"
+        missing = tmpdir(self) / "missing"
         os.symlink(missing, self.vstack)
         self.refused(result(), "--pr", 42, *self.shas)
         self.assertFalse(os.path.lexists(missing))
@@ -316,7 +316,7 @@ class WriteResult(unittest.TestCase):
         self.refused(result(), "--pr", 42, *self.shas)
 
     def test_outside_a_repo_refuses(self):
-        cwd = tmpdir() / "plain"
+        cwd = tmpdir(self) / "plain"
         cwd.mkdir()
         env = {**GIT_ENV, "GIT_CEILING_DIRECTORIES": str(cwd.parent)}
         r = write(cwd, result(), "--pr", 7, *self.shas, env=env)

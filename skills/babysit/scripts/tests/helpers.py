@@ -1,8 +1,10 @@
 """Shared helpers for the babysit skill's script tests. Everything runs in temp dirs."""
+import contextlib
 import json
 import os
 import pathlib
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -29,12 +31,34 @@ def git(repo, *args, check=True):
     return r.stdout if check else r
 
 
-def tmpdir():
-    return pathlib.Path(tempfile.mkdtemp(prefix="babysit-test-"))
+def rmtree(path):
+    """Remove path, making read-only dirs and files (git objects, permission tests) writable first."""
+    def fix(func, p, _):
+        for q in [p] + ([os.path.dirname(p)] if p != path else []):
+            if not os.path.islink(q):
+                with contextlib.suppress(OSError):
+                    os.chmod(q, stat.S_IRWXU)
+        with contextlib.suppress(OSError):
+            func(p)
+    shutil.rmtree(path, **{"onexc" if sys.version_info >= (3, 12) else "onerror": fix})
 
 
-def new_repo():
-    repo = tmpdir() / "repo"
+def tmpdir(test):
+    """A fresh dir, removed when test finishes (or, given a TestCase class in setUpClass, when the class does)."""
+    d = tempfile.mkdtemp(prefix="babysit-test-")
+    (test.addClassCleanup if isinstance(test, type) else test.addCleanup)(rmtree, d)
+    return pathlib.Path(d)
+
+
+@contextlib.contextmanager
+def scratch():
+    """A dir for a probe outside any test (a skip decorator's check), removed when the block ends."""
+    with tempfile.TemporaryDirectory(prefix="babysit-test-", ignore_cleanup_errors=True) as d:
+        yield pathlib.Path(d)
+
+
+def new_repo(test):
+    repo = tmpdir(test) / "repo"
     repo.mkdir()
     git(repo, "init", "-q", "-b", "main")
     return repo
@@ -46,10 +70,10 @@ def commit_all(repo, msg):
     return git(repo, "rev-parse", "HEAD").decode().strip()
 
 
-def pr_repo(object_format=None):
+def pr_repo(test, object_format=None):
     """A repo on branch feature, one commit ahead of main. Returns (repo, base, head);
     base is also the merge base."""
-    repo = tmpdir() / "repo"
+    repo = tmpdir(test) / "repo"
     repo.mkdir()
     git(repo, "init", "-q", "-b", "main", *([f"--object-format={object_format}"] if object_format else []))
     (repo / "src").mkdir()
@@ -61,21 +85,21 @@ def pr_repo(object_format=None):
 
 
 def sha256_supported():
-    probe = tmpdir()
-    return git(probe, "init", "-q", "--object-format=sha256", check=False).returncode == 0
+    with scratch() as probe:
+        return git(probe, "init", "-q", "--object-format=sha256", check=False).returncode == 0
 
 
-def unrelated_repo():
+def unrelated_repo(test):
     """A repo whose feature branch shares no history with main. Returns (repo, base, head)."""
-    repo, base, _ = pr_repo()
+    repo, base, _ = pr_repo(test)
     git(repo, "checkout", "-q", "--orphan", "other")
     (repo / "b.txt").write_text("b\n")
     return repo, base, commit_all(repo, "other")
 
 
-def criss_cross_repo():
+def criss_cross_repo(test):
     """A repo where base and head have two merge bases. Returns (repo, base, head)."""
-    repo = new_repo()
+    repo = new_repo(test)
     (repo / "a").write_text("a\n")
     commit_all(repo, "a")
     git(repo, "checkout", "-qb", "x")
@@ -116,8 +140,8 @@ sys.exit(rule.get("code", 0))
 class FakeGh:
     """A PATH holding git and a fake gh that answers from rules (first match wins) and logs its argv."""
 
-    def __init__(self):
-        self.dir = tmpdir() / "bin"
+    def __init__(self, test):
+        self.dir = tmpdir(test) / "bin"
         self.dir.mkdir()
         os.symlink(shutil.which("git"), self.dir / "git")
         p = self.dir / "gh"

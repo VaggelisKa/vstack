@@ -35,12 +35,12 @@ def majors(n):
 
 class State(unittest.TestCase):
     def setUp(self):
-        self.repo, self.base, self.head = pr_repo()
+        self.repo, self.base, self.head = pr_repo(self)
         self.gitdir = os.path.realpath(self.repo / ".git")
         self.vstack = os.path.join(self.gitdir, "vstack")
         self.path = os.path.join(self.vstack, "42", "autonomous-merge.json")
         self.n = 0
-        self.stubs = Stubs(tools=("gh",))
+        self.stubs = Stubs(self, tools=("gh",))
         self.logins = {}
         self.emails = gh_rule(["user/emails"], [[{"email": "me@example.com"}]])
 
@@ -480,7 +480,7 @@ class State(unittest.TestCase):
         self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
 
     def test_refuses_symlinks(self):
-        elsewhere = tmpdir()
+        elsewhere = tmpdir(self)
         os.symlink(elsewhere, self.vstack)
         self.assertIn("refusing", self.st("init", code=2))
         self.assertEqual(os.listdir(elsewhere), [])
@@ -498,7 +498,7 @@ class State(unittest.TestCase):
         self.assertIn("refusing", self.st("init", code=2))
 
     def test_outside_a_repo_and_bad_args(self):
-        cwd = tmpdir() / "plain"
+        cwd = tmpdir(self) / "plain"
         cwd.mkdir()
         rc, _, _, err = run("state.py", "init", "--pr", 42, cwd=cwd,
                             env={**GIT_ENV, "GIT_CEILING_DIRECTORIES": str(cwd.parent)})

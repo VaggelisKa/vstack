@@ -16,7 +16,7 @@ import subprocess
 import sys
 import unittest
 
-from helpers import SCRIPTS, commentscan, listing, decide, new_repo, commit_all, run, tmpdir
+from helpers import SCRIPTS, commentscan, listing, decide, new_repo, commit_all, run, scratch, tmpdir
 
 sys.path.insert(0, str(SCRIPTS))
 import comments  # noqa: E402 - must follow the sys.path line
@@ -54,8 +54,9 @@ def find_sass():
     for var in ("RC_SASS_ROOT", "RC_TS_ROOT"):
         root = os.environ.get(var)
         if root and shutil.which("node"):
-            r = subprocess.run(["node", "-e", "process.stdout.write(require.resolve('sass', {paths: [process.argv[1]]}))",
-                                root], capture_output=True, text=True, timeout=30, cwd=tmpdir())
+            with scratch() as d:
+                r = subprocess.run(["node", "-e", "process.stdout.write(require.resolve('sass', {paths: [process.argv[1]]}))",
+                                    root], capture_output=True, text=True, timeout=30, cwd=d)
             if r.returncode == 0 and r.stdout:
                 return r.stdout
     return None
@@ -88,11 +89,11 @@ class Scss(unittest.TestCase):
         self.assertEqual(strip_all(".a/**/.b { x: y }\n", "css"), ".a.b { x: y }\n")
 
     def test_apply_through_the_cli(self):
-        repo = new_repo()
+        repo = new_repo(self)
         src = ".a/* c */.b { x: y }\n.d{ &/* c */.e { x: y } }\nf/* c */:hover { x: y }\n"
         (repo / "a.scss").write_text(src)
         commit_all(repo, "base")
-        r, doc, out = listing(repo, "--paths", "a.scss")
+        r, doc, out = listing(self, repo, "--paths", "a.scss")
         r = run("apply", decide(out, {c: {"action": "delete"} for c in doc["pending"]}), "--list", out, cwd=repo)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual((repo / "a.scss").read_text(), ".a .b { x: y }\n.d{ & .e { x: y } }\nf :hover { x: y }\n")
@@ -104,7 +105,7 @@ class Scss(unittest.TestCase):
         pairs.append(["$x: 3;\na { m: $x/**/-1; n: $x -1; o: 1px/**/-.5 }\n",
                       strip_all("$x: 3;\na { m: $x/**/-1; n: $x -1; o: 1px/**/-.5 }\n", "scss")])
         r = subprocess.run(["node", "-e", NODE_SASS, find_sass()], input=json.dumps(pairs), capture_output=True,
-                           text=True, timeout=60, cwd=tmpdir())
+                           text=True, timeout=60, cwd=tmpdir(self))
         self.assertEqual(r.returncode, 0, r.stderr)
         for (src, new), (b, a) in zip(pairs, json.loads(r.stdout)):
             with self.subTest(src=src):

@@ -22,7 +22,7 @@ import subprocess
 import sys
 import unittest
 
-from helpers import SCRIPTS, commentscan, listing, decide, new_repo, commit_all, run, tmpdir
+from helpers import SCRIPTS, commentscan, listing, decide, new_repo, commit_all, run, scratch, tmpdir
 
 sys.path.insert(0, str(SCRIPTS))
 import comments  # noqa: E402 - must follow the sys.path line
@@ -113,18 +113,19 @@ def find_less():
     for var in ("RC_LESS_ROOT", "RC_TS_ROOT"):
         root = os.environ.get(var)
         if root and shutil.which("node"):
-            r = subprocess.run(["node", "-e", "process.stdout.write(require.resolve('less', {paths: [process.argv[1]]}))",
-                                root], capture_output=True, text=True, timeout=30, cwd=tmpdir())
+            with scratch() as d:
+                r = subprocess.run(["node", "-e", "process.stdout.write(require.resolve('less', {paths: [process.argv[1]]}))",
+                                    root], capture_output=True, text=True, timeout=30, cwd=d)
             if r.returncode == 0 and r.stdout:
                 return r.stdout
     return None
 
 
-def lessc(pairs):
+def lessc(test, pairs):
     """[(css before, css after)] for [(before, after)] sources; comments lessc copies
     through and whitespace that can't change the meaning are dropped from the CSS."""
     r = subprocess.run(["node", "-e", NODE_LESS, find_less()], input=json.dumps(pairs), capture_output=True,
-                       text=True, timeout=120, cwd=tmpdir())
+                       text=True, timeout=120, cwd=tmpdir(test))
     if r.returncode:
         raise AssertionError(r.stderr)
 
@@ -182,11 +183,11 @@ class Less(unittest.TestCase):
         self.assertIsNone(c.protected)
 
     def test_apply_through_the_cli(self):
-        repo = new_repo()
+        repo = new_repo(self)
         src = ".a /* c */ { x: y; /* d */ z: w; }\n.a-b /* e */.c { x: y }\n@x: 1; b { m: @x // f\n  -1 }\n"
         (repo / "a.less").write_text(src)
         commit_all(repo, "base")
-        r, doc, out = listing(repo, "--paths", "a.less")
+        r, doc, out = listing(self, repo, "--paths", "a.less")
         self.assertEqual(r.returncode, 0, r.stderr)
         [e] = [c for c in doc["comments"] if c["protected"]]
         self.assertEqual(e["text"], "/* e */")
@@ -209,7 +210,7 @@ class Less(unittest.TestCase):
     def test_lessc_compiles_deletes_the_same_and_protected_cases_differently(self):
         same = [[b, a] for b, a in GOLDEN.items()] + [[b, k] for b, (_, k, _) in NEIGHBOURS.items() if k]
         differ = [[b, a] for b, (a, _) in PROTECTED.items()] + [[b, a] for b, (a, _, _) in NEIGHBOURS.items()]
-        for i, ((src, new), (b, a)) in enumerate(zip(same + differ, lessc(same + differ))):
+        for i, ((src, new), (b, a)) in enumerate(zip(same + differ, lessc(self, same + differ))):
             with self.subTest(src=src, new=new):
                 self.assertFalse(b.startswith("ERROR"), b)
                 if i < len(same):
@@ -240,7 +241,7 @@ class Less(unittest.TestCase):
                         pairs.append([src, new])
         self.assertGreater(len(pairs), 2000)
         compiled = 0
-        for (src, new), (b, a) in zip(pairs, lessc(pairs)):
+        for (src, new), (b, a) in zip(pairs, lessc(self, pairs)):
             if not b.startswith("ERROR"):
                 compiled += 1
                 self.assertEqual(a, b, f"{src!r} -> {new!r}")

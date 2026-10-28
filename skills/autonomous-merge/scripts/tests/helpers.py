@@ -1,9 +1,11 @@
 """Shared helpers for the autonomous-merge skill's script tests. Everything runs
 in temp dirs, with fake `gh` and `curl` on a PATH that holds nothing else but git."""
+import contextlib
 import json
 import os
 import pathlib
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -53,8 +55,23 @@ sys.exit(rule.get("code", 0))
 '''
 
 
-def tmpdir():
-    return pathlib.Path(tempfile.mkdtemp(prefix="am-test-"))
+def rmtree(path):
+    """Remove path, making read-only dirs and files (git objects, permission tests) writable first."""
+    def fix(func, p, _):
+        for q in [p] + ([os.path.dirname(p)] if p != path else []):
+            if not os.path.islink(q):
+                with contextlib.suppress(OSError):
+                    os.chmod(q, stat.S_IRWXU)
+        with contextlib.suppress(OSError):
+            func(p)
+    shutil.rmtree(path, **{"onexc" if sys.version_info >= (3, 12) else "onerror": fix})
+
+
+def tmpdir(test):
+    """A fresh dir, removed when test finishes (or, given a TestCase class in setUpClass, when the class does)."""
+    d = tempfile.mkdtemp(prefix="am-test-")
+    (test.addClassCleanup if isinstance(test, type) else test.addCleanup)(rmtree, d)
+    return pathlib.Path(d)
 
 
 def git(repo, *args, check=True):
@@ -71,9 +88,9 @@ def commit_all(repo, msg):
     return git(repo, "rev-parse", "HEAD").decode().strip()
 
 
-def pr_repo(remote="git@github.com:o/r.git"):
+def pr_repo(test, remote="git@github.com:o/r.git"):
     """A repo on branch feature, one commit ahead of main. Returns (repo, base, head)."""
-    repo = tmpdir() / "repo"
+    repo = tmpdir(test) / "repo"
     repo.mkdir()
     git(repo, "init", "-q", "-b", "main")
     (repo / "src").mkdir()
@@ -90,8 +107,8 @@ def pr_repo(remote="git@github.com:o/r.git"):
 class Stubs:
     """A PATH holding fake gh and curl that answer from rules and log every call."""
 
-    def __init__(self, tools=("gh", "curl")):
-        self.dir = tmpdir() / "bin"
+    def __init__(self, test, tools=("gh", "curl")):
+        self.dir = tmpdir(test) / "bin"
         self.dir.mkdir()
         os.symlink(shutil.which("git"), self.dir / "git")
         for tool in tools:

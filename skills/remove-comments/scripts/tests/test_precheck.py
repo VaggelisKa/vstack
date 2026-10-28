@@ -11,7 +11,7 @@ from helpers import commit_all, git, new_repo, run, tmpdir
 
 class Precheck(unittest.TestCase):
     def setUp(self):
-        self.repo = new_repo()
+        self.repo = new_repo(self)
         (self.repo / ".gitignore").write_text("*.log\nbuild/\n")
         (self.repo / "a.py").write_text("x = 1\n")
         commit_all(self.repo, "base")
@@ -84,10 +84,10 @@ class Precheck(unittest.TestCase):
                 path.rmdir() if marker == "rebase-merge" else path.unlink()
 
     def test_outside_a_repository(self):
-        r = run("precheck", cwd=tmpdir())
+        r = run("precheck", cwd=tmpdir(self))
         self.assertEqual(r.returncode, 2)
         self.assertIn(b"not inside a git repository", r.stderr)
-        r = run("precheck", "--repo", self.repo, cwd=tmpdir())
+        r = run("precheck", "--repo", self.repo, cwd=tmpdir(self))
         self.assertEqual(r.returncode, 0, r.stderr)
 
 

@@ -1,7 +1,10 @@
 """Shared helpers for the remove-comments script tests. Everything runs in temp dirs."""
+import contextlib
 import json
 import os
 import pathlib
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -32,12 +35,34 @@ def git(repo, *args, check=True):
     return r.stdout if check else r
 
 
-def tmpdir():
-    return pathlib.Path(tempfile.mkdtemp(prefix="remove-comments-test-"))
+def rmtree(path):
+    """Remove path, making read-only dirs and files (git objects, permission tests) writable first."""
+    def fix(func, p, _):
+        for q in [p] + ([os.path.dirname(p)] if p != path else []):
+            if not os.path.islink(q):
+                with contextlib.suppress(OSError):
+                    os.chmod(q, stat.S_IRWXU)
+        with contextlib.suppress(OSError):
+            func(p)
+    shutil.rmtree(path, **{"onexc" if sys.version_info >= (3, 12) else "onerror": fix})
 
 
-def new_repo():
-    repo = tmpdir() / "repo"
+def tmpdir(test):
+    """A fresh dir, removed when test finishes (or, given a TestCase class in setUpClass, when the class does)."""
+    d = tempfile.mkdtemp(prefix="remove-comments-test-")
+    (test.addClassCleanup if isinstance(test, type) else test.addCleanup)(rmtree, d)
+    return pathlib.Path(d)
+
+
+@contextlib.contextmanager
+def scratch():
+    """A dir for a probe outside any test (a skip decorator's check), removed when the block ends."""
+    with tempfile.TemporaryDirectory(prefix="remove-comments-test-", ignore_cleanup_errors=True) as d:
+        yield pathlib.Path(d)
+
+
+def new_repo(test):
+    repo = tmpdir(test) / "repo"
     repo.mkdir()
     git(repo, "init", "-q", "-b", "main")
     return repo
@@ -54,9 +79,9 @@ def texts(src, lang):
     return [src[c.start:c.end] for c in commentscan.scan(src, lang).comments]
 
 
-def listing(repo, *args):
+def listing(test, repo, *args):
     """Run list in repo; returns (result, doc, path of comments.json)."""
-    out = tmpdir() / "comments.json"
+    out = tmpdir(test) / "comments.json"
     r = run("list", "--out", out, *args, cwd=repo)
     doc = json.loads(out.read_text()) if out.exists() else None
     return r, doc, out
