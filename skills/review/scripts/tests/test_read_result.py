@@ -17,7 +17,7 @@ from helpers import GIT_ENV, SCRIPTS, criss_cross_repo, git, pr_repo, tmpdir
 SKILL = "review"
 OTHER = "fedcba9876543210fedcba9876543210fedcba98"
 RESULT = {"status": "ship", "verdict": "Ship", "score": 9.0, "findings": [], "unreviewed_areas": [],
-          "partial": False}
+          "partial": False, "partial_k3": False}
 
 spec = importlib.util.spec_from_file_location("read_result", SCRIPTS / "read-result.py")
 reader = importlib.util.module_from_spec(spec)
@@ -129,6 +129,16 @@ class ReadResult(unittest.TestCase):
         err = self.read(code=2)
         self.assertIn("merge_ok", err)
         self.assertNotIn("auth", err)
+        with self.assertRaises(reader.Unsupported):
+            reader.read_result(42, self.head, self.base, self.gitdir)
+
+    def test_partial_k3_gates_merge_ok(self):
+        self.write(partial=True)
+        self.assertIs(self.read()["merge_ok"], True)
+        self.edit(partial_k3=True)
+        self.assertIn("merge_ok", self.read(code=2))
+        self.edit(partial_k3=True, merge_ok=False)
+        self.assertIn("partial K=3", self.read(code=2))
         with self.assertRaises(reader.Unsupported):
             reader.read_result(42, self.head, self.base, self.gitdir)
 

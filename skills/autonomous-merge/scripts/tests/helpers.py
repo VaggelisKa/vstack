@@ -175,7 +175,8 @@ def write_result(writer, repo, pr, head, base, result):
         raise AssertionError(r.stderr.decode())
 
 
-SHIP = {"status": "ship", "verdict": "Ship", "score": 9.0, "findings": [], "unreviewed_areas": [], "partial": False}
+SHIP = {"status": "ship", "verdict": "Ship", "score": 9.0, "findings": [], "unreviewed_areas": [], "partial": False,
+        "partial_k3": False}
 
 
 def finding(severity="major", file="src/a.py", rule="bug-hunt", summary="Off by one in loop at line 3", line=3,

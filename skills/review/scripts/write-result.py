@@ -164,12 +164,13 @@ FIELDS = {
     })),
     "unreviewed_areas": list_of(TEXT),
     "partial": BOOL,
+    "partial_k3": BOOL,
     "merge_ok": BOOL,
 }
 
 
 def merge_ok(r):
-    return r.get("status") == "ship" and r.get("partial") is False and r.get("unreviewed_areas") == []
+    return r.get("status") == "ship" and r.get("partial_k3") is False and r.get("unreviewed_areas") == []
 
 
 def consistent(r, errs):
@@ -187,10 +188,14 @@ def consistent(r, errs):
         errs.append("verdict: Ship with fixes needs a major finding")
     if r["score"] is None and decision != "Incomplete":
         errs.append("score: only Incomplete can have a null score")
-    if decision == "Ship" and (r["partial"] or r["unreviewed_areas"]):
-        errs.append("verdict: Ship can't be partial or have unreviewed areas")
+    if r["partial_k3"] and not r["partial"]:
+        errs.append("partial: must be true when partial_k3 is")
+    if r["partial_k3"] and decision in ("Ship", "Ship with fixes"):
+        errs.append(f"verdict: {decision} can't have a partial K=3 area (that's Incomplete)")
+    if decision == "Ship" and r["unreviewed_areas"]:
+        errs.append("verdict: Ship can't have unreviewed areas")
     if r["merge_ok"] != merge_ok(r):
-        errs.append("merge_ok: must be true exactly when status is ship, partial is false "
+        errs.append("merge_ok: must be true exactly when status is ship, partial_k3 is false "
                     "and unreviewed_areas is empty")
 
 

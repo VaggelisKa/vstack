@@ -25,6 +25,7 @@ the same JSON in the chat instead. Outside a git repo the script refuses (exit 2
   ],
   "unreviewed_areas": [],
   "partial": false,
+  "partial_k3": false,
   "merge_ok": false
 }
 ```
@@ -51,14 +52,17 @@ in the local repo (fetch them first). The script fills in `schema_version`,
 | `findings[].rule` | The lens that raised it (the first one, if several did) |
 | `findings[].verified` | `true` if a skeptic confirmed or downgraded it, or you confirmed a prompt-injection hit; `false` for `unverified` and `unchallenged` |
 | `unreviewed_areas` | Areas that are UNREVIEWED or lost all reviewers to the budget, and `ui-live` if skipped |
-| `partial` | `true` if any reviewer reported `partial` coverage or ended without a verdict |
-| `merge_ok` | `status` is `ship`, `partial` is false and `unreviewed_areas` is empty; computed by the script |
+| `partial` | `true` if any reviewer reported `partial` coverage or ended without a verdict, on any area |
+| `partial_k3` | `true` if a **K=3** area has a reviewer that reported `partial` coverage, or a planned `security` or `data-integrity` reviewer that ended without a verdict (step 5's Incomplete rules (b) and (c)); implies `partial` |
+| `merge_ok` | `status` is `ship`, `partial_k3` is false and `unreviewed_areas` is empty; computed by the script |
 
 The script rejects unknown fields, wrong types, a `status` that doesn't match
 the `verdict`, a supplied `merge_ok` that doesn't match its rule, and verdicts
 the rest contradicts: Rethink needs a blocker, Ship with fixes a major and no
-blocker, Ship no blocker or major and neither `partial` nor unreviewed areas,
-Incomplete no blocker; only Incomplete may have a `null` score. Exit 2 lists
+blocker, Ship no blocker or major and no unreviewed areas, Incomplete no
+blocker; `partial_k3` rules out Ship and Ship with fixes and needs `partial`;
+only Incomplete may have a `null` score. A `partial` reviewer on a K≤2 area
+alone doesn't stop Ship or `merge_ok`. Exit 2 lists
 every problem on stderr and writes nothing; exit 4 is an internal error.
 
 The file is a cache, not an attestation: anyone with write access to the git

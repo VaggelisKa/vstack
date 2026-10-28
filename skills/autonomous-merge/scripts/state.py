@@ -9,7 +9,8 @@ Usage: python3 -I state.py <command> --pr N [options]
   check --before review|fix      may another review or fix round start?
   record-review --head-sha H --base-sha B
                                  add review.json (read with review's
-                                 read-result.py) as a review round
+                                 read-result.py) as a review round; says
+                                 next: fix, review or babysit
   finding --fingerprint FP --status rejected|deferred --reason TEXT
   fix-round --head-sha H [--fixed FP]...
                                  record the fix pushed after a review round
@@ -49,7 +50,13 @@ marked fixed, or a new commit that puts a file a recorded fix touched back to
 its content before that fix, is oscillation. A review round whose blocker plus
 major count isn't below the previous round's (when that one had any) is
 no_progress. A blocker from the security or data-integrity reviewer is
-security_blocker. A `gh pr update-branch` merge from the base is a new head
+security_blocker. record-review on the head and base of the last round
+repeats that round, unless it isn't clean and has nothing left to fix (all
+minors, Incomplete, or every blocker and major rejected): then a review.json
+written after that round's is a new round that supersedes it, counted toward
+the cap and checked for oscillation and no_progress like any other, and an
+older one repeats the round with next: review. A round that isn't clean, has
+nothing to fix and leaves no review round is cap_reached. A `gh pr update-branch` merge from the base is a new head
 like any push: record-review needs a review of that head, so the review loop,
 and then gate.py (which needs review.json on the live head and a settled
 coordination poll of it), run again on the new head. Each records the stop and hands back. Once stopped, every
@@ -88,6 +95,7 @@ CAPS = {"review_rounds": 3, "fix_rounds": 6, "minutes": 120}
 MAX_VIEWER_COMMITS = 12  # backstop: commits the viewer may push to the PR in one run, fix rounds or not
 MAX_BYTES = 4 * 1024 * 1024
 SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+WRITTEN_AT = re.compile(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(\.\d{1,9})?(?:Z|\+00:00)")
 FP = re.compile(r"[0-9a-f]{16}")
 PR_ARG = re.compile(r"[1-9][0-9]{0,9}")
 DIR_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -579,13 +587,42 @@ def read_review(pr, head, base):
                          "Run the review skill on the PR (it writes review.json), then record it again.")
 
 
+def written_at(v):
+    m = WRITTEN_AT.fullmatch(v) if isinstance(v, str) else None
+    if not m:
+        return None
+    return parse_stamp(m.group(1) + "Z"), int((m.group(2) or ".")[1:].ljust(9, "0"))
+
+
+def newer_review(r, rnd):
+    new = written_at(r.get("written_at"))
+    if new is None:
+        return False
+    old = written_at(rnd.get("review_written_at"))
+    if old is not None:
+        return new > old
+    try:
+        return new[0] > parse_stamp(rnd.get("at"))
+    except (TypeError, ValueError):
+        return False
+
+
 def cmd_record_review(top, a):
     s = loaded(top, a.pr)
     need_commit(a.head_sha, "--head-sha")
     need_commit(a.base_sha, "--base-sha")
-    if s["rounds"] and s["rounds"][-1]["head"] == a.head_sha and s["rounds"][-1]["base"] == a.base_sha:
-        return {"outcome": "ok", "repeat": True, **round_report(s, s["rounds"][-1])}
-    r = read_review(a.pr, a.head_sha, a.base_sha)
+    last = s["rounds"][-1] if s["rounds"] else None
+    supersedes = None
+    if last and last["head"] == a.head_sha and last["base"] == a.base_sha:
+        report = round_report(s, last)
+        if report["next"] != "review":
+            return {"outcome": "ok", "repeat": True, **report}
+        r = read_review(a.pr, a.head_sha, a.base_sha)
+        if not newer_review(r, last):
+            return {"outcome": "ok", "repeat": True, **report}
+        supersedes = last["round"]
+    else:
+        r = read_review(a.pr, a.head_sha, a.base_sha)
     commits = first_parent_commits(s["last_head"], a.head_sha) if s["last_head"] else []
     add_viewer_commits(s, viewer_commits(a.pr, commits) or [])
     enforce_caps(top, s)
@@ -613,7 +650,9 @@ def cmd_record_review(top, a):
         old.update(last_round=n, line=f["line"], severity=f["severity"])
     prev = s["rounds"][-1] if s["rounds"] else None
     rnd = {"round": n, "head": a.head_sha, "base": a.base_sha, "status": r["status"], "verdict": r["verdict"],
-           "counts": counts, "merge_ok": r["merge_ok"], "at": stamp()}
+           "counts": counts, "merge_ok": r["merge_ok"], "review_written_at": r["written_at"], "at": stamp()}
+    if supersedes:
+        rnd["supersedes"] = supersedes
     s["rounds"].append(rnd)
     s["counters"]["review_rounds"] = n
     s["last_head"] = a.head_sha
@@ -630,8 +669,12 @@ def cmd_record_review(top, a):
     if before and not clean(rnd) and serious(counts) >= before:
         stop(top, s, "no_progress", f"review round {n} has {serious(counts)} blocker(s) and major(s), round {n - 1} "
                                     f"had {before}: the fixes didn't reduce them")
+    report = round_report(s, rnd)
+    if report["next"] == "review" and report["review_rounds_left"] <= 0:
+        stop(top, s, "cap_reached", f"review round {n} ({rnd['verdict']}) isn't clean, has nothing to fix, and no "
+                                    f"review round is left to review it again")
     save(top, s)
-    return {"outcome": "ok", "repeat": False, **round_report(s, rnd)}
+    return {"outcome": "ok", "repeat": False, **report}
 
 
 def serious(counts):
@@ -644,8 +687,9 @@ def clean(rnd):
 
 
 def round_report(s, rnd):
+    to_fix = [f for f in s["findings"] if f["status"] == "open" and f["last_round"] == rnd["round"]]
     return {"round": rnd["round"], "clean": clean(rnd), "verdict": rnd["verdict"], "counts": rnd["counts"],
-            "to_fix": [f for f in s["findings"] if f["status"] == "open" and f["last_round"] == rnd["round"]],
+            "next": "babysit" if clean(rnd) else "fix" if to_fix else "review", "to_fix": to_fix,
             "deferred": [f for f in s["findings"] if f["status"] == "deferred"],
             "review_rounds_left": CAPS["review_rounds"] - s["counters"]["review_rounds"],
             "fix_rounds_left": max(0, CAPS["fix_rounds"] - s["counters"]["fix_rounds"])}

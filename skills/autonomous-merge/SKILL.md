@@ -76,9 +76,16 @@ result for the PR already exists; only the user decides to start fresh.)
       (`git fetch origin <base>` first if needed). `clean: true` ends the loop.
       Clean means review decided **Ship**: no blocker, no major, no unreviewed
       high-risk area. Minors and nits are logged as deferred, never fixed.
+      Follow its `next`: `babysit` (clean) goes to step 4, `fix` to step 3.4,
+      and `review` (not clean, nothing to fix: say, Incomplete from a partial
+      or unreviewed K=3 area) back to step 3.1 to review the same head again.
+      That new review supersedes the round and counts toward the cap; if
+      record-review still says `repeat: true` with `next: review`, review.json
+      wasn't rewritten, so run the review again before recording it.
    4. Triage each `to_fix` finding (see **Triage**). Fix the valid ones; reject
       the rest with
       `state.py finding --pr N --fingerprint <fp> --status rejected --reason "<evidence: file:line, test or spec>"`.
+      If you rejected them all, there is nothing to push: go back to step 3.1.
    5. `state.py check --pr N --before fix`, fix the items in one commit (with a
       plain `vstack:autonomous-merge:<fp>` line per finding, so babysit's
       coordination sees it as ours), run the repo's tests, lint and type

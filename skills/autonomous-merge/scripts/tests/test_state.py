@@ -29,6 +29,15 @@ MAJOR = finding()
 MINOR = finding(severity="minor", rule="design", summary="Name could be clearer", fid="C2")
 
 
+def incomplete(*findings):
+    return {**review(*findings), "status": "unreviewed", "verdict": "Incomplete", "score": None, "partial": True,
+            "partial_k3": True}
+
+
+def at(i):
+    return f"2026-01-01T00:00:{i:02d}Z"
+
+
 def majors(n):
     return [finding(summary=f"Problem {chr(97 + i)}", fid=f"M{i}") for i in range(n)]
 
@@ -83,6 +92,75 @@ class State(unittest.TestCase):
     def reviewed(self, head, *findings):
         write_result(REVIEW_WRITER, self.repo, 42, head, self.base, review(*findings))
         return self.st("record-review", "--head-sha", head, "--base-sha", self.base)
+
+    def rereviewed(self, result, i, code=0):
+        write_result(REVIEW_WRITER, self.repo, 42, self.head, self.base, {**result, "written_at": at(i)})
+        return self.st("record-review", "--head-sha", self.head, "--base-sha", self.base, code=code)
+
+    def test_same_head_review_supersedes_an_unclean_round_with_nothing_to_fix(self):
+        self.st("init")
+        out = self.rereviewed(incomplete(MINOR), 1)
+        self.assertEqual((out["round"], out["clean"], out["to_fix"], out["next"]), (1, False, [], "review"))
+        again = self.st("record-review", "--head-sha", self.head, "--base-sha", self.base)
+        self.assertEqual((again["repeat"], again["round"], again["next"]), (True, 1, "review"))
+        self.rereviewed(incomplete(MINOR), 0)
+        self.assertEqual(self.load()["counters"]["review_rounds"], 1)
+        out = self.rereviewed(review(MINOR), 2)
+        self.assertEqual((out["repeat"], out["round"], out["clean"], out["next"], out["review_rounds_left"]),
+                         (False, 2, True, "babysit", 1))
+        s = self.load()
+        self.assertEqual((s["counters"]["review_rounds"], s["rounds"][1]["supersedes"],
+                          s["rounds"][1]["review_written_at"]), (2, 1, at(2)))
+        self.assertTrue(self.st("record-review", "--head-sha", self.head, "--base-sha", self.base)["repeat"])
+        self.assertEqual(self.rereviewed(review(MINOR), 3)["round"], 2)
+
+    def test_same_head_repeats_while_something_is_left_to_fix(self):
+        self.st("init")
+        fp = self.rereviewed(review(MAJOR), 1)["to_fix"][0]["fingerprint"]
+        out = self.rereviewed(review(), 2)
+        self.assertEqual((out["repeat"], out["round"], out["next"]), (True, 1, "fix"))
+        self.st("finding", "--fingerprint", fp, "--status", "rejected", "--reason", "src/a.py:3 is right")
+        out = self.rereviewed(review(), 2)
+        self.assertEqual((out["repeat"], out["round"], out["clean"]), (False, 2, True))
+
+    def test_same_head_rereview_of_a_rejected_major_is_no_progress(self):
+        self.st("init")
+        fp = self.rereviewed(review(MAJOR), 1)["to_fix"][0]["fingerprint"]
+        self.st("finding", "--fingerprint", fp, "--status", "rejected", "--reason", "src/a.py:3 is right")
+        out = self.rereviewed(review(MAJOR), 2, code=5)
+        self.assertEqual(out["reason"], "no_progress")
+        self.assertIn("round 2", out["detail"])
+
+    def test_same_head_rereview_still_catches_oscillation(self):
+        self.st("init")
+        fp = self.reviewed(self.head, MAJOR)["to_fix"][0]["fingerprint"]
+        self.head = self.commit()
+        self.st("fix-round", "--head-sha", self.head, "--fixed", fp)
+        self.assertEqual(self.rereviewed(incomplete(), 1)["next"], "review")
+        self.assertEqual(self.rereviewed(review(MAJOR), 2, code=5)["reason"], "oscillation")
+
+    def test_same_head_rereviews_count_toward_the_cap(self):
+        self.st("init")
+        for i in (1, 2):
+            self.st("check", "--before", "review")
+            self.assertEqual(self.rereviewed(incomplete(), i)["round"], i)
+        self.st("check", "--before", "review")
+        out = self.rereviewed(incomplete(), 3, code=5)
+        self.assertEqual(out["reason"], "cap_reached")
+        self.assertIn("nothing to fix", out["detail"])
+        self.assertEqual(self.load()["counters"]["review_rounds"], 3)
+        self.st("init", "--continue")
+        self.handback("cap_reached", "check", "--before", "review")
+        self.st("init", "--continue")
+        self.assertEqual(self.rereviewed(review(), 4, code=5)["reason"], "cap_reached")
+        self.assertEqual(self.load()["counters"]["review_rounds"], 3)
+
+    def test_same_head_rereview_of_an_older_round(self):
+        self.st("init")
+        self.rereviewed(incomplete(), 1)
+        self.edit(lambda s: (s["rounds"][0].pop("review_written_at"), s["rounds"][0].update(at=at(5))))
+        self.assertTrue(self.rereviewed(review(), 5)["repeat"])
+        self.assertEqual(self.rereviewed(review(), 6)["round"], 2)
 
     def test_init_and_resume(self):
         out = self.st("init")
