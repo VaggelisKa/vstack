@@ -3,6 +3,7 @@ and which inputs make a file an error instead of a guess.
 
 Run from the repo root: python3 -m unittest discover -s skills/remove-comments/scripts/tests
 """
+import sys
 import unittest
 
 from helpers import commentscan, texts
@@ -196,7 +197,14 @@ class Toml(unittest.TestCase):
 
 class Python(unittest.TestCase):
     def test_fstring_with_hash_in_nested_expression(self):
+        # A nested f-string reusing the outer quote is PEP 701 syntax (Python
+        # 3.12+). The scanner uses the running interpreter's tokenizer, so an
+        # older one can't read the file and must fail closed with ScanError.
         src = 'x = f"{d[\'#\']} {f"{y!r:#>4}"}"  # real\ns = "# no"\n'
+        if sys.version_info < (3, 12):
+            with self.assertRaises(commentscan.ScanError):
+                texts(src, "python")
+            return
         self.assertEqual(texts(src, "python"), ["# real"])
 
     def test_docstrings(self):
