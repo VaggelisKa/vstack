@@ -47,17 +47,18 @@ counts only on the viewer's own work: a comment by the viewer (a babysit marker
 only for the item being evaluated), or a commit whose first author or
 committer is the viewer, or whose author has no linked account (an unlinked
 email) and that is tied to this clone: its SHA was recorded with `pushed`, or
-its author email is this repo's `git config user.email` and the commit is in
-the local object store. Any other unlinked marked commit, and anyone else's
-marker, is foreign. gh pr view's commits have no committer, so
+this clone's reflog (`git reflog show --all`: HEAD and every ref) has an entry
+for it whose subject begins `commit:` or `commit (amend):`. Not the author email
+or the object store: a fetch brings in other clones' commits under the same
+email. If git fails, nothing is tied. Any other unlinked marked commit, and
+anyone else's marker, is foreign. gh pr view's commits have no committer, so
 poll reads it with `gh api repos/O/R/commits/<sha>` for a marked commit whose
-first author is someone else (unreadable stays foreign); an --input bundle may
-give commits a "committer": {"login"} itself. own_fix_rounds counts the own
-babysit-marked commits. A claimed
-item becomes stale-claim after 2 completed CI cycles on newer heads or 3
-polls with CI idle and nothing new; that hands back `stale_claim` unless
---take-over (pass it only when the user's own words in this run's request say
-take over), which makes stale items actionable instead. A check fixed by one
+first author is someone else or has no linked account (unreadable stays
+foreign); an --input bundle may give commits a "committer": {"login"} itself.
+own_fix_rounds counts the own babysit-marked commits. A claimed item becomes
+stale-claim after 2 completed CI cycles on newer heads or 3 polls with CI idle
+and nothing new; that hands back `stale_claim` unless --take-over (pass it
+only when the user's own words in this run's request say take over), which makes stale items actionable instead. A check fixed by one
 side that fails again after the other side's commit, or that fails again after
 foreign commits twice, hands back `conflicting_fixer`. A thread that was
 resolved and is reopened after another fixer replied in it hands back
@@ -80,7 +81,10 @@ claim. claim and remove-claim are the only GitHub writes.
 markers prints the comment and commit markers for an item. pushed records the
 SHA (40 or 64 hex) of an own fix commit just pushed in the state's `pushed`
 list (the last MAX_PUSHED kept), so poll reads it as own even when GitHub
-links no account to its author; it touches nothing on GitHub.
+links no account to its author; it touches nothing on GitHub. It exits 2 and
+writes nothing unless the SHA is a commit in this clone, its author email is
+this clone's `git config user.email` (any case; unset fails), and it is HEAD
+or @{push}.
 
 Never prints a token. Exits 0 ok, 5 handback, 2 usage (also -h, or a state
 file that fails its checks), 4 internal error (after printing an `unknown`
@@ -121,6 +125,7 @@ MENTION = re.compile(r"(?i)(?<![\w@/])@(copilot|codex|claude)\b")
 AGENTS = {"copilot", "copilot-swe-agent", "copilot-swe-agent[bot]", "chatgpt-codex-connector",
           "chatgpt-codex-connector[bot]", "codex", "claude", "claude[bot]"}
 SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+REFLOG_COMMIT = re.compile(r"([0-9a-f]{40}|[0-9a-f]{64}) commit(?: \(amend\))?: ")
 PASS = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 CLAIMED = ("claimed", "stale-claim")
 TOKENS = [re.compile(r"\bgh[pousr]_[A-Za-z0-9]{16,}"), re.compile(r"\bgithub_pat_[A-Za-z0-9_]{16,}"),
@@ -296,12 +301,12 @@ def reaction_comments(threads):
 
 def fill_committers(gh, host, owner, repo, view, viewer):
     """gh pr view's commits have no committer: read it with `gh api repos/O/R/commits/<sha>` where it
-    decides own work (a marker, and a first author who is known and not the viewer). Unread stays foreign."""
+    decides own work (a marker, and a first author who isn't the viewer or has no linked account).
+    Unread stays foreign."""
     for c in view.get("commits") if isinstance(view.get("commits"), list) else []:
         if not (viewer and isinstance(c, dict) and SHA.fullmatch(str(c.get("oid"))) and "committer" not in c):
             continue
-        author = commit_author(c)
-        if author is None or author == viewer or not COMMIT_MARKER.search(commit_message(c)):
+        if commit_author(c) == viewer or not COMMIT_MARKER.search(commit_message(c)):
             continue
         r = gh("api", "--hostname", host, "--method", "GET", f"repos/{owner}/{repo}/commits/{c['oid']}")
         try:
@@ -504,11 +509,20 @@ def local_git(*args):
         return None
 
 
+def committed_here():
+    """SHAs this clone's reflogs (HEAD and every ref) say it committed: an entry whose subject
+    begins `commit:` or `commit (amend):`. A fetch or pull logs neither. Empty if git fails."""
+    r = local_git("reflog", "show", "--all", "--format=%H %gs")
+    if r is None or r.returncode != 0:
+        return set()
+    return {m.group(1) for m in map(REFLOG_COMMIT.match, r.stdout.splitlines()) if m}
+
+
 def tied_to_clone(pushed):
     """tied(c) for parse_commits: is commit c, whose author has no linked account, this clone's?
-    Yes when its SHA is in `pushed`, or when its first author email is this repo's
-    `git config user.email` and the commit is in the local object store."""
-    pushed, email = set(pushed or ()), []
+    Yes when its SHA is in `pushed`, or this clone's reflog has a `commit:` or `commit (amend):`
+    entry for it. Not by email or the object store: a fetch brings others' commits too."""
+    pushed, local = set(pushed or ()), []
 
     def tied(c):
         oid = c.get("oid")
@@ -516,15 +530,9 @@ def tied_to_clone(pushed):
             return True
         if not SHA.fullmatch(str(oid)):
             return False
-        if not email:
-            r = local_git("config", "--get", "user.email")
-            email.append(r.stdout.strip().lower() if r is not None and r.returncode == 0 else "")
-        authors = [a for a in c.get("authors") or [] if isinstance(a, dict)]
-        theirs = str((authors[0].get("email") if authors else None) or "").strip().lower()
-        if not email[0] or theirs != email[0]:
-            return False
-        r = local_git("cat-file", "-e", f"{oid}^{{commit}}")
-        return r is not None and r.returncode == 0
+        if not local:
+            local.append(committed_here())
+        return oid in local[0]
 
     return tied
 
@@ -943,9 +951,31 @@ def remove_claim(pr, item, repo_arg=None, gh=default_gh):
     return {"removed": item, "endpoint": endpoint, "deleted_reactions": deleted, "kept_for": kept_for}
 
 
+def check_pushable(sha):
+    """Usage unless sha is a local commit by this repo's `git config user.email` (any case) that is
+    HEAD or @{push}: a fetched commit of another clone sharing the email isn't."""
+    r = local_git("cat-file", "-e", f"{sha}^{{commit}}")
+    if r is None or r.returncode != 0:
+        raise Usage(f"{sha} is not a commit in this clone")
+    r = local_git("config", "--get", "user.email")
+    mine = r.stdout.strip().lower() if r is not None and r.returncode == 0 else ""
+    if not mine:
+        raise Usage("git config user.email is not set in this clone")
+    r = local_git("log", "-1", "--format=%ae", sha, "--")
+    if r is None or r.returncode != 0 or r.stdout.strip().lower() != mine:
+        raise Usage(f"{sha}'s author email is not this clone's git config user.email")
+    for ref in ("HEAD", "@{push}"):
+        r = local_git("rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}")
+        if r is not None and r.returncode == 0 and r.stdout.strip() == sha:
+            return
+    raise Usage(f"{sha} is neither HEAD nor @{{push}}")
+
+
 def record_pushed(pr, sha):
-    """Record an own fix commit just pushed, so poll reads it as own even with no account linked to its author."""
+    """Record an own fix commit just pushed, so poll reads it as own even with no account linked to its author.
+    Writes nothing unless check_pushable passes."""
     top = common_dir()
+    check_pushable(sha)
     st = load(top, pr)
     if sha not in st["pushed"]:
         st["pushed"] = (st["pushed"] + [sha])[-MAX_PUSHED:]

@@ -240,7 +240,8 @@ One round = one push. **At most 3 rounds.**
    the round's diff adds comments, run it on the PR branch scoped to the lines
    the PR added (its PR scope, no new checkout) after the diff review and
    before the commit. Keep its report out of PR replies. Skip it otherwise.
-4. Commit once and push once (`git push`, never `--force`). `fix_rounds += 1`.
+4. Commit once and push once (`git push`, never `--force`), then
+   `coordination.py pushed --pr <number> --sha <new head>`. `fix_rounds += 1`.
 5. Reply on each handled comment with the commit link.
 
 ### Updating the branch from base

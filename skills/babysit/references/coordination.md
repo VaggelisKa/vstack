@@ -102,9 +102,12 @@ A marker counts only on the viewer's own work: a comment the viewer wrote
 (and on a thread, a babysit marker only for that thread's id), or a commit
 whose first author or committer login is the viewer, or whose author has no
 linked account (an unlinked email) and that is tied to this clone: its SHA was
-recorded with `pushed`, or its author email is this repo's `git config
-user.email` and the commit is in the local object store. Any other unlinked
-marked commit is foreign (another clone's or user's fixer can't pass as own).
+recorded with `pushed`, or this clone's reflog (`git reflog show --all`: HEAD
+and every ref) has an entry for it whose subject begins `commit:` or
+`commit (amend):`. The author email and the local object store don't count: a
+fetch brings in another clone's commits under the same `user.email`. If git
+fails, nothing is tied. Any other unlinked marked commit is foreign (another
+clone's or user's fixer can't pass as own).
 Anyone else's marker is foreign (a forged reply doesn't address a thread,
 and a 👀 or foreign claim on it still counts).
 Commits without a marker are foreign too, even from the same account.
@@ -112,11 +115,15 @@ Commits without a marker are foreign too, even from the same account.
 `pushed --pr N --sha SHA` (a full 40 or 64 hex SHA) adds the SHA of an own fix
 commit just pushed to the state file's `pushed` list (last 500 kept; atomic
 write, nothing on GitHub). Run it from the clone that pushed, right after each
-push of your own marked fix commit.
+push of your own marked fix commit. It exits 2 and writes nothing unless the
+SHA is a commit in this clone, its author email (`%ae`) equals this clone's
+`git config user.email` (case-insensitive; unset fails), and it is `HEAD` or
+`@{push}`.
 
 `gh pr view --json commits` has no committer. `poll` reads it with
 `gh api repos/O/R/commits/<sha>` only where it decides: a marked commit whose
-first author is someone else. If that read fails the commit stays foreign. An
+first author is someone else or has no linked account (so a commit the viewer
+committed counts as own). If that read fails the commit stays foreign. An
 `--input` bundle may put `"committer": {"login": ...}` on a commit itself.
 
 `own_fix_rounds` counts the own commits with a babysit marker.
