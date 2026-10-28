@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+    env:
+      GIT_CONFIG_NOSYSTEM: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The tests create git repos and commit to them.
+      - name: Configure git
+        run: |
+          git config --global user.email ci@example.com
+          git config --global user.name ci
+      - name: review tests
+        run: python3 -m unittest discover -s skills/review/scripts/tests -v
+      - name: babysit tests
+        run: python3 -m unittest discover -s skills/babysit/scripts/tests -v
+      - name: autonomous-merge tests
+        run: python3 -m unittest discover -s skills/autonomous-merge/scripts/tests -v
+      - name: remove-comments tests
+        run: python3 -m unittest discover -s skills/remove-comments/scripts/tests -v
+      - name: Shell syntax
+        run: bash -n skills/review/scripts/git-read.sh
+      - name: html-plan syntax
+        run: |
+          node --check skills/html-plan/runtime/pack.mjs
+          node --check skills/html-plan/runtime/htmlplan.js
+      - name: html-plan example lint
+        run: node skills/html-plan/runtime/pack.mjs skills/html-plan/examples/scheduled-send.html --lint-only
+
+  plugin-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Validation reads the manifests and skills only. It needs no login.
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+      - name: Validate plugin
+        run: claude plugin validate .
