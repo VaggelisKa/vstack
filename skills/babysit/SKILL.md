@@ -1,7 +1,7 @@
 ---
 name: babysit
 argument-hint: "<pr> [merge]"
-description: Watch a GitHub pull request until it is done - poll CI checks, reviews and review threads, triage every comment, fix what is in scope, reply to the rest, escalate what needs a human, and (only when the request explicitly asks to merge) merge it once every gate passes. Use this skill whenever the user says "babysit <pr>", "babysit <pr> merge", or asks to watch, shepherd, monitor, land, or get a PR green, keep an eye on CI, handle review feedback on a PR, or "take this PR to merge", even if they don't say "babysit". Only a trailing merge/--merge or a plain, unconditional ask to merge this PR turns merging on; "land" and the rest only trigger the skill, which then does not merge.
+description: Watches one GitHub pull request until it is done. It polls CI checks, reviews and review threads, triages every comment, fixes what is in scope, replies to the rest, escalates what needs a human, and merges only when explicitly asked. Use only when the user explicitly asks to babysit, shepherd, watch or monitor a specific PR until it is green or merged ("babysit 14", "babysit 14 merge"), or to handle the review feedback on a PR. Only a trailing merge/--merge or a plain, unconditional ask to merge this PR turns merging on; any other ask runs it without merging. Not for a read-only review of a change (that's review).
 ---
 
 # babysit
@@ -17,9 +17,9 @@ babysit PR 14 and merge when green   # the same, in plain words
 
 ### Arguments
 
-Arguments are free text: `$ARGUMENTS`. If that is empty or still reads as a
-literal `$ARGUMENTS` (harnesses other than Claude Code), read them from the
-request itself (`$babysit 14`, "babysit PR 14 and merge when green").
+Request: $ARGUMENTS
+
+If the line above is empty or still reads as a literal `$ARGUMENTS` (harnesses other than Claude Code), read the arguments from the user's message instead.
 
 - `<pr>`: the first PR number, PR URL or branch name in the message, as accepted
   by `gh pr view`. If there is none, use the PR for the current branch
@@ -136,7 +136,7 @@ Stop and write the final report when the first of these is true:
 
 Someone else (a person, Copilot, Codex, Claude, another babysit) may be fixing
 the same PR. Each poll, from the repo, run
-`python3 -I "$SKILL_DIR/scripts/coordination.py" poll --pr <number>`. It prints
+`python3 -I "${CLAUDE_SKILL_DIR}/scripts/coordination.py" poll --pr <number>`. It prints
 whether the PR is `settled`, each failing check and thread as `open`,
 `claimed`, `addressed` or `stale-claim`, and the `actionable` ids. Details:
 [references/coordination.md](references/coordination.md).
@@ -283,9 +283,11 @@ Write the state as JSON, in the shape in
 changes: a check changes state, a thread is added, resolved or triaged, you
 push a fix, and when the run ends (after the final report). Not on polls that
 change nothing. `status` is `running` until the last write. Pipe it to
-`python3 -I "$SKILL_DIR/scripts/write-result.py" --pr <number> --head-sha <headRefOid> --base-sha <baseRefOid>`
-from the repo (`$SKILL_DIR` is this skill's folder; `git fetch origin <baseRefName>`
-first if the base commit isn't local). It atomically replaces
+`python3 -I "${CLAUDE_SKILL_DIR}/scripts/write-result.py" --pr <number> --head-sha <headRefOid> --base-sha <baseRefOid>`
+from the repo (`git fetch origin <baseRefName>` first if the base commit isn't
+local). `${CLAUDE_SKILL_DIR}` is this skill's folder, the one holding this
+SKILL.md. Claude Code fills it in; on other harnesses use that folder's
+absolute path. It atomically replaces
 `vstack/<number>/babysit.json` in the git common dir for other skills to read.
 On exit 2, fix the JSON from its stderr and run it again. The file is a cache,
 not an attestation: the merge gate re-derives the decision from live state and
