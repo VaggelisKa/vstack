@@ -11,12 +11,12 @@ from helpers import commit_all, decide, listing, new_repo, run
 
 class Base(unittest.TestCase):
     def prepare(self, name, content):
-        repo = new_repo()
+        repo = new_repo(self)
         path = repo / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content.encode() if isinstance(content, str) else content)
         commit_all(repo, "base")
-        r, doc, out = listing(repo, "--paths", name)
+        r, doc, out = listing(self, repo, "--paths", name)
         self.assertEqual(r.returncode, 0, r.stderr)
         return repo, path, doc, out
 

@@ -18,7 +18,7 @@ SCRIPT = SCRIPTS / "git-read.sh"
 class GitRead(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.repo = new_repo()
+        cls.repo = new_repo(cls)
         r = cls.repo
         (r / "src").mkdir()
         (r / "a.txt").write_text("one\n")
@@ -34,13 +34,13 @@ class GitRead(unittest.TestCase):
         cls.pick = commit_all(r, "notes")
         git(r, "checkout", "-q", "main")
         # Anything that runs a program leaves this marker behind.
-        cls.marker = tmpdir() / "ran"
-        cls.prog = tmpdir() / "prog.sh"
+        cls.marker = tmpdir(cls) / "ran"
+        cls.prog = tmpdir(cls) / "prog.sh"
         cls.prog.write_text(f"#!/bin/sh\ntouch {shlex.quote(str(cls.marker))}\ncat \"$1\" 2>/dev/null\nexit 0\n")
         cls.prog.chmod(cls.prog.stat().st_mode | stat.S_IXUSR)
 
     def setUp(self):
-        self.out = tmpdir()            # where rejected --output attempts would write
+        self.out = tmpdir(self)            # where rejected --output attempts would write
         if self.marker.exists():
             self.marker.unlink()
 

@@ -84,7 +84,7 @@ def strip_all(text, lang):
 
 class Fuzz(unittest.TestCase):
     def test_c_against_the_preprocessor(self):
-        argv = comments.c_preprocessor(str(tmpdir()))
+        argv = comments.c_preprocessor(str(tmpdir(self)))
         if not argv:
             self.skipTest("no working gcc, cc or clang")
 
@@ -123,9 +123,9 @@ class Fuzz(unittest.TestCase):
                     cases.append([f"x.{lang}", text, new])
         ts = subprocess.run(["node", "-e", "process.stdout.write(require('module').createRequire("
                              "process.argv[1]).resolve('typescript'))", os.path.join(os.environ["RC_TS_ROOT"], "x.js")],
-                            capture_output=True, text=True, timeout=30, cwd=tmpdir()).stdout
+                            capture_output=True, text=True, timeout=30, cwd=tmpdir(self)).stdout
         r = subprocess.run(["node", "-e", NODE_EMIT, ts], input=json.dumps(cases), capture_output=True, text=True,
-                           timeout=60, cwd=tmpdir())
+                           timeout=60, cwd=tmpdir(self))
         same = json.loads(r.stdout)
         self.assertGreater(sum(s is not None for s in same), 150)
         self.assertEqual([c[1:] for c, s in zip(cases, same) if s is False], [])

@@ -28,7 +28,7 @@ def session(*args, cwd, path=None):
 
 class Session(unittest.TestCase):
     def setUp(self):
-        self.repo = new_repo()
+        self.repo = new_repo(self)
         (self.repo / "src").mkdir()
         (self.repo / "src/app.py").write_text("x = 1\n")
         commit_all(self.repo, "base")
@@ -67,7 +67,7 @@ class Session(unittest.TestCase):
         self.assertNotEqual(self.new(), self.new())
 
     def test_outside_a_repo_uses_cwd(self):
-        cwd = tmpdir() / "plain"
+        cwd = tmpdir(self) / "plain"
         cwd.mkdir()
         path = self.new(cwd=cwd)
         self.assertEqual(os.path.dirname(path), os.path.realpath(cwd))
@@ -75,7 +75,7 @@ class Session(unittest.TestCase):
         self.assertFalse(os.path.exists(path))
 
     def fake_git(self, script):
-        bin_dir = tmpdir() / "bin"
+        bin_dir = tmpdir(self) / "bin"
         bin_dir.mkdir()
         if script is not None:
             (bin_dir / "git").write_text("#!/bin/sh\n" + script + "\n")
@@ -134,7 +134,7 @@ class Session(unittest.TestCase):
         self.assertTrue(os.path.lexists(survivor))
 
     def test_clean_refuses_a_symlink(self):
-        target = tmpdir() / "victim"
+        target = tmpdir(self) / "victim"
         target.mkdir()
         (target / "keep.txt").write_text("keep\n")
         link = self.repo / ".review-session-0123456789abcdef"
@@ -155,7 +155,7 @@ class Session(unittest.TestCase):
         self.assertRefused(f, f)
 
     def test_clean_refuses_outside_the_toplevel(self):
-        elsewhere = tmpdir() / ".review-session-0123456789abcdef"
+        elsewhere = tmpdir(self) / ".review-session-0123456789abcdef"
         elsewhere.mkdir()
         self.assertRefused(elsewhere, elsewhere)
         nested = self.repo / "src/.review-session-0123456789abcdef"

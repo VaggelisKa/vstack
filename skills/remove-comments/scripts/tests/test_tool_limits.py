@@ -13,7 +13,7 @@ import time
 import unittest
 from unittest import mock
 
-from helpers import SCRIPTS, run, tmpdir
+from helpers import SCRIPTS, run, scratch, tmpdir
 
 try:
     import resource
@@ -22,6 +22,11 @@ except ImportError:
 
 sys.path.insert(0, str(SCRIPTS))
 import comments  # noqa: E402 - must follow the sys.path line
+
+
+def has_c_preprocessor():
+    with scratch() as d:
+        return comments.c_preprocessor(str(d)) is not None
 
 
 def alive(pid):
@@ -42,12 +47,12 @@ def alive(pid):
 @unittest.skipIf(resource is None, "resource limits are POSIX only")
 class ToolLimits(unittest.TestCase):
     def setUp(self):
-        self.scratch = str(tmpdir())
+        self.scratch = str(tmpdir(self))
         self.env = comments.tool_env()
 
-    @unittest.skipUnless(comments.c_preprocessor(str(tmpdir())), "no working gcc, cc or clang")
+    @unittest.skipUnless(has_c_preprocessor(), "no working gcc, cc or clang")
     def test_include_of_dev_zero_ends_quickly_as_skipped(self):
-        d = tmpdir()
+        d = tmpdir(self)
         (d / "before.c").write_text('#include "/dev/zero"\nint x; // c\n')
         (d / "a.c").write_text('#include "/dev/zero"\nint x;\n')
         start = time.monotonic()
@@ -62,7 +67,7 @@ class ToolLimits(unittest.TestCase):
             self.assertLess(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * 1024, comments.TOOL_MEMORY)
 
     def test_timeout_kills_the_whole_process_group(self):
-        d = tmpdir()
+        d = tmpdir(self)
         tool, pidfile = d / "tool", d / "pid"
         tool.write_text('#!/bin/sh\nsleep 300 &\necho $! > "$1"\nexec sleep 300\n')
         tool.chmod(0o755)

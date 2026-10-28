@@ -31,7 +31,7 @@ def run(script, *args, cwd, stdin=None, env=None):
 
 class ReadResult(unittest.TestCase):
     def setUp(self):
-        self.repo, self.base, self.head = pr_repo()
+        self.repo, self.base, self.head = pr_repo(self)
         self.gitdir = os.path.realpath(self.repo / ".git")
         self.vstack = os.path.join(self.gitdir, "vstack")
         self.out = os.path.join(self.vstack, "42", f"{SKILL}.json")
@@ -75,7 +75,7 @@ class ReadResult(unittest.TestCase):
     def test_from_a_subdirectory_and_a_worktree(self):
         self.write()
         self.read(cwd=self.repo / "src")
-        wt = tmpdir() / "wt"
+        wt = tmpdir(self) / "wt"
         git(self.repo, "worktree", "add", "-q", "--detach", str(wt), self.base)
         self.assertEqual(self.read(cwd=wt)["head_sha"], self.head)
 
@@ -108,7 +108,7 @@ class ReadResult(unittest.TestCase):
         self.write()
         with open(self.out) as f:
             data = json.load(f)
-        repo, base, head = criss_cross_repo()
+        repo, base, head = criss_cross_repo(self)
         out = os.path.join(os.path.realpath(repo / ".git"), "vstack", "42", f"{SKILL}.json")
         os.makedirs(os.path.dirname(out))
         with open(out, "w") as f:
@@ -186,7 +186,7 @@ class ReadResult(unittest.TestCase):
                 self.read(code=2)
 
     def test_refuses_symlinks(self):
-        elsewhere = tmpdir()
+        elsewhere = tmpdir(self)
         (elsewhere / "42").mkdir()
         (elsewhere / "42" / f"{SKILL}.json").write_text("{}")
         os.symlink(elsewhere, self.vstack)
@@ -198,7 +198,7 @@ class ReadResult(unittest.TestCase):
         self.assertIn("refusing", self.read(code=2))
 
     def test_outside_a_repo(self):
-        cwd = tmpdir() / "plain"
+        cwd = tmpdir(self) / "plain"
         cwd.mkdir()
         r = run("read-result.py", "--pr", 42, "--expect-head-sha", self.head, "--expect-base-sha", self.base,
                 cwd=cwd, env={**GIT_ENV, "GIT_CEILING_DIRECTORIES": str(cwd.parent)})

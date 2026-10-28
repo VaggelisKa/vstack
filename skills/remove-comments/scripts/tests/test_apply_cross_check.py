@@ -23,11 +23,11 @@ class FooledScanner(unittest.TestCase):
     def apply_fooled(self, files, bad):
         """List files, then apply 'delete all' with edit() returning bad[name] for those
         files and compare() saying ok; returns (exit code, stderr, files' text after)."""
-        repo = new_repo()
+        repo = new_repo(self)
         for name, text in files.items():
             (repo / name).write_text(text)
         commit_all(repo, "base")
-        r, doc, out = listing(repo, "--paths", *files)
+        r, doc, out = listing(self, repo, "--paths", *files)
         self.assertEqual(r.returncode, 0, r.stderr)
         dec = decide(out, {c: {"action": "delete"} for c in doc["pending"]})
         real_edit = comments.edit
@@ -71,11 +71,11 @@ class FooledScanner(unittest.TestCase):
 
 class AtWriteTime(unittest.TestCase):
     def listed(self, files):
-        repo = new_repo()
+        repo = new_repo(self)
         for name, text in files.items():
             (repo / name).write_text(text)
         commit_all(repo, "base")
-        r, doc, out = listing(repo, "--paths", *files)
+        r, doc, out = listing(self, repo, "--paths", *files)
         self.assertEqual(r.returncode, 0, r.stderr)
         return repo, decide(out, {c: {"action": "delete"} for c in doc["pending"]}), out
 

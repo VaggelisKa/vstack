@@ -60,8 +60,8 @@ def thread(tid, *comments, resolved=False, path="src/a.py"):
 
 class Coordination(unittest.TestCase):
     def setUp(self):
-        self.repo, self.base, self.head = pr_repo()
-        self.gh = FakeGh()
+        self.repo, self.base, self.head = pr_repo(self)
+        self.gh = FakeGh(self)
         self.commits = [commit(self.head, "head")]
         self.headsha = self.head
         self.rollup = [check("test")]
@@ -259,12 +259,12 @@ class Coordination(unittest.TestCase):
     def fork(self):
         """Give this clone a bare origin (feature tracks origin/feature, so @{push} resolves) and
         return a second clone of it on feature."""
-        origin = tmpdir() / "origin.git"
+        origin = tmpdir(self) / "origin.git"
         git(self.repo, "clone", "-q", "--bare", str(self.repo), str(origin))
         git(self.repo, "remote", "add", "origin", str(origin))
         git(self.repo, "fetch", "-q", "origin")
         git(self.repo, "branch", "-q", "-u", "origin/feature")
-        other = tmpdir() / "other"
+        other = tmpdir(self) / "other"
         git(self.repo, "clone", "-q", "-b", "feature", str(origin), str(other))
         return other
 
@@ -381,7 +381,7 @@ class Coordination(unittest.TestCase):
         for args in (["pushed", "--pr", 42], ["pushed", "--sha", self.head], ["pushed", "--pr", "0", "--sha", self.head]):
             with self.subTest(args):
                 self.assertEqual(self.cmd(*args)[0], 2)
-        self.assertEqual(self.cmd("pushed", "--pr", 42, "--sha", self.head, cwd=tmpdir())[0], 2)
+        self.assertEqual(self.cmd("pushed", "--pr", 42, "--sha", self.head, cwd=tmpdir(self))[0], 2)
         tree = git(self.repo, "rev-parse", "HEAD^{tree}").decode().strip()
         git(self.repo, "config", "user.email", "t@t")
         loose = git(self.repo, "commit-tree", "-m", "loose", tree).decode().strip()
@@ -446,7 +446,7 @@ class Coordination(unittest.TestCase):
 
     @unittest.skipUnless(sha256_supported(), "git without sha256 support")
     def test_pushed_sha256_head(self):
-        repo, _, head = pr_repo(object_format="sha256")
+        repo, _, head = pr_repo(self, object_format="sha256")
         git(repo, "config", "user.email", "t@t")
         self.assertEqual(len(head), 64)
         self.assertEqual(self.cmd("pushed", "--pr", 42, "--sha", head, cwd=repo)[:2],
@@ -456,7 +456,7 @@ class Coordination(unittest.TestCase):
         """Instance A (this clone, the viewer) and instance B (another clone, another user) both push
         babysit-marked fixes for check:lint from emails GitHub links to no account."""
         git(self.repo, "config", "user.email", "t@t")
-        other = tmpdir() / "other"
+        other = tmpdir(self) / "other"
         git(self.repo, "clone", "-q", str(self.repo), str(other))
         git(other, "config", "user.email", "b@example.com")
         self.rollup = [check("lint", conclusion="FAILURE")]
@@ -882,13 +882,13 @@ class Coordination(unittest.TestCase):
 
     def test_refuses_symlinks(self):
         vstack = os.path.join(os.path.realpath(self.repo / ".git"), "vstack")
-        os.symlink(tmpdir(), vstack)
+        os.symlink(tmpdir(self), vstack)
         rc, _, err = self.cmd("poll", "--pr", 42)
         self.assertEqual(rc, 2)
         self.assertIn("symlink", err)
         os.unlink(vstack)
         os.makedirs(os.path.join(vstack, "42"))
-        os.symlink(tmpdir() / "x.json", os.path.join(vstack, "42", "coordination.json"))
+        os.symlink(tmpdir(self) / "x.json", os.path.join(vstack, "42", "coordination.json"))
         self.assertEqual(self.cmd("poll", "--pr", 42)[0], 2)
 
     def test_usage(self):
@@ -898,7 +898,7 @@ class Coordination(unittest.TestCase):
                      ["poll", "--pr", "4", "-R", "o"], ["poll", "--pr", "4", "--bogus"]):
             with self.subTest(args):
                 self.assertEqual(self.cmd(*args)[0], 2)
-        self.assertEqual(self.cmd("poll", "--pr", 42, cwd=tmpdir())[0], 2)
+        self.assertEqual(self.cmd("poll", "--pr", 42, cwd=tmpdir(self))[0], 2)
         self.assertEqual(self.gh.calls(), [])
 
     def test_gh_failure_is_internal_with_an_unknown_handback(self):

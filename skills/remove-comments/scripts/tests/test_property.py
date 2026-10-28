@@ -49,7 +49,7 @@ def corpus():
 
 class Property(unittest.TestCase):
     def test_strip_is_stable_and_verifies(self):
-        d = tmpdir()
+        d = tmpdir(self)
         for name, text in corpus().items():
             with self.subTest(file=name):
                 src = d / name
@@ -64,11 +64,11 @@ class Property(unittest.TestCase):
                 self.assertEqual(v.returncode, 0, v.stdout.decode())
 
     def test_delete_everything_allowed_then_verify(self):
-        repo = new_repo()
+        repo = new_repo(self)
         for name, text in corpus().items():
             (repo / name).write_bytes(text.encode())
         commit_all(repo, "corpus")
-        r, doc, out = listing(repo, "--paths", ".")
+        r, doc, out = listing(self, repo, "--paths", ".")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual([f["path"] for f in doc["files"] if f["status"] != "ok"], [])
         by_id = {c["id"]: c for c in doc["comments"]}
@@ -78,7 +78,7 @@ class Property(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr.decode())
         r = run("verify", "--list", out, cwd=repo)
         self.assertEqual(r.returncode, 0, r.stdout.decode())
-        r, doc2, _ = listing(repo, "--paths", ".")
+        r, doc2, _ = listing(self, repo, "--paths", ".")
         left = [c for c in doc2["comments"] if not c["protected"] and not c.get("only_statement")]
         self.assertEqual([(c["file"], c["text"]) for c in left], [])
 

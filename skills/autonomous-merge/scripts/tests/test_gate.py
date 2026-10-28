@@ -37,8 +37,8 @@ HEAD, BASE = "a" * 40, "b" * 40
 
 class Gate(unittest.TestCase):
     def setUp(self):
-        self.repo, self.base, self.head = pr_repo()
-        self.stubs = Stubs()
+        self.repo, self.base, self.head = pr_repo(self)
+        self.stubs = Stubs(self)
         write_result(REVIEW_WRITER, self.repo, 42, self.head, self.base, SHIP)
         seed_coordination(self.repo, self.head)
 
@@ -197,6 +197,7 @@ class Gate(unittest.TestCase):
             out, err = proc.communicate(timeout=60)
         finally:
             proc.kill()
+            proc.wait()
         data = json.loads(out)
         self.assertEqual((proc.returncode, data["reason"]), (5, "unknown"), (out, err))
         self.assertIn("stopped by SIGTERM", data["detail"])
@@ -442,7 +443,7 @@ class Gate(unittest.TestCase):
         self.handback("checks_failing", "--merge", checks=gh_rule(["pr checks"], [{"name": "t", "bucket": "fail"}], 1))
 
     def test_access_handbacks(self):
-        stubs = Stubs(tools=("curl",))
+        stubs = Stubs(self, tools=("curl",))
         stubs.set([])
         self.handback("no_cli", "--merge", env=stubs.env())
         self.handback("auth_missing", "--merge", auth=gh_rule(["auth status"], "", 1, "You are not logged into any GitHub hosts."))
@@ -544,8 +545,8 @@ class MergeWait(unittest.TestCase):
 
 class BitbucketGate(unittest.TestCase):
     def setUp(self):
-        self.repo, self.base, self.head = pr_repo(remote="git@bitbucket.org:ws/r.git")
-        self.stubs = Stubs()
+        self.repo, self.base, self.head = pr_repo(self, remote="git@bitbucket.org:ws/r.git")
+        self.stubs = Stubs(self)
         write_result(REVIEW_WRITER, self.repo, 42, self.head, self.base, SHIP)
 
     def tearDown(self):

@@ -13,7 +13,7 @@ import sys
 import unittest
 from unittest import mock
 
-from helpers import GIT_ENV, SCRIPTS, commit_all, decide, git, new_repo, tmpdir
+from helpers import GIT_ENV, SCRIPTS, commit_all, decide, git, new_repo, scratch, tmpdir
 
 sys.path.insert(0, str(SCRIPTS))
 import comments  # noqa: E402 - must follow the sys.path line
@@ -27,10 +27,10 @@ SHIM = "#!/bin/sh\necho \"$0 ran\" >> %s\nexit 0\n"
 NO_TS = "typescript: skipped (typescript isn't available outside the repo; set RC_TS_ROOT to a trusted install)"
 
 
-def hostile_repo(marker):
+def hostile_repo(test, marker):
     """A repo whose node_modules/typescript is a committed symlink to repo code that
     writes marker when loaded, plus bin/ shims and a NODE_OPTIONS hook that do the same."""
-    repo = new_repo()
+    repo = new_repo(test)
     (repo / "evil" / "lib").mkdir(parents=True)
     (repo / "evil" / "package.json").write_text(json.dumps({"name": "typescript", "main": "lib/typescript.js"}))
     (repo / "evil" / "lib" / "typescript.js").write_text(EVIL_TS % json.dumps(str(marker)))
@@ -49,12 +49,17 @@ def hostile_repo(marker):
     return repo
 
 
-def clean_env(**extra):
+def clean_env(test, **extra):
     """The test run's environment minus RC_TS_ROOT, with an empty global npm root."""
-    prefix = tmpdir()
+    prefix = tmpdir(test)
     env = {k: v for k, v in GIT_ENV.items() if k != "RC_TS_ROOT"}
     env.update(NPM_CONFIG_PREFIX=str(prefix), npm_config_prefix=str(prefix), **extra)
     return env
+
+
+def has_c_preprocessor():
+    with scratch() as d:
+        return comments.c_preprocessor(str(d)) is not None
 
 
 def cli(*args, cwd, env):
@@ -62,13 +67,13 @@ def cli(*args, cwd, env):
                           capture_output=True, cwd=cwd, env=env, stdin=subprocess.DEVNULL, timeout=120)
 
 
-def edit_and_verify(repo, env):
+def edit_and_verify(test, repo, env):
     """Add a comment to every file, list, delete them all, verify; returns verify's result."""
     for name, line in (("a.ts", "export const b = 2; // two\n"), ("b.js", "g(b); // two\n"),
                        ("c.c", "int y; // two\n"), ("d.go", "var y = 2 // two\n")):
         with open(repo / name, "a") as f:
             f.write(line)
-    out = tmpdir() / "comments.json"
+    out = tmpdir(test) / "comments.json"
     r = cli("list", "--out", out, cwd=repo, env=env)
     assert r.returncode == 0, r.stderr
     doc = json.loads(out.read_text())
@@ -80,8 +85,8 @@ def edit_and_verify(repo, env):
 
 class RepoCodeNeverRuns(unittest.TestCase):
     def setUp(self):
-        self.marker = tmpdir() / "marker"
-        self.repo = hostile_repo(self.marker)
+        self.marker = tmpdir(self) / "marker"
+        self.repo = hostile_repo(self, self.marker)
 
     def assert_no_repo_code(self, r):
         self.assertFalse(self.marker.exists(), self.marker.read_text() if self.marker.exists() else "")
@@ -89,31 +94,31 @@ class RepoCodeNeverRuns(unittest.TestCase):
 
     def test_committed_typescript_symlink_is_never_loaded(self):
         self.assertEqual(git(self.repo, "ls-files", "-s", "node_modules/typescript").decode()[:6], "120000")
-        r = edit_and_verify(self.repo, clean_env())
+        r = edit_and_verify(self, self.repo, clean_env(self))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assert_no_repo_code(r)
         if NODE:
             self.assertIn(NO_TS.encode(), r.stdout)
 
     def test_repo_bin_on_path_and_node_options_are_ignored(self):
-        env = clean_env(PATH=f"{self.repo / 'bin'}{os.pathsep}node_modules/.bin{os.pathsep}{os.environ['PATH']}",
+        env = clean_env(self, PATH=f"{self.repo / 'bin'}{os.pathsep}node_modules/.bin{os.pathsep}{os.environ['PATH']}",
                         NODE_OPTIONS=f"--require {self.repo / 'hook.js'}", CPATH=str(self.repo))
-        r = edit_and_verify(self.repo, env)
+        r = edit_and_verify(self, self.repo, env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assert_no_repo_code(r)
 
     def test_rc_ts_root_inside_the_repo_is_refused(self):
-        r = edit_and_verify(self.repo, clean_env(RC_TS_ROOT=str(self.repo)))
+        r = edit_and_verify(self, self.repo, clean_env(self, RC_TS_ROOT=str(self.repo)))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assert_no_repo_code(r)
         if NODE:
             self.assertIn(b"typescript: skipped (RC_TS_ROOT is inside the repo)", r.stdout)
 
     def test_rc_ts_root_that_resolves_into_the_repo_is_refused(self):
-        outside = tmpdir()
+        outside = tmpdir(self)
         (outside / "node_modules").mkdir()
         os.symlink(self.repo / "evil", outside / "node_modules" / "typescript")
-        r = edit_and_verify(self.repo, clean_env(RC_TS_ROOT=str(outside)))
+        r = edit_and_verify(self, self.repo, clean_env(self, RC_TS_ROOT=str(outside)))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assert_no_repo_code(r)
         if NODE:
@@ -126,7 +131,7 @@ class RepoCodeNeverRuns(unittest.TestCase):
         env = comments.tool_env(roots)
         old = os.environ.pop("RC_TS_ROOT", None)
         try:
-            path, why = comments.find_typescript(NODE, roots, str(tmpdir()), env)
+            path, why = comments.find_typescript(NODE, roots, str(tmpdir(self)), env)
         finally:
             if old is not None:
                 os.environ["RC_TS_ROOT"] = old
@@ -136,7 +141,7 @@ class RepoCodeNeverRuns(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("RC_TS_ROOT") and NODE,
                          "set RC_TS_ROOT to a directory whose node_modules has typescript")
     def test_rc_ts_root_outside_the_repo_is_used(self):
-        r = edit_and_verify(self.repo, clean_env(RC_TS_ROOT=os.environ["RC_TS_ROOT"]))
+        r = edit_and_verify(self, self.repo, clean_env(self, RC_TS_ROOT=os.environ["RC_TS_ROOT"]))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertFalse(self.marker.exists())
         self.assertIn(b"cross-check typescript: ok", r.stdout)
@@ -144,7 +149,7 @@ class RepoCodeNeverRuns(unittest.TestCase):
 
 class ToolEnvironment(unittest.TestCase):
     def test_only_allowlisted_variables_and_path(self):
-        repo = tmpdir()
+        repo = tmpdir(self)
         with mock.patch.dict(os.environ, NODE_OPTIONS="--require x", NODE_PATH="/x", LD_PRELOAD="/x.so",
                              GCC_EXEC_PREFIX="/x", CPATH="/x", C_INCLUDE_PATH="/x", CPLUS_INCLUDE_PATH="/x",
                              GOFLAGS="-x", GOROOT="/x", TS_NODE_PROJECT="/x", BASH_ENV="/x", PYTHONPATH="/x",
@@ -159,7 +164,7 @@ class ToolEnvironment(unittest.TestCase):
         with mock.patch.dict(os.environ, NODE_OPTIONS="--require x", SOME_NEW_HOOK="1"):
             env = comments.tool_env()
         r = comments.run_tool([sys.executable, "-I", "-c", "import os; print(' '.join(sorted(os.environ)))"],
-                              str(tmpdir()), env)
+                              str(tmpdir(self)), env)
         self.assertEqual(r[0], 0, r)
         seen = set(r[1].decode().split())
         self.assertNotIn("NODE_OPTIONS", seen)
@@ -169,25 +174,25 @@ class ToolEnvironment(unittest.TestCase):
     @unittest.skipUnless(shutil.which("npm"), "npm isn't on PATH")
     def test_npm_root_g_is_the_same_with_the_tool_environment(self):
         npm = shutil.which("npm")
-        scratch = str(tmpdir())
+        scratch = str(tmpdir(self))
         full = subprocess.run([npm, "root", "-g"], capture_output=True, cwd=scratch, timeout=60)
         r = comments.run_tool([npm, "root", "-g"], scratch, comments.tool_env())
         self.assertEqual(full.returncode, 0, full.stderr)
         self.assertEqual(r[:2], (0, full.stdout))
 
-    @unittest.skipUnless(comments.c_preprocessor(str(tmpdir())), "no working gcc, cc or clang")
+    @unittest.skipUnless(has_c_preprocessor(), "no working gcc, cc or clang")
     def test_c_cross_check_never_reads_repo_headers(self):
-        repo = new_repo()
+        repo = new_repo(self)
         (repo / "local.h").write_text("#define TWO 2\n")
         (repo / "a.c").write_text('#include "local.h"\nint x = TWO;\n')
         commit_all(repo, "base")
         (repo / "a.c").write_text('#include "local.h"\nint x = TWO; // two\n')
-        out = tmpdir() / "comments.json"
-        self.assertEqual(cli("list", "--out", out, cwd=repo, env=clean_env()).returncode, 0)
+        out = tmpdir(self) / "comments.json"
+        self.assertEqual(cli("list", "--out", out, cwd=repo, env=clean_env(self)).returncode, 0)
         doc = json.loads(out.read_text())
         cli("apply", decide(out, {c: {"action": "delete"} for c in doc["pending"]}), "--list", out,
-            cwd=repo, env=clean_env())
-        r = cli("verify", "--list", out, cwd=repo, env=clean_env())
+            cwd=repo, env=clean_env(self))
+        r = cli("verify", "--list", out, cwd=repo, env=clean_env(self))
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertRegex(r.stdout.decode(), r"cross-check \S+: skipped \(the before file doesn't preprocess")
 

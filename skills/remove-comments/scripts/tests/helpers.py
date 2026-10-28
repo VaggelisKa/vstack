@@ -1,7 +1,11 @@
 """Shared helpers for the remove-comments script tests. Everything runs in temp dirs."""
+import atexit
+import contextlib
 import json
 import os
 import pathlib
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -32,12 +36,50 @@ def git(repo, *args, check=True):
     return r.stdout if check else r
 
 
-def tmpdir():
-    return pathlib.Path(tempfile.mkdtemp(prefix="remove-comments-test-"))
+_LIVE = set()  # this run's tmpdir() dirs not yet removed; swept at exit if a run is interrupted
 
 
-def new_repo():
-    repo = tmpdir() / "repo"
+def _writable(p):
+    if not os.path.islink(p):
+        with contextlib.suppress(OSError):
+            os.chmod(p, stat.S_IRWXU)
+
+
+def rmtree(path):
+    """Remove path, making read-only or unreadable dirs and files (git objects, permission tests) usable first.
+    Dirs are fixed top-down, before os.walk lists them, and symlinks are never followed."""
+    path = os.fspath(path)
+    _writable(path)
+    for root, dirs, files in os.walk(path, followlinks=False):
+        for name in dirs + files:
+            _writable(os.path.join(root, name))
+    shutil.rmtree(path, ignore_errors=True)
+    _LIVE.discard(path)
+
+
+@atexit.register
+def _sweep():
+    for d in list(_LIVE):
+        rmtree(d)
+
+
+def tmpdir(test):
+    """A fresh dir, removed when test finishes (or, given a TestCase class in setUpClass, when the class does)."""
+    d = tempfile.mkdtemp(prefix="remove-comments-test-")
+    _LIVE.add(d)
+    (test.addClassCleanup if isinstance(test, type) else test.addCleanup)(rmtree, d)
+    return pathlib.Path(d)
+
+
+@contextlib.contextmanager
+def scratch():
+    """A dir for a probe outside any test (a skip decorator's check), removed when the block ends."""
+    with tempfile.TemporaryDirectory(prefix="remove-comments-test-", ignore_cleanup_errors=True) as d:
+        yield pathlib.Path(d)
+
+
+def new_repo(test):
+    repo = tmpdir(test) / "repo"
     repo.mkdir()
     git(repo, "init", "-q", "-b", "main")
     return repo
@@ -54,9 +96,9 @@ def texts(src, lang):
     return [src[c.start:c.end] for c in commentscan.scan(src, lang).comments]
 
 
-def listing(repo, *args):
+def listing(test, repo, *args):
     """Run list in repo; returns (result, doc, path of comments.json)."""
-    out = tmpdir() / "comments.json"
+    out = tmpdir(test) / "comments.json"
     r = run("list", "--out", out, *args, cwd=repo)
     doc = json.loads(out.read_text()) if out.exists() else None
     return r, doc, out

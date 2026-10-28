@@ -1,9 +1,12 @@
 """Shared helpers for the autonomous-merge skill's script tests. Everything runs
 in temp dirs, with fake `gh` and `curl` on a PATH that holds nothing else but git."""
+import atexit
+import contextlib
 import json
 import os
 import pathlib
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -53,8 +56,39 @@ sys.exit(rule.get("code", 0))
 '''
 
 
-def tmpdir():
-    return pathlib.Path(tempfile.mkdtemp(prefix="am-test-"))
+_LIVE = set()  # this run's tmpdir() dirs not yet removed; swept at exit if a run is interrupted
+
+
+def _writable(p):
+    if not os.path.islink(p):
+        with contextlib.suppress(OSError):
+            os.chmod(p, stat.S_IRWXU)
+
+
+def rmtree(path):
+    """Remove path, making read-only or unreadable dirs and files (git objects, permission tests) usable first.
+    Dirs are fixed top-down, before os.walk lists them, and symlinks are never followed."""
+    path = os.fspath(path)
+    _writable(path)
+    for root, dirs, files in os.walk(path, followlinks=False):
+        for name in dirs + files:
+            _writable(os.path.join(root, name))
+    shutil.rmtree(path, ignore_errors=True)
+    _LIVE.discard(path)
+
+
+@atexit.register
+def _sweep():
+    for d in list(_LIVE):
+        rmtree(d)
+
+
+def tmpdir(test):
+    """A fresh dir, removed when test finishes (or, given a TestCase class in setUpClass, when the class does)."""
+    d = tempfile.mkdtemp(prefix="am-test-")
+    _LIVE.add(d)
+    (test.addClassCleanup if isinstance(test, type) else test.addCleanup)(rmtree, d)
+    return pathlib.Path(d)
 
 
 def git(repo, *args, check=True):
@@ -71,9 +105,9 @@ def commit_all(repo, msg):
     return git(repo, "rev-parse", "HEAD").decode().strip()
 
 
-def pr_repo(remote="git@github.com:o/r.git"):
+def pr_repo(test, remote="git@github.com:o/r.git"):
     """A repo on branch feature, one commit ahead of main. Returns (repo, base, head)."""
-    repo = tmpdir() / "repo"
+    repo = tmpdir(test) / "repo"
     repo.mkdir()
     git(repo, "init", "-q", "-b", "main")
     (repo / "src").mkdir()
@@ -90,8 +124,8 @@ def pr_repo(remote="git@github.com:o/r.git"):
 class Stubs:
     """A PATH holding fake gh and curl that answer from rules and log every call."""
 
-    def __init__(self, tools=("gh", "curl")):
-        self.dir = tmpdir() / "bin"
+    def __init__(self, test, tools=("gh", "curl")):
+        self.dir = tmpdir(test) / "bin"
         self.dir.mkdir()
         os.symlink(shutil.which("git"), self.dir / "git")
         for tool in tools:
