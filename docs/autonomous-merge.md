@@ -1,13 +1,18 @@
 # autonomous-merge: what's tested
 
-`/vstack:autonomous-merge <pr> [merge]` (`$autonomous-merge` in Codex), or in plain words ("... and merge when green"). It merges only when that run's request explicitly asks to.
+`/vstack:autonomous-merge <pr> [merge]` (`$autonomous-merge` in Codex). It pushes, comments and can merge, so the
+model never starts it on its own (`disable-model-invocation: true`): the user invokes it. It merges only when that
+run's request explicitly asks to, with a trailing `merge` or in plain words ("... and merge when green").
+Scripts and sibling skills are found through `${CLAUDE_SKILL_DIR}`, the folder holding SKILL.md (other harnesses
+use its absolute path).
 
 - 106 script tests, with fake `gh` and `curl` on a `PATH` holding only git, in temp repos:
   `python3 -m unittest discover -s skills/autonomous-merge/scripts/tests`.
 - `preflight.py`: GitHub and Bitbucket ok paths, host from URL or remote, one test per handback
   (`no_cli`, `auth_missing`, `auth_expired`, `insufficient_permission`, `not_open`, `host_unsupported`,
   `unknown`), no token in output or argv, `-h` exits 2, and exit 4 prints an `unknown` handback first.
-- `gate.py`: ready, one test per block, a human's standing CHANGES_REQUESTED, approvals that must be on the
+- `gate.py`: ready, one test per block, every check treated as required when none are configured or the required
+  ones can't be read (each with its own wording), a human's standing CHANGES_REQUESTED, approvals that must be on the
   head and not the author's (and only when required), unknown mergeability re-polled (recovers, or stays
   `unknown`), the exact `gh pr merge` arguments (`--auto`, method, `--match-head-commit`) only after every
   check passes, then polling until merged with `--disable-auto` on a head or base change, a new thread,
@@ -22,6 +27,10 @@
   round that isn't clean and has nothing to fix (in a real run, an Incomplete from one partial reviewer
   dead-ended there), counting toward the cap and still checked for oscillation and `no_progress`; a stale
   review.json or a round with open findings just repeats.
+- SKILL.md only, not script-tested: a fork PR (`isCrossRepository` true or unreadable) hands back `escalated`
+  before any of its code runs, unless the request explicitly allows it; findings, comments and CI logs go
+  through review's `wrap-untrusted.py` before triage, and an escape count above 0 hands back `escalated`; fixes
+  are staged by path, never `git add .` or `-A`.
 
 > Not yet verified: a live run on a real GitHub or Bitbucket PR (responses are modelled on the
 > docs and `gh` 2.103 `--help`), `gh pr merge --auto --match-head-commit` and `--disable-auto` against a
