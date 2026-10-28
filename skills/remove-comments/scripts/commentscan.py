@@ -8,7 +8,6 @@ file alone: a missed comment costs nothing, a misread string can delete code.
 """
 import ast
 import bisect
-import io
 import os
 import re
 import tokenize

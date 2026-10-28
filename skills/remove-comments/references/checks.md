@@ -53,7 +53,7 @@ No config, no formatter. If the tool isn't installed, skip it and say so.
 Then run verify again:
 
 ```bash
-python3 -I "$RC/comments.py" verify --list "$TMP/comments.json"
+python3 -I "${CLAUDE_SKILL_DIR}/scripts/comments.py" verify --list "$TMP/comments.json"
 ```
 
 If it fails, the formatter changed more than whitespace (it re-wrapped or
@@ -62,7 +62,7 @@ where that can change the meaning, such as `a+b` to `a + b`). Put back the post-
 formatter was not applied:
 
 ```bash
-python3 -I "$RC/comments.py" restore --list "$TMP/comments.json" --applied
+python3 -I "${CLAUDE_SKILL_DIR}/scripts/comments.py" restore --list "$TMP/comments.json" --applied
 ```
 
 ## Tests, lint, type check

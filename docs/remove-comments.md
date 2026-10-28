@@ -15,16 +15,19 @@ repos:
 
 ```bash
 python3 -m unittest discover -s skills/remove-comments/scripts/tests
+# or: cd skills/remove-comments/scripts && python3 -m pytest -q tests
 ```
 
-That runs 186 tests in about 45 seconds, about 55 with all the tools below.
-Seven skip unless pointed at tools outside the repo: four (the TypeScript
-cross-check, its runs in chunks, a trusted `RC_TS_ROOT` being used, and the
-JS fuzz) need
+That runs 188 tests in about 70 seconds. With gcc, node and gofmt installed
+and nothing else set, 180 pass and 8 skip. Seven of the skips are tests whose
+tool outside the repo isn't set up: four (the TypeScript cross-check, its runs
+in chunks, a trusted `RC_TS_ROOT` being used, and the JS fuzz) need
 `RC_TS_ROOT` naming a directory whose `node_modules` has `typescript`, the
 Sass oracle needs `RC_SASS_ROOT` (or `RC_TS_ROOT`) whose `node_modules` has
 `sass`, and the two Less oracles need `RC_LESS_ROOT` (or `RC_TS_ROOT`) whose
-`node_modules` has `less`:
+`node_modules` has `less`. The eighth checks that the test helper removes
+unreadable directories and skips when run as root, which ignores
+permissions.
 
 ```bash
 RC_TS_ROOT=/path/with/node_modules RC_SASS_ROOT=/path/with/node_modules \
@@ -32,10 +35,10 @@ RC_TS_ROOT=/path/with/node_modules RC_SASS_ROOT=/path/with/node_modules \
   python3 -m unittest discover -s skills/remove-comments/scripts/tests
 ```
 
-With all three set (TypeScript 5.9.3, sass 1.106.1, less 4.9.1, node 24) all
-186 pass. The C
-tests used gcc 14 in C mode (`-std=gnu2x`, no C++ front end installed); the
-Go test used gofmt from Go 1.27. Tests whose tool is missing skip.
+With all three set (TypeScript 6.0.2, sass 1.106.1, less 4.9.1, node 22),
+187 pass and only the root-only test skips (run as root). The C tests used
+gcc 13 in C mode (`-std=gnu2x`, no C++ front end installed); the Go test used
+gofmt from Go 1.24. Tests whose tool is missing skip.
 
 They cover:
 
