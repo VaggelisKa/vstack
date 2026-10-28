@@ -49,4 +49,4 @@ separately as a personal skill (for Claude Code, copy it to
 
 ## Releasing
 
-Codex caches installs by the `version` in `.codex-plugin/plugin.json`, so bump it when releasing changes, and keep `gemini-extension.json` at the same version (Gemini CLI updates by comparing it). If an update doesn't show up, remove and re-add the plugin (`codex plugin remove vstack@vaggeliska`, then `codex plugin add vstack@vaggeliska`).
+Codex caches installs by the `version` in `.codex-plugin/plugin.json`, so bump it when releasing changes, and keep `gemini-extension.json` at the same version. Gemini CLI shows it, but a git install updates by comparing commits with the repo's `HEAD`, not versions; only local-path and linked installs compare `version`, against their source folder. There are no GitHub releases or tags, so installs are `Type: git`, not `github-release`. If an update doesn't show up, remove and re-add the plugin (`codex plugin remove vstack@vaggeliska`, then `codex plugin add vstack@vaggeliska`).

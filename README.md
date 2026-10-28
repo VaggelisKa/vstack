@@ -63,7 +63,7 @@ Use `/vstack:<skill>`. Update by uninstalling and installing again; remove with 
 gemini extensions install https://github.com/VaggelisKa/vstack
 ```
 
-Skills are discovered from the extension (check with `gemini skills list`) and activated by the model when a request matches. Update with `gemini extensions update vstack`, remove with `gemini extensions uninstall vstack`. Install and discovery tested with Gemini CLI 0.65.0; skills not run in a session.
+Skills are discovered from the extension (check with `gemini skills list`) and activated by the model when a request matches. Update with `gemini extensions update vstack`, remove with `gemini extensions uninstall vstack`. Updates only work for an install from the GitHub URL (`Type: git` in `gemini extensions list`), which compares your installed commit with the repo's `HEAD`. An install from a local path (`Type: local`) or `gemini extensions link` compares the version with that folder's `gemini-extension.json`, so it reports "up to date" until you pull that folder; reinstall from the URL to switch. Install and discovery tested with Gemini CLI 0.65.0; skills not run in a session.
 
 ## Docs
 
