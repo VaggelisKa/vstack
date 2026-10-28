@@ -4,7 +4,6 @@ comment the tool allows, through list and apply, always passes verify.
 
 Run from the repo root: python3 -m unittest discover -s skills/remove-comments/scripts/tests
 """
-import shutil
 import unittest
 
 from helpers import SKILL, commentscan, commit_all, decide, listing, new_repo, run, tmpdir

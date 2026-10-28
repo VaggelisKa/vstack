@@ -4,7 +4,6 @@ file, run a program or read outside the commit is rejected with exit 2.
 Run from the repo root: python3 -m unittest discover -s skills/review/scripts/tests
 """
 import os
-import pathlib
 import shlex
 import stat
 import subprocess
@@ -177,7 +176,7 @@ class GitRead(unittest.TestCase):
                      ("show", f"--textconv={self.head}:a.txt")):
             with self.subTest(args=args):
                 self.rejected(self.read(*args))
-        for cmd in (f'diff --ext"-diff" {rng}', f'diff --no"-index" /etc/hostname a.txt',
+        for cmd in (f'diff --ext"-diff" {rng}', 'diff --no"-index" /etc/hostname a.txt',
                     f"diff '--text'conv {rng}"):
             with self.subTest(cmd=cmd):
                 self.rejected(self.shell(cmd))

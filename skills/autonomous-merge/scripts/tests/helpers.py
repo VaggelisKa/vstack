@@ -1,24 +1,32 @@
 """Shared helpers for the autonomous-merge skill's script tests. Everything runs
-in temp dirs, with fake `gh` and `curl` on a PATH that holds nothing else but git."""
-import atexit
-import contextlib
+in temp dirs, with fake `gh` and `curl` on a PATH that holds nothing else but git.
+
+The common helpers are shared by every skill's tests and live in
+lib/testing.py at the plugin root, loaded by path; this file configures them
+for autonomous-merge (no GH_, GITHUB_ or BITBUCKET_ variables reach git),
+re-exports what the tests import and adds the fake gh and curl and the
+GitHub and Bitbucket fixtures."""
+import importlib.util
 import json
 import os
 import pathlib
 import shutil
-import stat
 import subprocess
 import sys
-import tempfile
 
 SCRIPTS = pathlib.Path(__file__).resolve().parent.parent
 SKILLS = SCRIPTS.parent.parent
 REVIEW_WRITER = SKILLS / "review" / "scripts" / "write-result.py"
 BABYSIT_WRITER = SKILLS / "babysit" / "scripts" / "write-result.py"
 
-GIT_ENV = {k: v for k, v in os.environ.items()
-           if not k.startswith(("GH_", "GITHUB_", "BITBUCKET_")) and k != "PATH"}
-GIT_ENV.update({"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "PATH": os.environ.get("PATH", "")})
+_spec = importlib.util.spec_from_file_location("vstack_testing", SKILLS.parent / "lib" / "testing.py")
+T = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(T)
+T.configure(SCRIPTS, "am-test-",
+            env={**T.git_env(drop=("GH_", "GITHUB_", "BITBUCKET_")), "PATH": os.environ.get("PATH", "")})
+
+GIT_ENV = T.GIT_ENV
+git, rmtree, tmpdir, commit_all = T.git, T.rmtree, T.tmpdir, T.commit_all
 
 STUB = r'''#!%(python)s
 import json, os, sys
@@ -56,69 +64,9 @@ sys.exit(rule.get("code", 0))
 '''
 
 
-_LIVE = set()  # this run's tmpdir() dirs not yet removed; swept at exit if a run is interrupted
-
-
-def _writable(p):
-    if not os.path.islink(p):
-        with contextlib.suppress(OSError):
-            os.chmod(p, stat.S_IRWXU)
-
-
-def rmtree(path):
-    """Remove path, making read-only or unreadable dirs and files (git objects, permission tests) usable first.
-    Dirs are fixed top-down, before os.walk lists them, and symlinks are never followed."""
-    path = os.fspath(path)
-    _writable(path)
-    for root, dirs, files in os.walk(path, followlinks=False):
-        for name in dirs + files:
-            _writable(os.path.join(root, name))
-    shutil.rmtree(path, ignore_errors=True)
-    _LIVE.discard(path)
-
-
-@atexit.register
-def _sweep():
-    for d in list(_LIVE):
-        rmtree(d)
-
-
-def tmpdir(test):
-    """A fresh dir, removed when test finishes (or, given a TestCase class in setUpClass, when the class does)."""
-    d = tempfile.mkdtemp(prefix="am-test-")
-    _LIVE.add(d)
-    (test.addClassCleanup if isinstance(test, type) else test.addCleanup)(rmtree, d)
-    return pathlib.Path(d)
-
-
-def git(repo, *args, check=True):
-    r = subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
-                        "-c", "commit.gpgsign=false", *args], capture_output=True, env=GIT_ENV)
-    if check and r.returncode:
-        raise AssertionError(f"git {args} exited {r.returncode}: {r.stderr.decode()}")
-    return r.stdout if check else r
-
-
-def commit_all(repo, msg):
-    git(repo, "add", "-A")
-    git(repo, "commit", "-qm", msg)
-    return git(repo, "rev-parse", "HEAD").decode().strip()
-
-
 def pr_repo(test, remote="git@github.com:o/r.git"):
-    """A repo on branch feature, one commit ahead of main. Returns (repo, base, head)."""
-    repo = tmpdir(test) / "repo"
-    repo.mkdir()
-    git(repo, "init", "-q", "-b", "main")
-    (repo / "src").mkdir()
-    (repo / "src/a.py").write_text("x = 1\n")
-    base = commit_all(repo, "base")
-    git(repo, "checkout", "-qb", "feature")
-    (repo / "src/a.py").write_text("x = 2\n")
-    head = commit_all(repo, "head")
-    if remote:
-        git(repo, "remote", "add", "origin", remote)
-    return repo, base, head
+    """A repo on branch feature, one commit ahead of main, with remote as origin. Returns (repo, base, head)."""
+    return T.pr_repo(test, remote=remote)
 
 
 class Stubs:
