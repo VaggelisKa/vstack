@@ -13,8 +13,14 @@ origin note in its own folder:
   License: Apache-2.0 (skills/html-plan/LICENSE); upstream plugin.json declares MIT
   Modified: yes, see skills/html-plan/NOTICE.md
 
+- skills/autonomous-merge
+  Original work in this repository (Apache-2.0).
+
 - skills/babysit
   Original work in this repository (Apache-2.0).
 
 - skills/remove-comments
+  Original work in this repository (Apache-2.0).
+
+- skills/review
   Original work in this repository (Apache-2.0).
