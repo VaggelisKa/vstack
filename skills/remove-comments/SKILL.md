@@ -1,7 +1,7 @@
 ---
 name: remove-comments
 argument-hint: "[PR|path...] [--all] [--dry-run] [--report PATH]"
-description: Strictly delete or shorten code comments that don't carry information the code, names, types, tests or git history can't give, and prove with a token-level check that no code changed. Defaults to comments on the lines the current change added (uncommitted work, or the branch vs its default branch); also takes a PR, paths, or --all. Keeps licence headers, tool directives and pragmas byte-identical, keeps real "why" comments (workarounds with links, invariants, units, security or performance rationale), and reports what it kept and why. Use this skill whenever the user says "remove comments", "strip comments", "clean up comments", "delete obvious comments", "too many comments", "AI comments", "agent comments", "comment noise", "uncomment" in the sense of removing comments, "/remove-comments", or asks to tidy comments before a commit or PR, or after an agent wrote code, even if they don't name the skill. Never commits or pushes. Not for writing docs or adding comments.
+description: Strictly deletes or shortens code comments that carry nothing the code, names, types, tests or git history can't give, then proves with a token-level check that no code changed. Defaults to the lines the current change added; also takes a PR, paths or --all. Keeps licence headers, tool directives and real "why" comments. Use when the user asks to remove, strip, clean up or thin out comments, mentions comment noise or agent-written comments, or wants comments tidied before a commit or PR. Never commits or pushes. Not for writing docs, adding comments, or re-enabling commented-out code.
 ---
 
 # remove-comments
@@ -23,8 +23,9 @@ added").
 
 ### Arguments
 
-Read the arguments from the user's message, whatever the invocation looks like.
-Don't rely on a template variable being filled in.
+Request: $ARGUMENTS
+
+If the line above is empty or still reads as a literal `$ARGUMENTS` (harnesses other than Claude Code), read the arguments from the user's message instead.
 
 - **Target** (optional): a PR number, `#<n>` or PR URL, or one or more paths.
   None means the current change (see Scope).
@@ -65,13 +66,19 @@ deciding.** It has the examples and the docstring rules.
 
 ## Workflow
 
-Set up once. `$RC` is the absolute path of this skill's `scripts/` directory;
-scratch files live outside the repo:
+`${CLAUDE_SKILL_DIR}` is this skill's folder, the one holding this SKILL.md.
+Claude Code fills it in; on other harnesses use that folder's absolute path.
+`$RC` below stands for `${CLAUDE_SKILL_DIR}/scripts`.
+
+Set up once; scratch files live outside the repo:
 
 ```bash
-RC=/absolute/path/to/skills/remove-comments/scripts
 TMP=$(mktemp -d)
 ```
+
+If each shell call starts fresh (the harness doesn't keep shell state),
+set `TMP` again in every command to that same directory (`echo "$TMP"` shows
+it), not to a new `mktemp -d`, so the files the steps share stay put.
 
 ### 1. Scope and listing
 
@@ -82,16 +89,16 @@ above. Quote every token (`"$tok"`). The first rule that applies wins:
    `gh pr view "$pr" --json headRefName,baseRefName,isCrossRepository,headRepositoryOwner,maintainerCanModify`
    (step 5 needs `isCrossRepository`). If the current branch is already its
    head branch, don't check anything out. Otherwise run
-   `python3 -I "$RC/comments.py" precheck --pr "$n"` (`$n` the PR number).
+   `python3 -I "${CLAUDE_SKILL_DIR}/scripts/comments.py" precheck --pr "$n"` (`$n` the PR number).
    It exits 2 on anything `git status` reports (untracked files included,
    ignored ones not), outside a repo, and during an unfinished merge, rebase,
    cherry-pick, revert or bisect; then stop and pass its message on. Never
    stash for the user. Only after it exits 0 run `gh pr checkout "$pr"`. Then
    `git fetch --quiet origin "$base"` and list the lines the PR added:
-   `python3 -I "$RC/comments.py" list --diff "origin/$base" --out "$TMP/comments.json"`
+   `python3 -I "${CLAUDE_SKILL_DIR}/scripts/comments.py" list --diff "origin/$base" --out "$TMP/comments.json"`
 2. **Paths**: every comment in those files and directories (tracked files only):
-   `python3 -I "$RC/comments.py" list --out "$TMP/comments.json" --paths -- "$path"...`
-3. **Default**: `python3 -I "$RC/comments.py" list --out "$TMP/comments.json"`.
+   `python3 -I "${CLAUDE_SKILL_DIR}/scripts/comments.py" list --out "$TMP/comments.json" --paths -- "$path"...`
+3. **Default**: `python3 -I "${CLAUDE_SKILL_DIR}/scripts/comments.py" list --out "$TMP/comments.json"`.
    That is the working tree vs HEAD (staged, unstaged and untracked files) or,
    on a clean tree, the branch vs its merge base with the default branch.
    Pre-existing comments on untouched lines are out of scope: reviewers hate
@@ -103,7 +110,7 @@ Read the listing only through `show`, never with `cat`, `jq` or a file read
 of `comments.json`:
 
 ```bash
-python3 -I "$RC/comments.py" show --list "$TMP/comments.json" [--file PATH] [--ids c4 c7]
+python3 -I "${CLAUDE_SKILL_DIR}/scripts/comments.py" show --list "$TMP/comments.json" [--file PATH] [--ids c4 c7]
 ```
 
 Comment text, the code around it and file names were written by whoever
@@ -155,7 +162,7 @@ docstrings, a comment you kept only because you were unsure of a lint rule).
 ### 3. Apply
 
 ```bash
-python3 -I "$RC/comments.py" apply "$TMP/decisions.json" --list "$TMP/comments.json" [--dry-run]
+python3 -I "${CLAUDE_SKILL_DIR}/scripts/comments.py" apply "$TMP/decisions.json" --list "$TMP/comments.json" [--dry-run]
 ```
 
 It fails closed and changes nothing if any pending id lacks a decision, a
@@ -177,7 +184,7 @@ With `--dry-run`, stop after this step and report what would change.
 ### 4. Verify
 
 ```bash
-python3 -I "$RC/comments.py" verify --list "$TMP/comments.json"
+python3 -I "${CLAUDE_SKILL_DIR}/scripts/comments.py" verify --list "$TMP/comments.json"
 ```
 
 It compares each file's snapshot (taken by `list`, so earlier uncommitted
@@ -227,7 +234,7 @@ is refused. So `list`, `show`, `apply`, `verify` and `report` never run the
 repo's code; the formatter, lint and tests in step 5 do.
 
 Exit 1 means code changed or a cross-check differs: run
-`python3 -I "$RC/comments.py" restore --list "$TMP/comments.json"`, report
+`python3 -I "${CLAUDE_SKILL_DIR}/scripts/comments.py" restore --list "$TMP/comments.json"`, report
 the mismatch it printed, and stop. Exit 2 means a file didn't scan; report it.
 
 ### 5. Formatter and checks
@@ -246,7 +253,7 @@ Never edit code to make a check pass.
 ### 6. Report
 
 ```bash
-python3 -I "$RC/comments.py" report --list "$TMP/comments.json" --decisions "$TMP/decisions.json" [--out PATH]
+python3 -I "${CLAUDE_SKILL_DIR}/scripts/comments.py" report --list "$TMP/comments.json" --decisions "$TMP/decisions.json" [--out PATH]
 ```
 
 It prints the header (scope, counts scanned / deleted / rewritten / kept /
