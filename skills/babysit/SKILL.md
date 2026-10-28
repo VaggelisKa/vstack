@@ -125,6 +125,14 @@ a label change.
   then stay at 15.
 - Any new event resets the interval to **2 min**.
 
+**How to wait.** In Claude Code a foreground command is capped at 10 minutes,
+and you must not chain sleep calls. While CI runs, prefer
+`gh pr checks <pr> --watch` (or `gh run watch <run-id>`) under a timeout below
+that cap, e.g. `timeout 540 gh pr checks <pr> --watch`. For the idle
+intervals, use the harness's scheduled wake-up or timer tool when it offers
+one, instead of sleeping. Other harnesses: use their own wait or scheduler
+tool, else one sleep per interval.
+
 ### Stop conditions
 
 Stop and write the final report when the first of these is true:
@@ -200,7 +208,8 @@ whether the PR is `settled`, each failing check and thread as `open`,
    comment (humans and bots) using the table below. Mark each as handled once
    acted on.
 3. **Act.** If there are fix items, run one fix round (below). Post replies.
-4. **Re-evaluate** stop conditions, then sleep for the current interval.
+4. **Re-evaluate** stop conditions, then wait for the current interval (see
+   How to wait, above).
 
 ## Triage
 
