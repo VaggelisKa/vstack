@@ -48,7 +48,9 @@ If the line above is empty or still reads as a literal `$ARGUMENTS` (harnesses o
     ("babysit 14 ... merge 15"), no merge; say so in the final report.
 
 `<pr>` is a number, URL or branch accepted by `gh pr view`. **Default is no
-merge.** Read [merge.md](merge.md) only when the request explicitly asked to merge.
+merge.** Read [merge.md](merge.md) in full only when the request explicitly
+asked to merge. Without merge mode, read only its gate 2: the approval rule
+the done condition uses.
 
 Requires `gh` 2.42 or newer (for `gh pr update-branch`; `gh pr checks --required`
 and `gh pr merge --match-head-commit` are older). Check with `gh --version`.
@@ -79,7 +81,7 @@ and `gh pr merge --match-head-commit` are older). Check with `gh --version`.
 Each poll, gather state for the current head SHA:
 
 ```bash
-gh pr view <pr> --json state,isDraft,headRefOid,baseRefOid,mergeable,mergeStateStatus,reviewDecision,reviews,comments,labels,statusCheckRollup
+gh pr view <pr> --json state,isDraft,author,headRefOid,baseRefOid,mergeable,mergeStateStatus,reviewDecision,reviews,comments,labels,statusCheckRollup
 ```
 
 Each entry in `reviews` carries `commit.oid`, the SHA the review was made on.
@@ -128,9 +130,10 @@ a label change.
 Stop and write the final report when the first of these is true:
 
 1. The PR is **merged or closed**.
-2. It is **done**: all checks green on the head SHA, approved by a review whose
-   `commit.oid` equals the current `headRefOid` (older approvals don't count),
-   no outstanding changes-requested review, and zero unresolved threads.
+2. It is **done**: all checks green on the head SHA, the approval rule in
+   [merge.md](merge.md) (gate 2) met on the current `headRefOid` (older
+   approvals don't count), no outstanding changes-requested review, and zero
+   unresolved threads.
    Without merge mode, this is a stop: report. With it, it is **not** a
    stop: hand off to merge.md, which keeps the loop running until the PR merges
    or another stop condition hits.
