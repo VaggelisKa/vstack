@@ -64,6 +64,10 @@ When the run ends, the first match sets `status`:
   merging). Needs `approved_on_head`, `mergeable: true`, every required check
   `passing`, `ci.state` `passing` or `none`, no `changes_requested` and no
   open thread. With no required checks, `ci.state` must be `none`.
+  `green` still needs `approved_on_head` even on a repo that requires no
+  approval (merge.md, gate 2). Done or merged there with no approval on the
+  head ends `handed_back`, and `last_action` says it is done and that no
+  approval was needed or given.
 - `failed`: an unrecoverable error, or checks still failing when it ended.
   Never when everything `green` needs holds: that's `green`.
 - `handed_back`: anything else: an escalation or limit stopped progress, it
