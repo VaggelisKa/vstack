@@ -17,6 +17,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 
 
 def git_env(drop=()):
@@ -85,9 +86,17 @@ def _sweep():
         rmtree(d)
 
 
-# atexit doesn't run on SIGTERM by default; exit normally so _sweep does.
-if signal.getsignal(signal.SIGTERM) is signal.SIG_DFL:
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+def _on_sigterm(signum, frame):
+    # atexit doesn't run on a signal death, and unittest would catch SystemExit
+    # as a test error. Run every loaded copy's sweep, then die by SIGTERM.
+    atexit._run_exitfuncs()
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
+# Off the main thread signal.signal raises; keep any handler (or SIG_IGN) already set.
+if threading.current_thread() is threading.main_thread() and signal.getsignal(signal.SIGTERM) is signal.SIG_DFL:
+    signal.signal(signal.SIGTERM, _on_sigterm)
 
 
 def tmpdir(test):
