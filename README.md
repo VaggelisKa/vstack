@@ -14,6 +14,28 @@ Personal agent skills, packaged as one plugin (`vstack`) for Claude Code, Codex,
 
 `review` and `babysit` record each PR's outcome as JSON in `$(git rev-parse --git-common-dir)/vstack/<pr>/<skill>.json`, outside the working tree; read it with the skill's `scripts/read-result.py`.
 
+## Does it help?
+
+Each skill has eval cases that run the same prompt twice, once with vstack installed and once without, against a fake GitHub that logs every push, reply and merge. Graders check that log and the transcript: did it fix the failing check, reply to the question, merge only when asked, leave unrelated code alone. The chart shows the share of graders passed in each arm, on the smoke set (15 of the 87 cases, including ones where the skill should stay out of the way). See [Evals](docs/contributing.md#evals) to run them yourself.
+
+<!-- evals:start -->
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/evals-dark.svg">
+  <img alt="Eval score per skill, without and with vstack" src="docs/evals-light.svg">
+</picture>
+
+| Skill | Cases | Without vstack | With vstack | Change |
+|---|--:|--:|--:|--:|
+| **All skills** | 15 | 71% | **90%** | **+19 pts** |
+| `autonomous-merge` | 2 | 65% | 100% | +35 pts |
+| `html-plan` | 2 | 64% | 86% | +22 pts |
+| `babysit` | 6 | 78% | 98% | +20 pts |
+| `review` | 3 | 54% | 67% | +13 pts |
+| `remove-comments` | 2 | 89% | 96% | +7 pts |
+
+<sub>15 eval cases, 1 run per arm, Claude Code 2.1.312, 2026-10-29. Score: share of a case's graders passed.</sub>
+<!-- evals:end -->
+
 ## Install
 
 ### Claude Code

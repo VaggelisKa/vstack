@@ -19,6 +19,7 @@ HARNESS = pathlib.Path(__file__).resolve().parent.parent
 ROOT = HARNESS.parent.parent
 EVALS = HARNESS.parent
 sys.path.insert(0, str(HARNESS))
+import chart  # noqa: E402
 import scaffold  # noqa: E402
 import sync  # noqa: E402
 
@@ -166,6 +167,22 @@ class Sync(unittest.TestCase):
         for d in sorted(p for p in EVALS.iterdir() if (p / "fixture.json").exists()):
             with self.subTest(case=d.name):
                 workspace(self, json.loads((d / "fixture.json").read_text()))
+
+
+class Chart(unittest.TestCase):
+    def test_averages_runs_then_cases_and_skips_one_armed_cases(self):
+        arms = lambda w, wo: {"with": [{"score": s} for s in w], "without": [{"score": s} for s in wo]}  # noqa: E731
+        rows = chart.summarize({"cases": [
+            {"name": "babysit-01-a", "arms": arms([1, 0.5], [0.5, 0.5])},
+            {"name": "babysit-02-b", "arms": arms([1], [0])},
+            {"name": "autonomous-merge-01-c", "arms": arms([1], [1])},
+            {"name": "review-01-d", "arms": {"with": [{"score": 1}]}},
+        ]})
+        self.assertEqual(rows[0], ("All skills", 3, 0.5, 0.9166666666666666))
+        self.assertEqual(rows[1], ("babysit", 2, 0.25, 0.875))
+        self.assertEqual(rows[2], ("autonomous-merge", 1, 1, 1))
+        self.assertEqual(chart.delta(0.25, 0.875), "+63 pts")
+        self.assertIn("| `babysit` | 2 | 25% | 88% | +63 pts |", chart.section(rows, "note"))
 
 
 if __name__ == "__main__":

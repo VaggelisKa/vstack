@@ -125,6 +125,13 @@ babysit and autonomous-merge cases run whole review and CI loops ($0.30 to $3
 per run), so cap it with `--max-cost-usd`. Tags: `smoke`, `merge-intent` and
 `trigger` (cases checking that a skill does or doesn't start from plain words).
 
+The README's chart comes from one run with both arms. Regenerate it, and the
+table under it, after a run:
+
+```
+python3 evals/_harness/chart.py evals/results/<timestamp>/aggregate-result.json
+```
+
 The eval sandbox hides your home directory, and the skills' scripts need Python
 3.10+. If the only Python 3.10+ you have is under `~` (pyenv, uv), `run.sh` puts
 one in `evals/.python/` (ignored), or set `VSTACK_EVAL_PYTHON`.
