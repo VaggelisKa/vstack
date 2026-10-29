@@ -1,5 +1,10 @@
 import os
+import pathlib
+import signal
 import stat
+import subprocess
+import sys
+import textwrap
 import unittest
 
 from helpers import rmtree, tmpdir
@@ -23,11 +28,39 @@ class RmtreeTest(unittest.TestCase):
         outside = tmpdir(self)
         (outside / "keep").write_text("k")
         os.chmod(outside / "keep", stat.S_IRUSR)
+        os.chmod(outside, 0o750)
         d = tmpdir(self)
         os.symlink(outside, d / "link")
         rmtree(d)
         self.assertFalse(os.path.lexists(d))
         self.assertEqual(stat.S_IMODE(os.stat(outside / "keep").st_mode), stat.S_IRUSR)
+        self.assertEqual(stat.S_IMODE(os.stat(outside).st_mode), 0o750)
+
+    def test_sigterm_removes_temp_dirs(self):
+        child = textwrap.dedent("""
+            import os, sys, time, unittest
+            sys.path.insert(0, %r)
+            import helpers
+            class T(unittest.TestCase):
+                def test(self):
+                    d = helpers.tmpdir(self)
+                    (d / "locked").mkdir()
+                    os.chmod(d / "locked", 0)
+                    print(d, flush=True)
+                    time.sleep(60)
+            unittest.main()
+        """) % str(pathlib.Path(__file__).resolve().parent)
+        p = subprocess.Popen([sys.executable, "-c", child], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        try:
+            d = p.stdout.readline().strip()
+            self.assertTrue(d and os.path.isdir(d))
+            p.send_signal(signal.SIGTERM)
+            self.assertEqual(p.wait(30), -signal.SIGTERM)
+        finally:
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+        self.assertFalse(os.path.lexists(d))
 
 
 if __name__ == "__main__":
