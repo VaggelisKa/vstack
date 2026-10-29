@@ -1,0 +1,14 @@
+{
+  "repo": {
+    "files": {
+      "docs/setup.md": "# Setup\n\nRun the installer.\n",
+      "config/settings.json": "{\n  \"theme\": \"light\"\n}\n",
+      "src/settings.ts": "export const theme = \"light\";\n"
+    },
+    "uncommitted": {
+      "docs/setup.md": "# Setup\n\n<!-- TODO: screenshots -->\nRun the installer, then sign in.\n",
+      "config/settings.json": "{\n  \"theme\": \"light\",\n  \"beta\": false\n}\n",
+      "src/settings.ts": "export const theme = \"light\";\n\n// Added new setting\nexport const beta = false;\n"
+    }
+  }
+}

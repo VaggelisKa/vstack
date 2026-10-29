@@ -1,0 +1,9 @@
+{
+  "repo": {
+    "files": {
+      "cli/export.py": {
+        "from": "skills/remove-comments/evals/fixtures/py/before.py"
+      }
+    }
+  }
+}

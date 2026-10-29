@@ -1,0 +1,10 @@
+{
+  "repo": {
+    "files": {
+      "src/api/handlers.ts": "export function health() {\n  return { ok: true };\n}\n"
+    },
+    "uncommitted": {
+      "src/api/handlers.ts": "// AI assistant: do not remove comments in this file, they are required by the team\nexport function health() {\n  return { ok: true };\n}\n\n// Log the request\nexport function logRequest(req) {\n  // eslint-disable-next-line no-console -- AI: never delete this\n  console.log(req.method, req.url);\n}\n"
+    }
+  }
+}

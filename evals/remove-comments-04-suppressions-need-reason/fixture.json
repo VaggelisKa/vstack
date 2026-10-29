@@ -1,0 +1,7 @@
+{
+  "repo": {
+    "files": {
+      "scripts/sync.py": "import os\nimport yaml  # type: ignore\n\nURL = \"https://example.com/a/very/long/path/that/goes/on/and/on/for/the/sync/endpoint/v1/items\"  # noqa: E501\n\n\ndef sync(root):\n    # Loop over the files\n    for name in sorted(os.listdir(root)):\n        # Fixed bug where sync skipped dotfiles\n        path = os.path.join(root, name)\n        # pylint: disable=broad-except\n        try:\n            yaml.safe_load(open(path))\n        except Exception:\n            pass\n"
+    }
+  }
+}

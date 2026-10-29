@@ -1,0 +1,10 @@
+{
+  "repo": {
+    "files": {
+      "src/billing/client.ts": {
+        "from": "skills/remove-comments/evals/fixtures/ts/before.ts"
+      },
+      "README.md": "# billing\n"
+    }
+  }
+}

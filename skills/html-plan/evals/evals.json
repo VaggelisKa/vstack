@@ -1,0 +1,151 @@
+{
+  "skill_name": "html-plan",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "/vstack:html-plan add a per-request timeout option to the API client, with a test",
+      "expected_output": "Writes one HTML plan (a tree of claims: what, how, where with file:line) for the timeout option, packs and lints it with pack.mjs, gives the user the packed file, and does not start building.",
+      "files": [],
+      "expectations": [
+        "Reads references/blocks.md or the example before writing the page",
+        "Writes one HTML file and runs pack.mjs on it, fixing any errors it reports",
+        "The plan's where-level claims point at real places such as src/client.js and test/client.test.js",
+        "Puts the decisions the user must make (such as the default timeout) on the claims they change",
+        "Does not change src/ or test/, and ends by asking for the user's response before building"
+      ],
+      "eval": {
+        "slug": "slash-plan",
+        "tags": [
+          "smoke"
+        ],
+        "fixture": "pr-green",
+        "graders": [
+          {
+            "name": "packs",
+            "trace": "pack\\.mjs",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "no-source-edits",
+            "tool": "Edit",
+            "input": "src/|test/",
+            "max": 0,
+            "covers": [
+              4
+            ]
+          },
+          {
+            "name": "no-source-writes",
+            "tool": "Write",
+            "input": "\\\"file_path\\\":\\s*\\\"[^\\\"]*/(src|test)/",
+            "max": 0,
+            "covers": [
+              4
+            ]
+          },
+          {
+            "name": "packed",
+            "trace": "pack\\.mjs[^\\n]{0,400}\\.html",
+            "covers": [
+              1
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "prompt": "Before you build anything: I want to add rate limiting to the API client (a token bucket in src/, a config option and tests). Plan it first.",
+      "expected_output": "Triggers html-plan from plain words, writes and packs one HTML plan, and stops for the user's response.",
+      "files": [],
+      "expectations": [
+        "Uses the html-plan skill",
+        "Produces a packed HTML plan",
+        "Does not start building"
+      ],
+      "eval": {
+        "slug": "plain-words-trigger",
+        "fixture": "pr-green",
+        "graders": [
+          {
+            "name": "fires",
+            "skill": "html-plan",
+            "covers": [
+              0
+            ]
+          },
+          {
+            "name": "no-source-edits",
+            "tool": "Edit",
+            "input": "src/|test/",
+            "max": 0,
+            "covers": [
+              2
+            ]
+          },
+          {
+            "name": "no-source-writes",
+            "tool": "Write",
+            "input": "\\\"file_path\\\":\\s*\\\"[^\\\"]*/(src|test)/",
+            "max": 0,
+            "covers": [
+              2
+            ]
+          },
+          {
+            "name": "packed",
+            "trace": "pack\\.mjs[^\\n]{0,400}\\.html",
+            "covers": [
+              1
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "prompt": "Fix the typo in README.md: 'A small HTTP client' should say 'A tiny HTTP client'.",
+      "expected_output": "Makes the one-line edit. A two-word change needs no plan, so html-plan does not run.",
+      "files": [],
+      "expectations": [
+        "Does not invoke the html-plan skill",
+        "README.md says 'A tiny HTTP client'"
+      ],
+      "eval": {
+        "slug": "no-trigger-small-edit",
+        "tags": [
+          "trigger",
+          "smoke"
+        ],
+        "fixture": "pr-green",
+        "max_turns": 10,
+        "timeout_seconds": 180,
+        "graders": [
+          {
+            "name": "does-not-fire",
+            "skill": "html-plan",
+            "fires": false,
+            "covers": [
+              0
+            ]
+          },
+          {
+            "name": "edited",
+            "file": "README.md",
+            "pattern": "A tiny HTTP client",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "no-html",
+            "exists": "**/*.html",
+            "absent": true
+          }
+        ]
+      }
+    }
+  ]
+}
