@@ -23,11 +23,13 @@ class RmtreeTest(unittest.TestCase):
         outside = tmpdir(self)
         (outside / "keep").write_text("k")
         os.chmod(outside / "keep", stat.S_IRUSR)
+        os.chmod(outside, 0o750)
         d = tmpdir(self)
         os.symlink(outside, d / "link")
         rmtree(d)
         self.assertFalse(os.path.lexists(d))
         self.assertEqual(stat.S_IMODE(os.stat(outside / "keep").st_mode), stat.S_IRUSR)
+        self.assertEqual(stat.S_IMODE(os.stat(outside).st_mode), 0o750)
 
 
 if __name__ == "__main__":

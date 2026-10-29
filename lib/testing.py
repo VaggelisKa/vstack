@@ -12,6 +12,7 @@ import contextlib
 import os
 import pathlib
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -82,6 +83,11 @@ def rmtree(path):
 def _sweep():
     for d in list(_LIVE):
         rmtree(d)
+
+
+# atexit doesn't run on SIGTERM by default; exit normally so _sweep does.
+if signal.getsignal(signal.SIGTERM) is signal.SIG_DFL:
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
 
 
 def tmpdir(test):
