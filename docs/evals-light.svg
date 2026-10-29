@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="362" viewBox="0 0 760 362" font-family="-apple-system, BlinkMacSystemFont, &#x27;Segoe UI&#x27;, Helvetica, Arial, sans-serif" role="img" aria-label="Eval score per skill, without and with vstack">
+<circle cx="176" cy="22" r="6" fill="#86b6ef"/><text x="188" y="26" font-size="13" fill="#59636e">without vstack</text><circle cx="306" cy="22" r="6" fill="#1c5cab"/><text x="318" y="26" font-size="13" fill="#59636e">with vstack</text>
+<line x1="170.0" y1="50" x2="170.0" y2="304" stroke="#eaeef2" stroke-width="1"/><text x="170.0" y="322" font-size="12" text-anchor="middle" fill="#59636e">0%</text>
+<line x1="287.5" y1="50" x2="287.5" y2="304" stroke="#eaeef2" stroke-width="1"/><text x="287.5" y="322" font-size="12" text-anchor="middle" fill="#59636e">25%</text>
+<line x1="405.0" y1="50" x2="405.0" y2="304" stroke="#eaeef2" stroke-width="1"/><text x="405.0" y="322" font-size="12" text-anchor="middle" fill="#59636e">50%</text>
+<line x1="522.5" y1="50" x2="522.5" y2="304" stroke="#eaeef2" stroke-width="1"/><text x="522.5" y="322" font-size="12" text-anchor="middle" fill="#59636e">75%</text>
+<line x1="640.0" y1="50" x2="640.0" y2="304" stroke="#eaeef2" stroke-width="1"/><text x="640.0" y="322" font-size="12" text-anchor="middle" fill="#59636e">100%</text>
+<text x="154" y="73" font-size="14" font-weight="600" text-anchor="end" fill="#1f2328">All skills</text><text x="154" y="88" font-size="11" text-anchor="end" fill="#59636e">15 cases</text>
+<line x1="505.2" y1="76" x2="593.6" y2="76" stroke="#d1d9e0" stroke-width="4" stroke-linecap="round"/>
+<circle cx="505.2" cy="76" r="7" fill="#86b6ef" stroke="#ffffff" stroke-width="2"><title>All skills, without vstack: 71%</title></circle>
+<circle cx="593.6" cy="76" r="7" fill="#1c5cab" stroke="#ffffff" stroke-width="2"><title>All skills, with vstack: 90%</title></circle>
+<text x="662" y="81" font-size="14" font-weight="600" fill="#1f2328">+19 pts</text>
+<text x="154" y="115" font-size="14" font-weight="400" text-anchor="end" fill="#1f2328">autonomous-merge</text><text x="154" y="130" font-size="11" text-anchor="end" fill="#59636e">2 cases</text>
+<line x1="473.5" y1="118" x2="640.0" y2="118" stroke="#d1d9e0" stroke-width="4" stroke-linecap="round"/>
+<circle cx="473.5" cy="118" r="7" fill="#86b6ef" stroke="#ffffff" stroke-width="2"><title>autonomous-merge, without vstack: 65%</title></circle>
+<circle cx="640.0" cy="118" r="7" fill="#1c5cab" stroke="#ffffff" stroke-width="2"><title>autonomous-merge, with vstack: 100%</title></circle>
+<text x="662" y="123" font-size="14" font-weight="400" fill="#1f2328">+35 pts</text>
+<text x="154" y="157" font-size="14" font-weight="400" text-anchor="end" fill="#1f2328">html-plan</text><text x="154" y="172" font-size="11" text-anchor="end" fill="#59636e">2 cases</text>
+<line x1="472.1" y1="160" x2="572.9" y2="160" stroke="#d1d9e0" stroke-width="4" stroke-linecap="round"/>
+<circle cx="472.1" cy="160" r="7" fill="#86b6ef" stroke="#ffffff" stroke-width="2"><title>html-plan, without vstack: 64%</title></circle>
+<circle cx="572.9" cy="160" r="7" fill="#1c5cab" stroke="#ffffff" stroke-width="2"><title>html-plan, with vstack: 86%</title></circle>
+<text x="662" y="165" font-size="14" font-weight="400" fill="#1f2328">+22 pts</text>
+<text x="154" y="199" font-size="14" font-weight="400" text-anchor="end" fill="#1f2328">babysit</text><text x="154" y="214" font-size="11" text-anchor="end" fill="#59636e">6 cases</text>
+<line x1="538.8" y1="202" x2="630.2" y2="202" stroke="#d1d9e0" stroke-width="4" stroke-linecap="round"/>
+<circle cx="538.8" cy="202" r="7" fill="#86b6ef" stroke="#ffffff" stroke-width="2"><title>babysit, without vstack: 78%</title></circle>
+<circle cx="630.2" cy="202" r="7" fill="#1c5cab" stroke="#ffffff" stroke-width="2"><title>babysit, with vstack: 98%</title></circle>
+<text x="662" y="207" font-size="14" font-weight="400" fill="#1f2328">+20 pts</text>
+<text x="154" y="241" font-size="14" font-weight="400" text-anchor="end" fill="#1f2328">review</text><text x="154" y="256" font-size="11" text-anchor="end" fill="#59636e">3 cases</text>
+<line x1="424.6" y1="244" x2="483.3" y2="244" stroke="#d1d9e0" stroke-width="4" stroke-linecap="round"/>
+<circle cx="424.6" cy="244" r="7" fill="#86b6ef" stroke="#ffffff" stroke-width="2"><title>review, without vstack: 54%</title></circle>
+<circle cx="483.3" cy="244" r="7" fill="#1c5cab" stroke="#ffffff" stroke-width="2"><title>review, with vstack: 67%</title></circle>
+<text x="662" y="249" font-size="14" font-weight="400" fill="#1f2328">+13 pts</text>
+<text x="154" y="283" font-size="14" font-weight="400" text-anchor="end" fill="#1f2328">remove-comments</text><text x="154" y="298" font-size="11" text-anchor="end" fill="#59636e">2 cases</text>
+<line x1="589.6" y1="286" x2="623.2" y2="286" stroke="#d1d9e0" stroke-width="4" stroke-linecap="round"/>
+<circle cx="589.6" cy="286" r="7" fill="#86b6ef" stroke="#ffffff" stroke-width="2"><title>remove-comments, without vstack: 89%</title></circle>
+<circle cx="623.2" cy="286" r="7" fill="#1c5cab" stroke="#ffffff" stroke-width="2"><title>remove-comments, with vstack: 96%</title></circle>
+<text x="662" y="291" font-size="14" font-weight="400" fill="#1f2328">+7 pts</text>
+<text x="170" y="352" font-size="11" fill="#59636e">15 eval cases, 1 run per arm, Claude Code 2.1.312, 2026-10-29. Score: share of a case&#x27;s graders passed.</text></svg>
