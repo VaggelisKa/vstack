@@ -77,7 +77,8 @@ class Scenarios(unittest.TestCase):
     def test_push_is_logged_and_moves_the_head(self):
         cwd, env = workspace(self, fixture())
         (cwd / "README.md").write_text("changed\n")
-        sh(cwd, env, "git", "commit", "-qam", "change")
+        r = sh(cwd, env, "git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "change")
+        self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(sh(cwd, env, "git", "push", "--dry-run").returncode, 0)
         self.assertEqual(sh(cwd, env, "git", "push", "-q").returncode, 0)
         self.assertEqual(sh(cwd, env, "git", "push", "-q").returncode, 0)
