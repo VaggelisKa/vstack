@@ -118,20 +118,17 @@ An **event** is anything new since the last poll: a new head SHA, a check
 changing state, a new review, comment or thread, a thread resolved/unresolved,
 a label change.
 
-### Cadence
+### Waiting between polls
 
-- While any check is queued or running: poll every **2 min**.
-- When idle (nothing running, waiting on humans): back off **2 → 4 → 8 → 15 min**,
-  then stay at 15.
-- Any new event resets the interval to **2 min**.
+This skill doesn't set a polling interval or a way to wait. Between polls, ask
+your harness to watch the PR for you with whatever it offers (PR event
+subscriptions, a monitor, a scheduled wake-up, a timer) and pick the timing
+yourself: sooner while CI is running or right after an event, less often while
+everything waits on people. When it wakes you, run the next poll.
 
-**How to wait.** In Claude Code a foreground command is capped at 10 minutes,
-and you must not chain sleep calls. While CI runs, prefer
-`gh pr checks <pr> --watch` (or `gh run watch <run-id>`) under a timeout below
-that cap, e.g. `timeout 540 gh pr checks <pr> --watch`. For the idle
-intervals, use the harness's scheduled wake-up or timer tool when it offers
-one, instead of sleeping. Other harnesses: use their own wait or scheduler
-tool, else one sleep per interval.
+Use only what your harness supports; don't follow another harness's recipe.
+Don't busy-loop: coordination counts quiet polls (see below), so polls back
+to back with nothing new make another fixer's claim look stale too soon.
 
 ### Stop conditions
 
@@ -162,7 +159,7 @@ whether the PR is `settled`, each failing check and thread as `open`,
 [references/coordination.md](references/coordination.md).
 
 - Triage, fix, reply, rerun or merge only when `settled` is true, and only on
-  ids in `actionable`. Otherwise keep polling at the normal cadence.
+  ids in `actionable`. Otherwise keep polling.
 - Never touch a claimed item, not even to reply.
 - Before working an item, claim it: `coordination.py claim --pr <number> --item <id>`
   (adds 👀, nothing else). Mark the work: `<!-- vstack:babysit:<id> -->` in each
@@ -208,8 +205,8 @@ whether the PR is `settled`, each failing check and thread as `open`,
    comment (humans and bots) using the table below. Mark each as handled once
    acted on.
 3. **Act.** If there are fix items, run one fix round (below). Post replies.
-4. **Re-evaluate** stop conditions, then wait for the current interval (see
-   How to wait, above).
+4. **Re-evaluate** stop conditions, then wait for the next poll (see
+   Waiting between polls, above).
 
 ## Triage
 

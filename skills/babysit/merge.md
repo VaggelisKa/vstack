@@ -63,8 +63,8 @@ gh pr merge <pr> --auto --match-head-commit <headRefOid>
 
 ## After arming: keep polling
 
-Auto-merge stays armed until GitHub merges, so keep running the loop at the
-normal cadence. Disarm and go back to the loop if any of these appears:
+Auto-merge stays armed until GitHub merges, so keep running the loop.
+Disarm and go back to the loop if any of these appears:
 
 - a new head SHA,
 - a hold label,
