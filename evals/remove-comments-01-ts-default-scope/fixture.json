@@ -1,0 +1,15 @@
+{
+  "repo": {
+    "files": {
+      "src/client.ts": {
+        "from": "skills/remove-comments/evals/fixtures/ts/before.ts",
+        "until": "// ---- Types ----"
+      }
+    },
+    "uncommitted": {
+      "src/client.ts": {
+        "from": "skills/remove-comments/evals/fixtures/ts/before.ts"
+      }
+    }
+  }
+}

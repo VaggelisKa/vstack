@@ -38,6 +38,9 @@ jobs:
         run: python3 -m unittest discover -s skills/autonomous-merge/scripts/tests -v
       - name: remove-comments tests
         run: python3 -m unittest discover -s skills/remove-comments/scripts/tests -v
+      # The eval harness, and evals/ against skills/*/evals/evals.json. No model calls.
+      - name: eval harness tests
+        run: python3 -m unittest discover -s evals/_harness/tests -v
       - name: Shell syntax
         run: bash -n skills/review/scripts/git-read.sh
       - name: html-plan syntax
