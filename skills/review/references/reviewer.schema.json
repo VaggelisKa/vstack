@@ -8,7 +8,7 @@
     "id": { "type": "string", "description": "Reviewer id assigned in the prompt, e.g. R3." },
     "kind": {
       "type": "string",
-      "enum": ["security", "data-integrity", "concurrency", "architecture", "design", "ui-live", "scalability", "bug-hunt"]
+      "enum": ["security", "data-integrity", "concurrency", "architecture", "design", "ui-live", "scalability", "bug-hunt", "consistency"]
     },
     "area": { "type": "string", "description": "Area name assigned in the prompt." },
     "harness": { "type": "string", "description": "Where this reviewer ran, e.g. claude-code subagent, codex, gemini, agy, sequential personas." },
