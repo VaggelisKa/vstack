@@ -42,7 +42,8 @@ understandable, consistent, and hard to misuse? You read the code, and
 ## Not in scope
 
 Whether the code works (bug-hunt), module structure and dependency direction
-(architecture), visual rendering and runtime behaviour (ui-live), security of
+(architecture), internal naming, idioms and style that callers never see
+(consistency), visual rendering and runtime behaviour (ui-live), security of
 the API (security). Don't re-raise their findings in UX words.
 
 ## False-positive traps

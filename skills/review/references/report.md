@@ -11,6 +11,7 @@ common dir. Use this structure:
 ## Decision: <Ship | Ship with fixes | Rethink | Incomplete>[, based on <n> [confirmed and <m>] unverified <blockers|majors>]
 <one or two sentences on why; Incomplete names the K=3 area and the gap>
 Score: <weighted mean>/10 (min <x> from <reviewer>), advisory.
+Consistency: <weighted mean of consistency reviewers>/10, compared against <conventions, one line> | not graded (<why>).
 
 ## Findings
 <ranked: severity (blocker > major > minor > nit), then number of agreeing reviewers, then confidence>
@@ -57,7 +58,7 @@ repeat it under "Plan" in the report:
 ```
 | Area | Files | +/- | C | K | Flags | Reviewers (lens × n, tier) |
 |------|-------|-----|---|---|-------|----------------------------|
-| api/auth | 3 | +120/-40 | 2 | 3 | tokens, input | security×3 strong, bug-hunt×3 strong |
+| api/auth | 3 | +120/-40 | 2 | 3 | tokens, input | security×3 strong, bug-hunt×3 strong, consistency×1 strong |
 | docs | 2 | +15/-3 | 0 | 0 | - | bug-hunt×1 cheap |
-Total reviewers: 7 / budget 8. Skeptics: est. 1-2. Agent runs: est. 8-9, plus one retry per failed result. Mode: parallel subagents.
+Total reviewers: 8 / budget 8. Skeptics: est. 1-2. Agent runs: est. 9-10, plus one retry per failed result. Mode: parallel subagents.
 ```

@@ -51,7 +51,7 @@ OpenAPI/proto/GraphQL schemas, `internal`/`_private` imports from outside.
 ## Not in scope
 
 Line-level bugs (bug-hunt), naming and ergonomics of a single API (design),
-performance (scalability), and personal taste in patterns when the codebase
+code-level naming, idioms and style conventions (consistency), performance (scalability), and personal taste in patterns when the codebase
 has no established convention.
 
 ## False-positive traps

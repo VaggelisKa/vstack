@@ -43,7 +43,7 @@ error handling, and tests that miss the point.
 Leave findings that belong to a specialist lens to that lens: attacker-driven
 issues (security), persisted-data corruption and migrations (data-integrity),
 interleavings (concurrency), performance (scalability), API taste (design),
-structure (architecture). If a specialist lens isn't running on this area and
+structure (architecture), fit with the codebase's conventions (consistency). If a specialist lens isn't running on this area and
 you find a serious problem in its domain, report it anyway and say so in the claim.
 
 ## False-positive traps

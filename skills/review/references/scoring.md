@@ -33,3 +33,4 @@ and risk, and note the risk flags you saw: they decide which lenses run.
 | UI files (components, styles, templates, screens) **and** a dev server you can run or reach | `ui-live` |
 | hot paths, DB queries, loops over unbounded data, N+1, caching, payload sizes | `scalability` |
 | every area | `bug-hunt` |
+| every area except `generated` and C=0 areas | `consistency` |

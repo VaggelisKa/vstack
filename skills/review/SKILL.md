@@ -182,12 +182,17 @@ Read [references/scoring.md](references/scoring.md) and give each area a
 **risk flags** you saw, which pick the lenses from its table. K=3 is authn/authz,
 crypto, secrets, money, PII, data writes, migrations or deletes, shared mutable
 state, prod infra or deploy config, or anything irreversible. `bug-hunt` runs
-on every area.
+on every area. `consistency` runs on every area except `generated` and C=0
+areas: it is the reviewer that reads beyond the diff, compares the change with
+how the rest of the codebase already does the same things (naming, idioms,
+error handling, reuse of existing helpers, structure, test style) and grades
+how well it fits.
 
 ### Count, tier, budget
 
 **Reviewers per (area, lens)**: start at 1, add 1 if C+K ≥ 4, and add 1 more if
-K = 3 and C ≥ 2, up to a maximum of 3. Copies of the same (area, lens) must be
+K = 3 and C ≥ 2, up to a maximum of 3. `consistency` always gets exactly 1:
+copies of a style judgement add cost, not evidence. Copies of the same (area, lens) must be
 independent: with `--cross` put them on different harnesses, otherwise give them
 different models or personas (personas are in [references/reviewer-contract.md](references/reviewer-contract.md)).
 Two identical reviewers just agree with each other, which adds cost without
@@ -212,10 +217,13 @@ makes it a mid-tier security reviewer.
 
 **Budget** (default 8). While there are more reviewers than the budget, remove
 one from the area with the lowest C+K (ties go to the lower K). Within that
-area, remove extra copies first, then the `bug-hunt` base reviewer, then the
-other lenses (a risk flag triggered those, so they're worth more than the
-generalist). Never remove `security` or `data-integrity` reviewers on a K=3
-area, or the last reviewer of a K=3 area. If the protected reviewers alone
+area, remove extra copies first, then `consistency`, then the `bug-hunt` base
+reviewer, then the other lenses (a risk flag triggered those, so they're worth
+more than the generalist). Never remove `security` or `data-integrity`
+reviewers on a K=3 area, or the last reviewer of a K=3 area. Keep the
+review's last `consistency` reviewer (the one on the highest C+K area) until
+every other removable reviewer is gone, so the change still gets a
+consistency grade. If the protected reviewers alone
 exceed the budget, run them anyway and say so. List areas that lose all their
 reviewers as "not reviewed (budget)".
 
@@ -390,6 +398,12 @@ of the final reviewer scores, each weighted by its area's C+K (use a weight of 1
 when C+K = 0), plus the **minimum** score and which reviewer gave it. Reviewers
 without a verdict are left out of both.
 
+**Consistency grade** (advisory too): the same weighted mean over the
+`consistency` reviewers only, with the conventions they compared against. It
+is reported next to the overall score, not instead of it, so a change that
+works but reads like a foreign codebase is visible at a glance. If no
+consistency reviewer produced a verdict, say "not graded" and why.
+
 ## 6. Report
 
 Write the full report to `--out`, or by default to
@@ -400,7 +414,7 @@ and footer rules in [references/report.md](references/report.md).
 Never quote a secret's value anywhere in the report or chat; redact it.
 
 Then print a short summary in the chat: the decision line as written, the score
-(mean and minimum), the top 3 findings with `file:line`, the number of failed
+(mean and minimum), the consistency grade, the top 3 findings with `file:line`, the number of failed
 or partial reviewers and skeptics when it isn't 0, and the report's absolute path.
 
 ## 7. Result file
