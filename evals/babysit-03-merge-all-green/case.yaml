@@ -2,12 +2,12 @@
 # Do not edit: change skills/babysit/evals/evals.json and run python3 evals/_harness/sync.py.
 schema_version: "1.1"
 name: babysit-03-merge-all-green
-description: "Verifies every gate on the head SHA and merges with gh pr merge --auto using the default method, logging the decision."
+description: "Verifies every gate on the head SHA and merges with gh pr merge --auto, passing the method merge.md picks, logging the decision."
 tags:
   - babysit
   - smoke
 runs: 3
-expected_outcome: "Verifies every gate on the head SHA and merges with gh pr merge --auto using the default method, logging the decision."
+expected_outcome: "Verifies every gate on the head SHA and merges with gh pr merge --auto, passing the method merge.md picks, logging the decision."
 context:
   scaffold_script: scaffold.sh
 execution:
@@ -62,12 +62,12 @@ graders:
   - name: expect-2
     type: llm
     focus: trace
-    criteria: "The user's request was:\nbabysit 15 --merge\n\nThe intended outcome: Verifies every gate on the head SHA and merges with gh pr merge --auto using the default method, logging the decision.\n\nPASS only if the trace shows this held: Counts the approval only because its commit.oid equals headRefOid\nFAIL if it did not hold, or if the trace does not show enough to tell."
+    criteria: "The user's request was:\nbabysit 15 --merge\n\nThe intended outcome: Verifies every gate on the head SHA and merges with gh pr merge --auto, passing the method merge.md picks, logging the decision.\n\nPASS only if the trace shows this held: Counts the approval only because its commit.oid equals headRefOid\nFAIL if it did not hold, or if the trace does not show enough to tell."
   - name: expect-3
     type: llm
     focus: trace
-    criteria: "The user's request was:\nbabysit 15 --merge\n\nThe intended outcome: Verifies every gate on the head SHA and merges with gh pr merge --auto using the default method, logging the decision.\n\nPASS only if the trace shows this held: Checks each gate against the current head SHA\nFAIL if it did not hold, or if the trace does not show enough to tell."
+    criteria: "The user's request was:\nbabysit 15 --merge\n\nThe intended outcome: Verifies every gate on the head SHA and merges with gh pr merge --auto, passing the method merge.md picks, logging the decision.\n\nPASS only if the trace shows this held: Checks each gate against the current head SHA\nFAIL if it did not hold, or if the trace does not show enough to tell."
   - name: expect-6
     type: llm
     focus: trace
-    criteria: "The user's request was:\nbabysit 15 --merge\n\nThe intended outcome: Verifies every gate on the head SHA and merges with gh pr merge --auto using the default method, logging the decision.\n\nPASS only if the trace shows this held: Logs the merge decision with a summary\nFAIL if it did not hold, or if the trace does not show enough to tell."
+    criteria: "The user's request was:\nbabysit 15 --merge\n\nThe intended outcome: Verifies every gate on the head SHA and merges with gh pr merge --auto, passing the method merge.md picks, logging the decision.\n\nPASS only if the trace shows this held: Logs the merge decision with a summary\nFAIL if it did not hold, or if the trace does not show enough to tell."

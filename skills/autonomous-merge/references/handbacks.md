@@ -25,7 +25,7 @@ handback.
 | `draft` | gate | The PR is a draft | Mark it ready when it is |
 | `conflicts` | gate | Conflicts with the base | Resolve them |
 | `changes_requested` | gate | A reviewer requested changes (`reviewDecision`, or a human's latest verdict), or the reviews couldn't be read | Get a re-review or dismissal |
-| `not_approved` | gate | An approval is required (or `reviewDecision` is APPROVED) but none from a non-author, non-bot reviewer is on the current head; stale approvals don't count (GitHub). Nobody approved (Bitbucket) | Get an approval on the head |
+| `not_approved` | gate | An approval is required (or `reviewDecision` is APPROVED, or the base branch's protection or rulesets couldn't be read) but too few from non-author, non-bot reviewers are on the current head; stale approvals don't count (GitHub). Nobody approved (Bitbucket) | Get an approval on the head |
 | `checks_failing` | gate | A required check is failing or pending (all checks when none are required or the required ones can't be read); on Bitbucket also no build status at all | Fix, rerun or wait |
 | `unresolved_threads` | gate | An unresolved review thread (Bitbucket: open task or inline comment), or threads couldn't all be read | A human resolves theirs |
 | `branch_protection` | gate | `mergeStateStatus` BLOCKED or BEHIND, or the merge was refused by protection or merge checks | Meet the rule; never bypass it |
@@ -45,7 +45,7 @@ handback.
 | `stale_claim` | gate, babysit | Another fixer claimed an item and went quiet (2 CI cycles or 3 polls) | Fix it yourself, or rerun babysit asking it to take over |
 | `merge_unsupported_host` | gate | A Bitbucket PR passed every check; autonomous-merge never merges there (no head-pinned merge, no babysit gate, merge permission only known at merge time) | Merge it yourself in Bitbucket |
 | `merge_failed` | gate | `gh pr merge` failed for another reason (gh's message is in `detail`), or auto-merge hadn't merged when the poll delays or the 8-minute deadline ran out (it's then disabled) | Read the message |
-| `unknown` | any | Anything else (no git remote, mergeability still unknown after re-polling, the base branch's rulesets unreadable, the PR unreadable after auto-merge was enabled, the gate interrupted by Ctrl-C or SIGTERM or an internal error while auto-merge was pending, network, an internal error) | Read `detail` |
+| `unknown` | any | Anything else (no git remote, mergeability still unknown after re-polling, the PR unreadable after auto-merge was enabled, the gate interrupted by Ctrl-C or SIGTERM or an internal error while auto-merge was pending, network, an internal error) | Read `detail` |
 
 `init --continue`, `init --fresh` and `reset` are the user's to run, never the
 model's. When the gate hands back after enabling auto-merge, it has already run

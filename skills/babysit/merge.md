@@ -16,24 +16,40 @@ gh pr view <pr> --json author,baseRefName,headRefOid,isDraft,mergeable,mergeStat
    branch protection (`gh api repos/OWNER/REPO/branches/BASE/protection`, or
    `gh pr checks <pr> --required`). If protection can't be read, **fail closed**:
    treat every check as required, and say so in the final report.
-2. **Approvals, when required, are on the head SHA.** An approval is needed
-   only when the repo requires one or `reviewDecision` is `APPROVED`. The repo
-   requires one when `reviewDecision` is `REVIEW_REQUIRED`, or a ruleset on the
-   base sets `required_approving_review_count` above 0: read
-   `gh api --paginate --slurp repos/OWNER/REPO/rules/branches/BASE` and take
-   the highest `parameters.required_approving_review_count` among its
-   `pull_request` rules (a 404 means no rulesets).
-   - When needed: that many approvals, and at least one. Each must be a
-     reviewer's latest verdict (approve, dismiss or request changes), be
-     `APPROVED`, have `commit.oid == headRefOid`, and come from someone other
-     than the PR author and not a bot (`author.__typename == "Bot"`).
-     Approvals on any older commit are stale and don't count, so every push
-     needs re-approval.
-   - With no review requirement, this gate passes without an approval and
-     branch protection decides (gate 5, and GitHub when it merges).
-   - If the rulesets can't be read (any error but a 404), the requirement is
-     unknown: the done condition treats an approval as needed, and in merge
-     mode this gate fails. Say so in the final report.
+2. **Approvals, only as many as the repo requires, are on the head SHA.**
+   Work out the base branch's review requirement from three sources:
+   - `reviewDecision`: any value (`REVIEW_REQUIRED`, `APPROVED`,
+     `CHANGES_REQUESTED`) means GitHub applies a review rule, so at least one
+     approval. Empty means it applies none.
+   - Classic branch protection: `gh api repos/OWNER/REPO/branches/BASE/protection`,
+     then `.required_pull_request_reviews.required_approving_review_count`
+     (absent means 0). A 404 whose message is `Branch not protected` means 0.
+     Any other error (403; a plain `Not Found` 404, which is what a non-admin
+     gets on a protected branch; anything else): read
+     `gh api repos/OWNER/REPO/branches/BASE --jq .protected`, which needs no
+     admin. `false` means 0; otherwise protection is **unreadable**.
+   - Rulesets: `gh api --paginate --slurp repos/OWNER/REPO/rules/branches/BASE`,
+     the highest `parameters.required_approving_review_count` among its
+     `pull_request` rules (0 if none, and 0 on a 404). Any other error:
+     **unreadable**.
+
+   Then:
+   - **Required** (any source above asks for one): the highest count, and at
+     least one. Each approval must be a reviewer's latest verdict (approve,
+     dismiss or request changes), be `APPROVED`, have
+     `commit.oid == headRefOid`, and come from someone other than the PR
+     author and not a bot (`author.__typename == "Bot"`). Approvals on any
+     older commit are stale and don't count, so every push needs re-approval.
+   - **None** (`reviewDecision` empty, protection says 0, rulesets say 0):
+     this gate passes with no approval. That includes an owner's own PR on an
+     unprotected repo, which nobody else may ever review.
+   - **Unknown** (`reviewDecision` empty, nothing readable asks for one, but
+     protection or rulesets are unreadable): fail closed, and treat it as
+     required with a count of one. It can't be proven that no review is
+     needed, so never merge unreviewed code on a guess; but don't block a
+     reviewed PR either, since GitHub still enforces any higher count when it
+     merges. Say in the final report which read failed and that one approval
+     was required because of it.
 3. **No changes-requested reviews** outstanding (latest review per reviewer),
    and **zero unresolved review threads**, with every page fetched (see SKILL.md;
    an unfetched page fails this gate).
@@ -52,13 +68,22 @@ gh pr view <pr> --json author,baseRefName,headRefOid,isDraft,mergeable,mergeStat
 ## Arming
 
 ```bash
-gh pr merge <pr> --auto --match-head-commit <headRefOid>
+gh pr merge <pr> --auto --<method> --match-head-commit <headRefOid>
 ```
 
 - `--match-head-commit` pins the merge to the SHA you checked; if the head moves,
   GitHub refuses it.
-- Use the repo's default merge method. Don't pass `--squash`/`--merge`/`--rebase`
-  unless the repo allows only one method and `gh` asks for it; then use that one.
+- Always pass a method: `gh pr merge` won't run without a prompt otherwise.
+  Read what the repo allows
+  (`gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed`).
+  If only one is allowed, use it. If several are, match how recent PRs were
+  merged into BASE: for the last few `gh pr list --base BASE --state merged -L 5 --json mergeCommit`,
+  fetch BASE and look at each merge commit (`git log -1 --format='%P%x09%s' <oid>`):
+  two parents is `--merge`; one parent with a subject ending `(#N)` is
+  `--squash`; anything else is `--rebase`. Use the method most of them used.
+  With no history or a tie, use `--squash` if allowed, else `--merge` (as
+  autonomous-merge's gate does). Method words in the request don't change this
+  (SKILL.md). Log the method and why.
 - **Never** use `--admin`, bypass branch protection, or force-push.
 
 ## After arming: keep polling

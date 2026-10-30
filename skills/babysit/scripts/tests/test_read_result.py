@@ -17,8 +17,9 @@ from helpers import GIT_ENV, SCRIPTS, criss_cross_repo, git, pr_repo, tmpdir
 SKILL = "babysit"
 OTHER = "fedcba9876543210fedcba9876543210fedcba98"
 RESULT = {"status": "running", "ci": {"state": "pending", "failing_checks": []}, "threads": [],
-          "last_action": "pushed a fix for test (ubuntu)", "mergeable": None, "approved_on_head": False,
-          "changes_requested": False, "required_checks": [{"name": "test (ubuntu)", "state": "pending"}]}
+          "last_action": "pushed a fix for test (ubuntu)", "mergeable": None, "approval_required": True,
+          "approved_on_head": False, "changes_requested": False,
+          "required_checks": [{"name": "test (ubuntu)", "state": "pending"}]}
 
 spec = importlib.util.spec_from_file_location("read_result", SCRIPTS / "read-result.py")
 reader = importlib.util.module_from_spec(spec)

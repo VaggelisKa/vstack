@@ -2,12 +2,12 @@
 # Do not edit: change skills/babysit/evals/evals.json and run python3 evals/_harness/sync.py.
 schema_version: "1.1"
 name: babysit-34-squash-words
-description: "A plain merge ask; 'squash' doesn't change the method. Merges with the repo's default method and reports it."
+description: "A plain merge ask; 'squash' doesn't change the method. Merges with the method merge.md picks (--merge, the only one the repo allows) and reports it."
 tags:
   - babysit
   - merge-intent
 runs: 3
-expected_outcome: "A plain merge ask; 'squash' doesn't change the method. Merges with the repo's default method and reports it."
+expected_outcome: "A plain merge ask; 'squash' doesn't change the method. Merges with the method merge.md picks (--merge, the only one the repo allows) and reports it."
 context:
   scaffold_script: scaffold.sh
 execution:

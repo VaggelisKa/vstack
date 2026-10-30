@@ -194,7 +194,23 @@ def reviews(s):
     return s["reviews"]
 
 
+def review_required(s):
+    """Whether a review rule applies to the base, as GitHub knows it even when the caller can't read
+    protection or rulesets: review_required in the fixture, else from branch_protection and rulesets."""
+    if s.get("review_required") is not None:
+        return s["review_required"]
+    bp, rules = s.get("branch_protection"), s.get("rulesets")
+    if "error" in (bp, rules):
+        return True
+    return bool((isinstance(bp, dict) and bp.get("required_approvals", 1) > 0) or any(
+        r.get("type") == "pull_request" and (r.get("parameters") or {}).get("required_approving_review_count", 0) > 0
+        for r in rules or []))
+
+
 def review_decision(s):
+    """GitHub's reviewDecision: empty when no review rule applies to the base."""
+    if not review_required(s):
+        return ""
     latest = {}
     for rv in reviews(s):
         if rv["state"] in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
@@ -217,7 +233,7 @@ def merge_state(s):
         return "BLOCKED" if any(c.get("required", True) and bucket(c) == "fail" for c in cs) else "UNSTABLE"
     if any(bucket(c) == "pending" for c in cs):
         return "BLOCKED"
-    return "CLEAN" if review_decision(s) == "APPROVED" else "BLOCKED"
+    return "CLEAN" if review_decision(s) in ("APPROVED", "") else "BLOCKED"
 
 
 def view(s, fields):
@@ -523,8 +539,8 @@ def pr_merge(s, opts):
     rs = s["repo_settings"]
     allowed = [m for m, k in (("merge", "allow_merge_commit"), ("squash", "allow_squash_merge"), ("rebase", "allow_rebase_merge"))
                if rs.get(k, True)]
-    if not methods:  # the repo's first allowed method, as GitHub orders them
-        methods = allowed[:1]
+    if not methods:  # gh only prompts for one in a terminal, and the agent's shell isn't one
+        fail("--merge, --rebase, or --squash required when not running interactively")
     method = methods[0]
     if method not in allowed:
         fail(f"GraphQL: {method.capitalize()} merges are not allowed on this repository. (mergePullRequest)")
@@ -653,7 +669,7 @@ def gql_pull(s):
     return {"id": v["id"](), "number": v["number"](), "title": v["title"](), "body": v["body"](), "url": v["url"](),
             "state": v["state"](), "isDraft": v["isDraft"](), "headRefName": v["headRefName"](), "baseRefName": v["baseRefName"](),
             "headRefOid": v["headRefOid"](), "baseRefOid": v["baseRefOid"](), "mergeable": v["mergeable"](),
-            "mergeStateStatus": v["mergeStateStatus"](), "reviewDecision": v["reviewDecision"](),
+            "mergeStateStatus": v["mergeStateStatus"](), "reviewDecision": v["reviewDecision"]() or None,
             "author": actor(pr(s)["author"]), "isCrossRepository": v["isCrossRepository"](),
             "autoMergeRequest": v["autoMergeRequest"](), "reviewThreads": threads_payload(s),
             "reviews": {"pageInfo": {"hasNextPage": False, "endCursor": None}, "nodes": [
@@ -834,6 +850,12 @@ def rest(s, method, path, fields):
         return {"required_status_checks": {"contexts": bp.get("required_status_checks", [])},
                 "required_pull_request_reviews": {"required_approving_review_count": bp.get("required_approvals", 1),
                                                   "dismiss_stale_reviews": bp.get("dismiss_stale_reviews", False)}}
+    m8 = re.fullmatch(r"branches/([^/]+)", rp)
+    if m8:
+        if m8.group(1) != pr(s)["baseRefName"]:
+            http(404, "Branch not found")
+        return {"name": m8.group(1), "protected": bool(s.get("branch_protection")),
+                "commit": {"sha": base(s)}}
     m7 = re.fullmatch(r"actions/runs/(\d+)(/jobs|/rerun-failed-jobs|/rerun)?", rp)
     if m7:
         sha, c = find_run(s, m7.group(1))

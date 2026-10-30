@@ -64,13 +64,30 @@ class Scenarios(unittest.TestCase):
         self.assertEqual(v, {"headRefOid": head, "reviewDecision": "APPROVED", "mergeStateStatus": "CLEAN",
                              "url": "https://github.com/acme/api/pull/14"})
         r = sh(cwd, env, "gh", "pr", "merge", "14", "--auto", "--match-head-commit", head)
+        self.assertIn("--merge, --rebase, or --squash required", r.stderr)  # as gh without a terminal
+        self.assertNotRegex(log(cwd), r"(?m)^# merge")
+        r = sh(cwd, env, "gh", "pr", "merge", "14", "--auto", "--squash", "--match-head-commit", head)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertRegex(log(cwd), rf"(?m)^# merged method=merge head={head}$")
+        self.assertRegex(log(cwd), rf"(?m)^# merged method=squash head={head}$")
         self.assertEqual(sh(cwd, env, "gh", "pr", "view", "14", "--json", "state", "-q", ".state").stdout.strip(), "MERGED")
+
+    def test_unprotected_base_needs_no_review(self):
+        cwd, env = workspace(self, fixture(branch_protection=None, rulesets=[], reviews=[],
+                                           pr={"author": "vstack-bot"}))
+        v = json.loads(sh(cwd, env, "gh", "pr", "view", "14", "--json", "reviewDecision,mergeStateStatus").stdout)
+        self.assertEqual(v, {"reviewDecision": "", "mergeStateStatus": "CLEAN"})
+        r = sh(cwd, env, "gh", "api", "repos/acme/api/branches/main/protection")
+        self.assertIn("Branch not protected (HTTP 404)", r.stderr)
+        r = sh(cwd, env, "gh", "api", "repos/acme/api/branches/main", "--jq", ".protected")
+        self.assertEqual(r.stdout.strip(), "false")
+        gate = sh(cwd, env, "python3", "-I", str(ROOT / "skills/autonomous-merge/scripts/gate.py"), "14")
+        out = json.loads(gate.stdout.splitlines()[0])  # past the approval gate, to the missing review
+        self.assertEqual((out["outcome"], out["reason"]), ("handback", "needs_review"), gate.stdout)
+        self.assertNotIn("approval", out["detail"])
 
     def test_stale_pin_is_refused(self):
         cwd, env = workspace(self, fixture())
-        r = sh(cwd, env, "gh", "pr", "merge", "14", "--auto", "--match-head-commit", "0" * 40)
+        r = sh(cwd, env, "gh", "pr", "merge", "14", "--auto", "--squash", "--match-head-commit", "0" * 40)
         self.assertNotEqual(r.returncode, 0)
         self.assertRegex(log(cwd), r"(?m)^# refused match-head-commit")
         self.assertNotRegex(log(cwd), r"(?m)^# merged")

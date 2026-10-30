@@ -24,6 +24,7 @@ one, never part of one.
   ],
   "last_action": "Escalated: test (ubuntu-latest) failed on two consecutive head SHAs",
   "mergeable": false,
+  "approval_required": true,
   "approved_on_head": false,
   "changes_requested": false,
   "required_checks": [{"name": "test (ubuntu-latest)", "state": "failing"}]
@@ -53,7 +54,8 @@ when they're missing.
 | `threads[].reply_url` | URL of your reply, or `null` |
 | `last_action` | One line, no control characters (U+0000-U+001F, U+007F): the last thing you did, or why you stopped |
 | `mergeable` | `true` or `false` from `gh pr view --json mergeable`, `null` if `UNKNOWN` |
-| `approved_on_head` | An approving review's `commit.oid` equals `head_sha` |
+| `approval_required` | merge.md gate 2 needs an approval: the base requires reviews, `reviewDecision` is set, or the requirement couldn't be read. `false` only when the base definitely requires none |
+| `approved_on_head` | Gate 2's approvals are on `head_sha`: as many as required and at least one, each the latest verdict of a reviewer other than the author and not a bot |
 | `changes_requested` | A changes-requested review is outstanding |
 | `required_checks` | Each required check (all checks if branch protection couldn't be read), each name once, with `state` `passing`, `pending` or `failing` |
 
@@ -61,13 +63,11 @@ When the run ends, the first match sets `status`:
 
 - `green`: the done condition held, or the PR merged (say so in
   `last_action`, and record the state the merge gate read just before
-  merging). Needs `approved_on_head`, `mergeable: true`, every required check
-  `passing`, `ci.state` `passing` or `none`, no `changes_requested` and no
-  open thread. With no required checks, `ci.state` must be `none`.
-  `green` still needs `approved_on_head` even on a repo that requires no
-  approval (merge.md, gate 2). Done or merged there with no approval on the
-  head ends `handed_back`, and `last_action` says it is done and that no
-  approval was needed or given.
+  merging). Needs `approved_on_head` when `approval_required`, `mergeable:
+  true`, every required check `passing`, `ci.state` `passing` or `none`, no
+  `changes_requested` and no open thread. With no required checks, `ci.state`
+  must be `none`. On a base that requires no review, `green` needs no
+  approval.
 - `failed`: an unrecoverable error, or checks still failing when it ended.
   Never when everything `green` needs holds: that's `green`.
 - `handed_back`: anything else: an escalation or limit stopped progress, it

@@ -284,7 +284,43 @@ class Gate(unittest.TestCase):
         absent = gh_rule(["rules/branches/main"], "", 1, "gh: Not Found (HTTP 404)")
         self.assertEqual(self.gate(view=none, reviews=self.reviews(), rulesets=absent)[0], 0)
 
-    def test_rulesets_paginated_and_unreadable_blocks(self):
+    def test_classic_protection_approvals(self):
+        none = self.view(reviewDecision=None)
+        two = gh_rule(["branches/main/protection"], {"required_pull_request_reviews": {
+            "required_approving_review_count": 2}})
+        self.assertIn("2 approval(s)", self.handback("not_approved", view=none, protection=two)["detail"])
+        both = self.reviews(gh_review(commit=self.head), gh_review(login="dan", commit=self.head))
+        self.assertEqual(self.gate(view=none, protection=two, reviews=both)[0], 0)
+        checks_only = gh_rule(["branches/main/protection"], {"required_status_checks": {"contexts": ["test"]}})
+        self.assertEqual(self.gate(view=none, protection=checks_only, reviews=self.reviews())[0], 0)
+
+    def test_no_review_requirement_merges_without_approval(self):
+        # An owner's own PR on an unprotected base with no rulesets: nobody else can approve, and nothing asks.
+        none = self.view(reviewDecision=None)
+        code, data, out, err = self.gate("--merge", view=self.view({"reviewDecision": None}, {"state": "MERGED"}),
+                                         reviews=self.reviews())
+        self.assertEqual((code, data["outcome"]), (0, "merged"), (out, err))
+        not_admin = gh_rule(["branches/main/protection"], "", 1, "gh: Not Found (HTTP 404)")
+        self.assertEqual(self.gate(view=none, protection=not_admin, reviews=self.reviews())[0], 0)
+
+    def test_unreadable_protection_needs_one_approval(self):
+        none = self.view(reviewDecision=None)
+        not_admin = gh_rule(["branches/main/protection"], "", 1, "gh: Not Found (HTTP 404)")
+        protected = gh_rule(["repos/o/r/branches/main"], {"name": "main", "protected": True})
+        for name, over in {"plain 404, protected": {"protection": not_admin, "branch": protected},
+                           "403, branch unreadable": {
+                               "protection": gh_rule(["branches/main/protection"], "", 1, "HTTP 403"),
+                               "branch": gh_rule(["repos/o/r/branches/main"], "", 1, "HTTP 502")},
+                           "not JSON": {"protection": gh_rule(["branches/main/protection"], "<html>")}}.items():
+            with self.subTest(name):
+                self.stubs.clear()
+                data = self.handback("not_approved", "--merge", view=none, reviews=self.reviews(), **over)
+                self.assertIn("couldn't read the base branch's branch protection", data["detail"])
+                self.assertIn("1 approval(s)", data["detail"])
+                self.stubs.clear()
+                self.assertEqual(self.gate(view=none, **over)[0], 0)
+
+    def test_rulesets_paginated_and_unreadable_needs_an_approval(self):
         none = self.view(reviewDecision=None)
         paged = gh_rule(["rules/branches/main"], [[{"type": "required_signatures"}],
                                                   [{"type": "pull_request",
@@ -298,8 +334,10 @@ class Gate(unittest.TestCase):
                            "not pages": gh_rule(["rules/branches/main"], {"message": "x"})}.items():
             with self.subTest(name):
                 self.stubs.clear()
-                data = self.handback("unknown", "--merge", view=none, reviews=self.reviews(), rulesets=rule)
-                self.assertIn("rulesets", data["detail"])
+                data = self.handback("not_approved", "--merge", view=none, reviews=self.reviews(), rulesets=rule)
+                self.assertIn("couldn't read the base branch's rulesets", data["detail"])
+                self.stubs.clear()
+                self.assertEqual(self.gate(view=none, rulesets=rule)[0], 0)
 
     def test_checks_failing(self):
         checks = gh_rule(["pr checks"], [{"name": "test", "bucket": "fail"}, {"name": "lint", "bucket": "pass"}], 1)

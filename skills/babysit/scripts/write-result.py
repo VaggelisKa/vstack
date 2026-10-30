@@ -64,6 +64,7 @@ FIELDS = {
     })),
     "last_action": LINE,
     "mergeable": kind(lambda v: v is None or isinstance(v, bool), "true, false or null"),
+    "approval_required": BOOL,
     "approved_on_head": BOOL,
     "changes_requested": BOOL,
     "required_checks": list_of(obj({
@@ -81,8 +82,12 @@ def ci_state(checks):
     return "none"
 
 
+def approved(r):
+    return r["approved_on_head"] or not r["approval_required"]
+
+
 def all_green(r):
-    return (r["ci"]["state"] in ("passing", "none") and r["approved_on_head"] and r["mergeable"] is True
+    return (r["ci"]["state"] in ("passing", "none") and approved(r) and r["mergeable"] is True
             and not r["changes_requested"] and not any(t["state"] == "open" for t in r["threads"])
             and all(c["state"] == "passing" for c in r["required_checks"]))
 
@@ -97,8 +102,8 @@ def consistent(r, errs):
         errs.append("status: green needs ci.state passing or none")
     if r["status"] == "green" and any(t["state"] == "open" for t in r["threads"]):
         errs.append("status: green can't have an open thread")
-    if r["status"] == "green" and not r["approved_on_head"]:
-        errs.append("status: green needs approved_on_head")
+    if r["status"] == "green" and not approved(r):
+        errs.append("status: green needs approved_on_head when approval_required")
     if r["status"] == "green" and r["mergeable"] is not True:
         errs.append("status: green needs mergeable true")
     if r["status"] == "green" and r["changes_requested"]:
@@ -106,7 +111,7 @@ def consistent(r, errs):
     if r["status"] == "green" and any(c["state"] != "passing" for c in r["required_checks"]):
         errs.append("status: green needs every required check passing")
     if r["status"] == "failed" and all_green(r):
-        errs.append("status: failed can't have everything green (CI passing or none, approved, mergeable, "
+        errs.append("status: failed can't have everything green (CI passing or none, approved if required, mergeable, "
                     "no changes requested, no open thread); that's green")
     ids = [t["id"] for t in r["threads"]]
     if len(ids) != len(set(ids)):
