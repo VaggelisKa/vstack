@@ -2,12 +2,12 @@
 # Do not edit: change skills/autonomous-merge/evals/evals.json and run python3 evals/_harness/sync.py.
 schema_version: "1.1"
 name: autonomous-merge-06-merge-flag
-description: "`--merge` is an alias for `merge`. Merges once every gate passes."
+description: "`--merge` is accepted and changes nothing. Merges once every gate passes."
 tags:
   - autonomous-merge
   - merge-intent
 runs: 3
-expected_outcome: "`--merge` is an alias for `merge`. Merges once every gate passes."
+expected_outcome: "`--merge` is accepted and changes nothing. Merges once every gate passes."
 context:
   scaffold_script: scaffold.sh
 execution:

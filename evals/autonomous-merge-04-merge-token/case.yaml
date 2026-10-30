@@ -2,13 +2,13 @@
 # Do not edit: change skills/autonomous-merge/evals/evals.json and run python3 evals/_harness/sync.py.
 schema_version: "1.1"
 name: autonomous-merge-04-merge-token
-description: "The trailing `merge` turns merge mode on. Merges once every gate passes."
+description: "A trailing `merge` is accepted and changes nothing: it merges anyway. Merges once every gate passes."
 tags:
   - autonomous-merge
   - merge-intent
   - smoke
 runs: 3
-expected_outcome: "The trailing `merge` turns merge mode on. Merges once every gate passes."
+expected_outcome: "A trailing `merge` is accepted and changes nothing: it merges anyway. Merges once every gate passes."
 context:
   scaffold_script: scaffold.sh
 execution:

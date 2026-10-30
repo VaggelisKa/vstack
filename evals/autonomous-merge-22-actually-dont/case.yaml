@@ -2,12 +2,12 @@
 # Do not edit: change skills/autonomous-merge/evals/evals.json and run python3 evals/_harness/sync.py.
 schema_version: "1.1"
 name: autonomous-merge-22-actually-dont
-description: "The negation overrides the --merge token. Stops at ready and does not merge."
+description: "The negation opts out, overriding the --merge token. Stops at ready and does not merge."
 tags:
   - autonomous-merge
   - merge-intent
 runs: 3
-expected_outcome: "The negation overrides the --merge token. Stops at ready and does not merge."
+expected_outcome: "The negation opts out, overriding the --merge token. Stops at ready and does not merge."
 context:
   scaffold_script: scaffold.sh
 execution:
@@ -58,5 +58,5 @@ graders:
   - name: says-how-to-merge
     type: regex
     target: last_message
-    pattern: "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b"
+    pattern: "/(vstack:)?autonomous-merge 14\\b(?!\\s+no-merge)"
     flags: i

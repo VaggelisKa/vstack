@@ -36,7 +36,7 @@ the gate never reads it.
 
 | Field | Value |
 |---|---|
-| `merge` | Whether this run's request explicitly asked to merge (`init --merge`); set again by every `init` |
+| `merge` | Whether this run merges (`init --merge`, the default; off only when the user opted out); set again by every `init` |
 | `started_at` | Start of the 2-hour window; `init --continue` restarts it |
 | `counters.review_rounds` | Review rounds recorded; a 4th is refused |
 | `caps` | Always `{"review_rounds": 3, "fix_rounds": 6, "minutes": 120}`; any other value fails the checks |
