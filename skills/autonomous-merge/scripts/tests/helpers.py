@@ -149,7 +149,8 @@ def babysit(status="green", threads=(), checks=(("test", "passing"),)):
     green = status == "green"
     return {"status": status, "ci": {"state": state, "failing_checks": [c["name"] for c in req if c["state"] == "failing"]},
             "threads": list(threads), "last_action": "done", "mergeable": True if green else None,
-            "approved_on_head": green, "changes_requested": False, "required_checks": req}
+            "approval_required": True, "approved_on_head": green, "changes_requested": False,
+            "required_checks": req}
 
 
 def gh_rule(match, stdout="", code=0, stderr=""):
@@ -213,6 +214,9 @@ def github_rules(head, base, **over):
         "auth": gh_rule(["auth status --hostname github.com"], "github.com\n  Logged in to github.com account t\n"),
         "reviews": gh_rule(["repos/o/r/pulls/42/reviews"], [[gh_review(commit=head)]]),
         "rulesets": gh_rule(["repos/o/r/rules/branches/main"], []),
+        # Before "repo", whose match is a prefix of these paths. The protection rule must come first too.
+        "protection": gh_rule(["repos/o/r/branches/main/protection"], "", 1, "gh: Branch not protected (HTTP 404)"),
+        "branch": gh_rule(["repos/o/r/branches/main"], {"name": "main", "protected": False}),
         "repo": gh_rule(["api --hostname github.com repos/o/r"],
                         {"permissions": {"push": True}, "allow_merge_commit": True, "allow_squash_merge": True,
                          "allow_rebase_merge": True}),

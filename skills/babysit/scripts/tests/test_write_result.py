@@ -37,7 +37,7 @@ def result(**over):
          "threads": [thread(), thread(id="PRRT_2", author="copilot", is_bot=True, state="resolved",
                                       decision="fixed")],
          "last_action": "escalated PRRT_1; same check failed on two head SHAs", "mergeable": None,
-         "approved_on_head": False, "changes_requested": False,
+         "approval_required": True, "approved_on_head": False, "changes_requested": False,
          "required_checks": [check(), check("lint", "passing")]}
     r.update(over)
     return r
@@ -87,7 +87,8 @@ class WriteResult(unittest.TestCase):
         out = self.ok(result(), "--pr", 42, *self.shas)
         self.assertEqual(list(out), ["schema_version", "skill", "pr", "head_sha", "base_sha", "merge_base",
                                      "written_at", "status", "ci", "threads", "last_action", "mergeable",
-                                     "approved_on_head", "changes_requested", "required_checks"])
+                                     "approval_required", "approved_on_head", "changes_requested",
+                                     "required_checks"])
         self.assertEqual(out, {**result(), "schema_version": 1, "skill": "babysit", "pr": 42,
                                "head_sha": self.head, "base_sha": self.base, "merge_base": self.base,
                                "written_at": out["written_at"]})
@@ -99,6 +100,7 @@ class WriteResult(unittest.TestCase):
         cases = [
             green(),
             green(ci=NONE, threads=[], required_checks=[]),
+            green(approval_required=False, approved_on_head=False),
             result(),
             result(ci={"state": "pending", "failing_checks": []}, required_checks=[check(state="pending")],
                    threads=[thread(decision="pending", reply_url=None)]),
@@ -117,7 +119,7 @@ class WriteResult(unittest.TestCase):
 
     def test_green_gate(self):
         cases = {
-            "not approved on head": (green(approved_on_head=False), "approved_on_head"),
+            "not approved on head": (green(approved_on_head=False), "approved_on_head when approval_required"),
             "mergeable unknown": (green(mergeable=None), "mergeable"),
             "not mergeable": (green(mergeable=False), "mergeable"),
             "changes requested": (green(changes_requested=True), "changes_requested"),
@@ -136,6 +138,8 @@ class WriteResult(unittest.TestCase):
 
     def test_failed_refused_when_everything_is_green(self):
         for name, data in {"passing": green(status="failed"),
+                           "no approval required": green(status="failed", approval_required=False,
+                                                         approved_on_head=False),
                            "no checks": green(status="failed", ci=NONE, threads=[], required_checks=[])}.items():
             with self.subTest(name):
                 self.assertIn("status: failed", self.refused(data, "--pr", 42, *self.shas))
@@ -174,6 +178,7 @@ class WriteResult(unittest.TestCase):
             "over 1 MB": json.dumps(result(last_action="x" * 1024 * 1024)),
             "missing status": no_status,
             "missing approved_on_head": {k: v for k, v in result().items() if k != "approved_on_head"},
+            "missing approval_required": {k: v for k, v in result().items() if k != "approval_required"},
             "unknown field": result(extra=1),
             "unknown ci field": result(ci={"state": "failing", "failing_checks": ["t"], "url": "u"}),
             "unknown thread field": result(threads=[thread(body="b")]),
@@ -201,6 +206,7 @@ class WriteResult(unittest.TestCase):
             "empty last_action": result(last_action=" "),
             "mergeable as text": result(mergeable="MERGEABLE"),
             "approved_on_head null": result(approved_on_head=None),
+            "approval_required null": result(approval_required=None),
             "changes_requested as text": result(changes_requested="false"),
             "required_checks not a list": result(required_checks={}),
             "required check bad state": result(required_checks=[check(state="none")]),

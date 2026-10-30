@@ -199,15 +199,18 @@ Merging is the default (merge mode). GitHub needs, read live: Ship on the curren
 head and base, required checks green, no unresolved review thread, not draft,
 mergeable, and no standing CHANGES_REQUESTED (the latest verdict of each human
 reviewer, not just `reviewDecision`). An approval is checked only when the repo
-requires one (`reviewDecision` REVIEW_REQUIRED, or a ruleset's approval count)
-or `reviewDecision` is APPROVED: then it must be an APPROVED review of the
-current head by someone other than the author and not a bot; approvals of
-older commits are stale. Before arming, babysit's coordination must also say
+requires one (`reviewDecision` REVIEW_REQUIRED, or an approval count in classic
+branch protection or a ruleset) or `reviewDecision` is APPROVED: then it must be
+an APPROVED review of the current head by someone other than the author and
+not a bot; approvals of older commits are stale. On a base with no review
+requirement (not protected, no ruleset asking for reviews), no approval is
+needed, so an owner's own PR can merge. Before arming, babysit's coordination must also say
 the PR is settled with zero claimed items, so a merge never lands in the
 middle of another fixer's work (`not_settled`, `claimed_items`,
-`conflicting_fixer`, `stale_claim`). Rulesets that can't be read (other than a 404) block
-as `unknown`. With no review requirement, the skill defers to branch
-protection.
+`conflicting_fixer`, `stale_claim`). If the protection or rulesets can't be
+read (403, a plain 404 for a non-admin), the requirement is unknown and fails
+closed: one fresh approval is needed (`not_approved`); GitHub enforces any
+higher count.
 
 **Bitbucket Cloud.** Review and fixes run as usual, but the gate never
 merges, in merge mode or not: a PR that passes is handed back as

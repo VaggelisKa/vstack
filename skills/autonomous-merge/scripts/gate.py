@@ -17,18 +17,23 @@ can't be read), any
 unresolved review thread (a human's stays until a human resolves it),
 mergeStateStatus BLOCKED or BEHIND, unknown mergeability (re-polled first, after
 each delay in VSTACK_POLL_DELAYS, comma-separated seconds, default 2,4,8,16),
-base rulesets that can't be read (paginated; a 404 means none, any other error
-is unknown), no clean review on this head, and, before a merge is armed,
+no clean review on this head, and, before a merge is armed,
 babysit's fixer coordination (../../babysit/scripts/coordination.py, which
 records this look in its state): a handback from it (conflicting_fixer,
 escalated, stale_claim), a PR that isn't settled (not_settled; with no earlier babysit
 poll of this head it never is), or any item another fixer or babysit has
 claimed (claimed_items). An approval is needed only when
-the repo requires one (reviewDecision REVIEW_REQUIRED, or a ruleset's
-required_approving_review_count) or reviewDecision is APPROVED; then it must be
-an APPROVED review on the current head by someone other than the author and
-not a bot (an approval of an older commit is stale and doesn't count). With no
-review requirement, branch protection decides.
+the repo requires one (reviewDecision REVIEW_REQUIRED, or a
+required_approving_review_count from classic branch protection or a ruleset)
+or reviewDecision is APPROVED; then it must be an APPROVED review on the
+current head by someone other than the author and not a bot (an approval of an
+older commit is stale and doesn't count). With no review requirement (the
+protection read 404s "Branch not protected" or the branch says protected false,
+and the paginated rulesets have no pull_request rule above 0, or 404), no
+approval is needed. When protection or rulesets can't be read (403, a plain 404
+for a non-admin, anything else), the requirement is unknown and fails closed:
+at least one such approval is needed (not_approved), and GitHub enforces any
+higher count when it merges.
 
 With --merge, and only once every block above is clear, it runs
 `gh pr merge <n> -R <host/o/r> --auto --<method> --match-head-commit <head>`,
@@ -291,7 +296,33 @@ def fresh_approvers(reviews, head, author):
                   if rv["state"] == "APPROVED" and rv.get("commit_id") == head and u != author and not is_bot(rv))
 
 
-def required_approvals(t, branch):
+def protection_approvals(t, branch):
+    """The base branch's classic protection required_approving_review_count: 0
+    when the branch isn't protected (a 404 "Branch not protected", or protected
+    false on the branch, which needs no admin), None when it can't be read."""
+    if not branch:
+        return None
+    path = f"repos/{t['owner']}/{t['repo']}/branches/{urllib.parse.quote(branch, safe='')}"
+    r = c.gh("api", "--hostname", t["hostname"], f"{path}/protection")
+    if r.returncode == 0:
+        try:
+            p = json.loads(r.stdout)
+        except ValueError:
+            return None
+        if not isinstance(p, dict):
+            return None
+        n = (p.get("required_pull_request_reviews") or {}).get("required_approving_review_count", 0)
+        return n if isinstance(n, int) and not isinstance(n, bool) else None
+    if "branch not protected" in (r.stderr + r.stdout).lower():
+        return 0
+    r = c.gh("api", "--hostname", t["hostname"], path)
+    try:
+        return 0 if r.returncode == 0 and json.loads(r.stdout).get("protected") is False else None
+    except (ValueError, AttributeError):
+        return None
+
+
+def ruleset_approvals(t, branch):
     """The highest required_approving_review_count among the base branch's
     rulesets: 0 when there are none (or the endpoint 404s), None when they
     can't be read."""
@@ -322,7 +353,18 @@ def open_shas(t, view):
     return head, base
 
 
-def approval_block(blocks, view, reviews, head, need):
+def required_approvals(t, branch):
+    """(count, unreadable): the most approvals classic protection or a ruleset
+    requires on branch, and which of the two couldn't be read."""
+    counts = {"branch protection": protection_approvals(t, branch), "rulesets": ruleset_approvals(t, branch)}
+    return max([n for n in counts.values() if n is not None] + [0]), [k for k, n in counts.items() if n is None]
+
+
+def approval_block(blocks, view, reviews, head, need, unreadable=()):
+    """An approval is needed when the repo requires one or reviewDecision says a
+    review applies. When protection or rulesets can't be read, the requirement
+    is unknown: fail closed and need at least one, but don't block outright,
+    since GitHub still enforces any higher count when it merges."""
     decision = view.get("reviewDecision")
     if reviews is None:
         blocks.add("changes_requested", "couldn't read every review, so treating one as requesting changes",
@@ -333,15 +375,19 @@ def approval_block(blocks, view, reviews, head, need):
         who = f" ({', '.join(requesters[:10])})" if requesters else ""
         blocks.add("changes_requested", f"a reviewer requested changes{who}",
                    "Get that reviewer to re-review or dismiss their review, then rerun.")
-    if decision not in ("REVIEW_REQUIRED", "APPROVED") and not need:
+    if decision not in ("REVIEW_REQUIRED", "APPROVED") and not need and not unreadable:
         return
-    want = max(1, need or 0)
+    want = max(1, need)
     fresh = fresh_approvers(reviews, head, (view.get("author") or {}).get("login"))
     if len(fresh) < want:
         stale = " (approvals of older commits are stale and don't count)" if any(
             rv["state"] == "APPROVED" for rv in latest_verdicts(reviews).values()) else ""
+        why = (f"; couldn't read the base branch's {' or '.join(unreadable)}, so an approval is required"
+               if unreadable else "")
         blocks.add("not_approved", f"{want} approval(s) of head {head[:12]} by someone other than the author "
-                                   f"or a bot needed, found {len(fresh)}{stale}",
+                                   f"or a bot needed, found {len(fresh)}{stale}{why}",
+                   "Get an approving review on the current head, or let gh read the base branch's protection "
+                   "and rulesets, then rerun." if unreadable else
                    "Get an approving review on the current head, then rerun.")
 
 
@@ -353,8 +399,8 @@ def github_blocks(t, view, head, base, settled=True):
     if view.get("mergeable") == "CONFLICTING" or view.get("mergeStateStatus") == "DIRTY":
         blocks.add("conflicts", "the PR conflicts with its base",
                    "Resolve the conflicts with the base branch, then rerun.")
-    need = required_approvals(t, view.get("baseRefName"))
-    approval_block(blocks, view, github_reviews(t), head, need)
+    need, unreadable = required_approvals(t, view.get("baseRefName"))
+    approval_block(blocks, view, github_reviews(t), head, need, unreadable)
     checks, source = github_checks(t, view)
     bad = [f"{n} ({s})" for n, s in checks if s != "passing"]
     if bad:
@@ -371,10 +417,6 @@ def github_blocks(t, view, head, base, settled=True):
     if settled and mergeability_unknown(view):
         blocks.add("unknown", "GitHub still hadn't computed mergeability after re-polling",
                    "Rerun the gate in a minute.")
-    if need is None:
-        blocks.add("unknown", "couldn't read the base branch's rulesets, so whether they require an approval is "
-                              "unknown", f"Check that gh can read `repos/{t['owner']}/{t['repo']}/rules/branches/"
-                                         f"<base>`, then rerun.")
     review_block(blocks, t["pr"], head, base)
     return blocks
 

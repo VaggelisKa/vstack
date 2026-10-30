@@ -254,7 +254,7 @@
     {
       "id": 3,
       "prompt": "babysit 15 --merge. All required checks are green on the head SHA, one approval whose review commit equals the current head SHA, no unresolved threads, not a draft, no labels.",
-      "expected_output": "Verifies every gate on the head SHA and merges with gh pr merge --auto using the default method, logging the decision.",
+      "expected_output": "Verifies every gate on the head SHA and merges with gh pr merge --auto, passing the method merge.md picks, logging the decision.",
       "files": [],
       "expectations": [
         "Reads merge.md before merging",
@@ -2349,13 +2349,13 @@
     },
     {
       "id": 34,
-      "prompt": "babysit 14 and squash merge it. Every gate passes on the head SHA.",
-      "expected_output": "A plain merge ask; 'squash' doesn't change the method. Merges with the repo's default method and reports it.",
+      "prompt": "babysit 14 and squash merge it. Every gate passes on the head SHA. The repo allows only merge commits.",
+      "expected_output": "A plain merge ask; 'squash' doesn't change the method. Merges with the method merge.md picks (--merge, the only one the repo allows) and reports it.",
       "files": [],
       "expectations": [
         "Treats the request as merge mode and reads merge.md",
         "Arms gh pr merge --auto --match-head-commit <headRefOid> only after every gate passes",
-        "Does not pass --squash unless the repo allows only squash and gh asks for it",
+        "Passes --merge, the only method the repo allows, and never --squash or --rebase",
         "Final report states the merge method used"
       ],
       "eval": {
@@ -2417,7 +2417,15 @@
               3
             ]
           }
-        ]
+        ],
+        "patch": {
+          "github": {
+            "repo_settings": {
+              "allow_squash_merge": false,
+              "allow_rebase_merge": false
+            }
+          }
+        }
       }
     },
     {
@@ -2654,6 +2662,94 @@
             "covers": [
               1
             ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 39,
+      "prompt": "/babysit 14 merge. The base branch has no branch protection (a 404 'Branch not protected') and no rulesets, and the PR's author is the repo owner running the skill, so nobody else has reviewed it. CI is green, the PR is mergeable, with no threads, not a draft, no labels. The repo allows merge, squash and rebase.",
+      "expected_output": "Nothing requires a review on this base, so the approval gate passes without one. Merges once the other gates pass, passing --squash (several methods allowed, no merge history to match), and never asks for an approver.",
+      "files": [],
+      "expectations": [
+        "Treats the request as merge mode and reads merge.md",
+        "Reads the base branch's classic protection and finds it unprotected",
+        "Reads the base branch's rulesets and finds no review requirement",
+        "Arms gh pr merge --auto --match-head-commit <headRefOid> with no approval on the PR, and it merges",
+        "Passes --squash: several methods are allowed and there is no merge history to match",
+        "Does not hand back asking for an approval or a reviewer"
+      ],
+      "eval": {
+        "slug": "unprotected-owner-merge",
+        "tags": [
+          "smoke"
+        ],
+        "prompt": "/vstack:babysit 14 merge",
+        "fixture": "pr-green",
+        "patch": {
+          "github": {
+            "branch_protection": null,
+            "rulesets": [],
+            "reviews": [],
+            "pr": {
+              "author": "vstack-bot"
+            },
+            "repo_settings": {
+              "allow_rebase_merge": true
+            }
+          }
+        },
+        "graders": [
+          {
+            "name": "reads-merge-md",
+            "trace": "\"(command|file_path)\":\\s*\"[^\"]*babysit/merge\\.md",
+            "covers": [
+              0
+            ]
+          },
+          {
+            "name": "reads-protection",
+            "gh": "^gh api .*branches/main/protection",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "reads-rulesets",
+            "gh": "^gh api .*rules/branches/main",
+            "covers": [
+              2
+            ]
+          },
+          {
+            "name": "armed-pinned-to-head",
+            "gh": "^gh pr merge .*--match-head-commit[ =]?[0-9a-f]{40}",
+            "covers": [
+              3
+            ]
+          },
+          {
+            "name": "merged-squash-on-head",
+            "gh": "^# merged method=squash head=[0-9a-f]{40}$",
+            "covers": [
+              3,
+              4
+            ]
+          },
+          {
+            "name": "no-admin",
+            "gh": "--admin\\b",
+            "absent": true
+          },
+          {
+            "name": "no-refused-merge",
+            "gh": "^# refused",
+            "absent": true
+          },
+          {
+            "name": "no-autonomous-merge",
+            "skill": "autonomous-merge",
+            "fires": false
           }
         ]
       }
