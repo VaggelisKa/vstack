@@ -2,12 +2,12 @@
 # Do not edit: change skills/autonomous-merge/evals/evals.json and run python3 evals/_harness/sync.py.
 schema_version: "1.1"
 name: autonomous-merge-05-merge-when-green-words
-description: "The plain-words ask turns merge mode on. Merges once every gate passes."
+description: "The plain-words ask merges, as it would anyway. Merges once every gate passes."
 tags:
   - autonomous-merge
   - merge-intent
 runs: 3
-expected_outcome: "The plain-words ask turns merge mode on. Merges once every gate passes."
+expected_outcome: "The plain-words ask merges, as it would anyway. Merges once every gate passes."
 context:
   scaffold_script: scaffold.sh
 execution:

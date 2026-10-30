@@ -1,8 +1,9 @@
 # autonomous-merge: what's tested
 
-`/vstack:autonomous-merge <pr> [merge]` (`$autonomous-merge` in Codex). It pushes, comments and can merge, so the
-model never starts it on its own (`disable-model-invocation: true`): the user invokes it. It merges only when that
-run's request explicitly asks to, with a trailing `merge` or in plain words ("... and merge when green").
+`/vstack:autonomous-merge <pr> [no-merge]` (`$autonomous-merge` in Codex). The user invokes it, or the model picks it
+up from an explicit ask ("take PR 14 all the way", "auto-merge this PR"). Merging is its job: it merges through the
+gate without asking for confirmation, and stops at ready only when the request opts out (`no-merge`, "don't merge",
+or a condition the gate can't check).
 Scripts and sibling skills are found through `${CLAUDE_SKILL_DIR}`, the folder holding SKILL.md (other harnesses
 use its absolute path).
 

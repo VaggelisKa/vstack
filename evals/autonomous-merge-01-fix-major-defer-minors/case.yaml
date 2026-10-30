@@ -2,11 +2,11 @@
 # Do not edit: change skills/autonomous-merge/evals/evals.json and run python3 evals/_harness/sync.py.
 schema_version: "1.1"
 name: autonomous-merge-01-fix-major-defer-minors
-description: "Fixes the major in one pushed commit, re-reviews to Ship, leaves the minors logged, babysits to green, runs the gate, and stops at ready without merging."
+description: "Fixes the major in one pushed commit, re-reviews to Ship, leaves the minors logged, babysits to green, and merges through the gate without asking."
 tags:
   - autonomous-merge
 runs: 3
-expected_outcome: "Fixes the major in one pushed commit, re-reviews to Ship, leaves the minors logged, babysits to green, runs the gate, and stops at ready without merging."
+expected_outcome: "Fixes the major in one pushed commit, re-reviews to Ship, leaves the minors logged, babysits to green, and merges through the gate without asking."
 context:
   scaffold_script: scaffold.sh
 execution:
@@ -34,22 +34,6 @@ graders:
     type: regex
     target: trace
     pattern: "preflight\\.py[\\s\\S]*state\\.py\\\\?\\\"?\\s+init"
-  - name: no-merge-call
-    type: regex
-    target:
-      source: file
-      path: ".vstack-eval/gh-calls.log"
-    pattern: "^gh pr merge\\b(?!.*--disable-auto)"
-    flags: m
-    match: not_contains
-  - name: not-merged
-    type: regex
-    target:
-      source: file
-      path: ".vstack-eval/gh-calls.log"
-    pattern: "^# merged"
-    flags: m
-    match: not_contains
   - name: no-force-push
     type: tool_used
     tool: Bash
@@ -57,15 +41,22 @@ graders:
     max: 0
     min: 0
     input_match: "git push[^\\n]*(--force|\\s-f\\b)"
+  - name: gate-merge
+    type: regex
+    target: trace
+    pattern: "gate\\.py\\\\?\\\"?\\s+42\\s+--merge"
+  - name: merged-on-head
+    type: regex
+    target:
+      source: file
+      path: ".vstack-eval/gh-calls.log"
+    pattern: "^# merged method=\\w+ head=[0-9a-f]{40}$"
+    flags: m
   - name: expect-1
     type: llm
     focus: trace
-    criteria: "The user's request was:\n/vstack:autonomous-merge 42\n\nThe intended outcome: Fixes the major in one pushed commit, re-reviews to Ship, leaves the minors logged, babysits to green, runs the gate, and stops at ready without merging.\n\nPASS only if the trace shows this held: Runs preflight.py and state.py init before the review skill\nFAIL if it did not hold, or if the trace does not show enough to tell."
+    criteria: "The user's request was:\n/vstack:autonomous-merge 42\n\nThe intended outcome: Fixes the major in one pushed commit, re-reviews to Ship, leaves the minors logged, babysits to green, and merges through the gate without asking.\n\nPASS only if the trace shows this held: Runs preflight.py and state.py init before the review skill\nFAIL if it did not hold, or if the trace does not show enough to tell."
   - name: expect-2
     type: llm
     focus: trace
-    criteria: "The user's request was:\n/vstack:autonomous-merge 42\n\nThe intended outcome: Fixes the major in one pushed commit, re-reviews to Ship, leaves the minors logged, babysits to green, runs the gate, and stops at ready without merging.\n\nPASS only if the trace shows this held: Invokes the review skill by name (or reads ../review/SKILL.md) instead of reviewing on its own\nFAIL if it did not hold, or if the trace does not show enough to tell."
-  - name: expect-4
-    type: llm
-    focus: trace
-    criteria: "The user's request was:\n/vstack:autonomous-merge 42\n\nThe intended outcome: Fixes the major in one pushed commit, re-reviews to Ship, leaves the minors logged, babysits to green, runs the gate, and stops at ready without merging.\n\nPASS only if the trace shows this held: Runs babysit without --merge and gate.py without --merge\nFAIL if it did not hold, or if the trace does not show enough to tell."
+    criteria: "The user's request was:\n/vstack:autonomous-merge 42\n\nThe intended outcome: Fixes the major in one pushed commit, re-reviews to Ship, leaves the minors logged, babysits to green, and merges through the gate without asking.\n\nPASS only if the trace shows this held: Invokes the review skill by name (or reads ../review/SKILL.md) instead of reviewing on its own\nFAIL if it did not hold, or if the trace does not show enough to tell."

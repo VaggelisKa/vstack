@@ -10,7 +10,7 @@ expected_outcome: "Replies 'Not changing: ...' with the evidence, leaves the thr
 context:
   scaffold_script: scaffold.sh
 execution:
-  prompt: "/vstack:autonomous-merge 15 --merge"
+  prompt: "/vstack:autonomous-merge 15"
   max_turns: 150
   timeout_seconds: 2400
   allowed_tools:

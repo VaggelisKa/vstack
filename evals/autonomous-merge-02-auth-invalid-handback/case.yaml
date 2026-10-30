@@ -10,7 +10,7 @@ expected_outcome: "Stops at preflight with the auth_expired handback and tells t
 context:
   scaffold_script: scaffold.sh
 execution:
-  prompt: "/vstack:autonomous-merge https://github.com/acme/api/pull/7 --merge"
+  prompt: "/vstack:autonomous-merge https://github.com/acme/api/pull/7"
   max_turns: 150
   timeout_seconds: 2400
   allowed_tools:

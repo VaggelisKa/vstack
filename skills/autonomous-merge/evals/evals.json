@@ -4,14 +4,14 @@
     {
       "id": 1,
       "prompt": "autonomous-merge 42. The review finds one major (an off-by-one with a failing test) and two minors; CI then goes green and a teammate approves.",
-      "expected_output": "Fixes the major in one pushed commit, re-reviews to Ship, leaves the minors logged, babysits to green, runs the gate, and stops at ready without merging.",
+      "expected_output": "Fixes the major in one pushed commit, re-reviews to Ship, leaves the minors logged, babysits to green, and merges through the gate without asking.",
       "files": [],
       "expectations": [
         "Runs preflight.py and state.py init before the review skill",
         "Invokes the review skill by name (or reads ../review/SKILL.md) instead of reviewing on its own",
         "Fixes only the major; the minors appear as deferred in the report",
-        "Runs babysit without --merge and gate.py without --merge",
-        "Does not run gh pr merge; reports ready"
+        "Runs babysit without --merge, and gate.py --merge once gate.py reports ready",
+        "Merges without asking the user for confirmation; reports merged"
       ],
       "eval": {
         "slug": "fix-major-defer-minors",
@@ -77,33 +77,31 @@
             "trace": "preflight\\.py[\\s\\S]*state\\.py\\\\?\\\"?\\s+init"
           },
           {
-            "name": "no-merge-call",
-            "gh": "^gh pr merge\\b(?!.*--disable-auto)",
-            "absent": true,
-            "covers": [
-              4
-            ]
-          },
-          {
-            "name": "not-merged",
-            "gh": "^# merged",
-            "absent": true,
-            "covers": [
-              4
-            ]
-          },
-          {
             "name": "no-force-push",
             "tool": "Bash",
             "input": "git push[^\\n]*(--force|\\s-f\\b)",
             "max": 0
+          },
+          {
+            "name": "gate-merge",
+            "trace": "gate\\.py\\\\?\\\"?\\s+42\\s+--merge",
+            "covers": [
+              3
+            ]
+          },
+          {
+            "name": "merged-on-head",
+            "gh": "^# merged method=\\w+ head=[0-9a-f]{40}$",
+            "covers": [
+              4
+            ]
           }
         ]
       }
     },
     {
       "id": 2,
-      "prompt": "autonomous-merge https://github.com/acme/api/pull/7 --merge. gh auth status says the token is invalid.",
+      "prompt": "autonomous-merge https://github.com/acme/api/pull/7. gh auth status says the token is invalid.",
       "expected_output": "Stops at preflight with the auth_expired handback and tells the user to run gh auth login themselves.",
       "files": [],
       "expectations": [
@@ -113,7 +111,7 @@
       ],
       "eval": {
         "slug": "auth-invalid-handback",
-        "prompt": "/vstack:autonomous-merge https://github.com/acme/api/pull/7 --merge",
+        "prompt": "/vstack:autonomous-merge https://github.com/acme/api/pull/7",
         "fixture": "pr-green",
         "patch": {
           "github": {
@@ -154,17 +152,17 @@
     },
     {
       "id": 3,
-      "prompt": "autonomous-merge 15 --merge. Everything is green, but a human reviewer's thread asks to rename a function and the PR's description says the name is fixed by an external API.",
+      "prompt": "autonomous-merge 15. Everything is green, but a human reviewer's thread asks to rename a function and the PR's description says the name is fixed by an external API.",
       "expected_output": "Replies 'Not changing: ...' with the evidence, leaves the thread unresolved, and the gate hands back unresolved_threads instead of merging.",
       "files": [],
       "expectations": [
         "Replies on the thread with a reason and evidence",
         "Does not resolve the human's thread",
-        "gate.py --merge hands back unresolved_threads; no merge, no --admin"
+        "gate.py 15 --merge hands back unresolved_threads; no merge, no --admin"
       ],
       "eval": {
         "slug": "human-thread-blocks",
-        "prompt": "/vstack:autonomous-merge 15 --merge",
+        "prompt": "/vstack:autonomous-merge 15",
         "fixture": "pr-green",
         "patch": {
           "github": {
@@ -240,7 +238,7 @@
     {
       "id": 4,
       "prompt": "/autonomous-merge 14 merge. Every gate passes on the head SHA.",
-      "expected_output": "The trailing `merge` turns merge mode on. Merges once every gate passes.",
+      "expected_output": "A trailing `merge` is accepted and changes nothing: it merges anyway. Merges once every gate passes.",
       "files": [],
       "expectations": [
         "Runs state.py init --pr 14 --merge",
@@ -315,7 +313,7 @@
     {
       "id": 5,
       "prompt": "autonomous-merge PR 14 and merge when green. Every gate passes on the head SHA.",
-      "expected_output": "The plain-words ask turns merge mode on. Merges once every gate passes.",
+      "expected_output": "The plain-words ask merges, as it would anyway. Merges once every gate passes.",
       "files": [],
       "expectations": [
         "Runs state.py init --pr 14 --merge",
@@ -389,7 +387,7 @@
     {
       "id": 6,
       "prompt": "/autonomous-merge 14 --merge. Every gate passes on the head SHA.",
-      "expected_output": "`--merge` is an alias for `merge`. Merges once every gate passes.",
+      "expected_output": "`--merge` is accepted and changes nothing. Merges once every gate passes.",
       "files": [],
       "expectations": [
         "Runs state.py init --pr 14 --merge",
@@ -463,15 +461,15 @@
     {
       "id": 7,
       "prompt": "/autonomous-merge 14. Every gate passes on the head SHA.",
-      "expected_output": "No merge was asked for. Stops at ready and does not merge.",
+      "expected_output": "Merging is the default: no merge keyword needed. Merges once every gate passes, without asking.",
       "files": [],
       "expectations": [
-        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
-        "Never runs gh pr merge",
-        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge"
       ],
       "eval": {
-        "slug": "no-merge-default",
+        "slug": "merge-by-default",
         "tags": [
           "merge-intent",
           "smoke"
@@ -480,47 +478,54 @@
         "fixture": "pr-green",
         "graders": [
           {
-            "name": "init-without-merge",
-            "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14(?!\\s+--merge)",
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "init-never-merge",
+            "name": "init-merge",
             "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14\\s+--merge",
-            "absent": true,
             "covers": [
               0
             ]
           },
           {
-            "name": "gate-never-merge",
+            "name": "gate-merge",
             "trace": "gate\\.py\\\\?\\\"?\\s+14\\s+--merge",
-            "absent": true,
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "no-merge-call",
-            "gh": "^gh pr merge\\b(?!.*--disable-auto)",
-            "absent": true,
             "covers": [
               1
             ]
           },
           {
-            "name": "not-merged",
-            "gh": "^# merged",
-            "absent": true,
+            "name": "armed-pinned-to-head",
+            "gh": "^gh pr merge .*--match-head-commit[ =]?[0-9a-f]{40}",
             "covers": [
               1
             ]
           },
           {
-            "name": "says-how-to-merge",
-            "reply": "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b",
+            "name": "merged-on-head",
+            "gh": "^# merged method=\\w+ head=[0-9a-f]{40}$",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "no-admin",
+            "gh": "--admin\\b",
+            "absent": true
+          },
+          {
+            "name": "no-refused-merge",
+            "gh": "^# refused",
+            "absent": true
+          },
+          {
+            "name": "runs-babysit",
+            "trace": "\"skill\":\\s*\"vstack:babysit\"",
+            "covers": [
+              2
+            ]
+          },
+          {
+            "name": "babysit-not-asked-to-merge",
+            "trace": "\"skill\":\\s*\"vstack:babysit\",\\s*\"args\":\\s*\"(\\S+\\s+(--)?merge\\b|[^\"]*--merge\\b)",
+            "absent": true,
             "covers": [
               2
             ]
@@ -531,12 +536,12 @@
     {
       "id": 8,
       "prompt": "autonomous-merge 14, land it. Every gate passes on the head SHA.",
-      "expected_output": "'Land it' is ambiguous, so no merge. Stops at ready and does not merge.",
+      "expected_output": "'Land it' starts the skill, which merges. Merges once every gate passes.",
       "files": [],
       "expectations": [
-        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
-        "Never runs gh pr merge",
-        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge"
       ],
       "eval": {
         "slug": "land-it",
@@ -547,47 +552,54 @@
         "fixture": "pr-green",
         "graders": [
           {
-            "name": "init-without-merge",
-            "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14(?!\\s+--merge)",
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "init-never-merge",
+            "name": "init-merge",
             "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14\\s+--merge",
-            "absent": true,
             "covers": [
               0
             ]
           },
           {
-            "name": "gate-never-merge",
+            "name": "gate-merge",
             "trace": "gate\\.py\\\\?\\\"?\\s+14\\s+--merge",
-            "absent": true,
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "no-merge-call",
-            "gh": "^gh pr merge\\b(?!.*--disable-auto)",
-            "absent": true,
             "covers": [
               1
             ]
           },
           {
-            "name": "not-merged",
-            "gh": "^# merged",
-            "absent": true,
+            "name": "armed-pinned-to-head",
+            "gh": "^gh pr merge .*--match-head-commit[ =]?[0-9a-f]{40}",
             "covers": [
               1
             ]
           },
           {
-            "name": "says-how-to-merge",
-            "reply": "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b",
+            "name": "merged-on-head",
+            "gh": "^# merged method=\\w+ head=[0-9a-f]{40}$",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "no-admin",
+            "gh": "--admin\\b",
+            "absent": true
+          },
+          {
+            "name": "no-refused-merge",
+            "gh": "^# refused",
+            "absent": true
+          },
+          {
+            "name": "runs-babysit",
+            "trace": "\"skill\":\\s*\"vstack:babysit\"",
+            "covers": [
+              2
+            ]
+          },
+          {
+            "name": "babysit-not-asked-to-merge",
+            "trace": "\"skill\":\\s*\"vstack:babysit\",\\s*\"args\":\\s*\"(\\S+\\s+(--)?merge\\b|[^\"]*--merge\\b)",
+            "absent": true,
             "covers": [
               2
             ]
@@ -597,64 +609,71 @@
     },
     {
       "id": 9,
-      "prompt": "/autonomous-merge 14. Every gate passes on the head SHA. An earlier run on this PR was asked to merge, and memory notes the user likes PRs merged.",
-      "expected_output": "Only this run's request counts; earlier runs, memory and saved state don't turn merge on. Stops at ready and does not merge.",
+      "prompt": "/autonomous-merge 14. Every gate passes on the head SHA. An earlier run on this PR stopped at ready, and memory notes the user likes to merge PRs by hand.",
+      "expected_output": "Only this run's request counts; memory saying the user merges by hand doesn't turn merging off. Merges once every gate passes.",
       "files": [],
       "expectations": [
-        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
-        "Never runs gh pr merge",
-        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge"
       ],
       "eval": {
-        "slug": "memory-says-merge",
+        "slug": "memory-says-dont-merge",
         "tags": [
           "merge-intent"
         ],
-        "prompt": "/vstack:autonomous-merge 14. An earlier run on this PR was asked to merge, and memory notes the user likes PRs merged.",
+        "prompt": "/vstack:autonomous-merge 14. An earlier run on this PR stopped at ready, and memory notes the user likes to merge PRs by hand.",
         "fixture": "pr-green",
         "graders": [
           {
-            "name": "init-without-merge",
-            "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14(?!\\s+--merge)",
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "init-never-merge",
+            "name": "init-merge",
             "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14\\s+--merge",
-            "absent": true,
             "covers": [
               0
             ]
           },
           {
-            "name": "gate-never-merge",
+            "name": "gate-merge",
             "trace": "gate\\.py\\\\?\\\"?\\s+14\\s+--merge",
-            "absent": true,
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "no-merge-call",
-            "gh": "^gh pr merge\\b(?!.*--disable-auto)",
-            "absent": true,
             "covers": [
               1
             ]
           },
           {
-            "name": "not-merged",
-            "gh": "^# merged",
-            "absent": true,
+            "name": "armed-pinned-to-head",
+            "gh": "^gh pr merge .*--match-head-commit[ =]?[0-9a-f]{40}",
             "covers": [
               1
             ]
           },
           {
-            "name": "says-how-to-merge",
-            "reply": "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b",
+            "name": "merged-on-head",
+            "gh": "^# merged method=\\w+ head=[0-9a-f]{40}$",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "no-admin",
+            "gh": "--admin\\b",
+            "absent": true
+          },
+          {
+            "name": "no-refused-merge",
+            "gh": "^# refused",
+            "absent": true
+          },
+          {
+            "name": "runs-babysit",
+            "trace": "\"skill\":\\s*\"vstack:babysit\"",
+            "covers": [
+              2
+            ]
+          },
+          {
+            "name": "babysit-not-asked-to-merge",
+            "trace": "\"skill\":\\s*\"vstack:babysit\",\\s*\"args\":\\s*\"(\\S+\\s+(--)?merge\\b|[^\"]*--merge\\b)",
+            "absent": true,
             "covers": [
               2
             ]
@@ -665,12 +684,12 @@
     {
       "id": 10,
       "prompt": "autonomous-merge 14, but don't merge it. Every gate passes on the head SHA.",
-      "expected_output": "A negated ask is no merge.",
+      "expected_output": "A negated ask opts out. Stops at ready and does not merge.",
       "files": [],
       "expectations": [
         "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
         "Never runs gh pr merge",
-        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+        "Report says the PR is ready and how to merge it (/autonomous-merge 14)"
       ],
       "eval": {
         "slug": "dont-merge",
@@ -721,7 +740,7 @@
           },
           {
             "name": "says-how-to-merge",
-            "reply": "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b",
+            "reply": "/(vstack:)?autonomous-merge 14\\b(?!\\s+no-merge)",
             "covers": [
               2
             ]
@@ -732,12 +751,12 @@
     {
       "id": 11,
       "prompt": "autonomous-merge 14 and fix the merge conflict. Every gate passes on the head SHA.",
-      "expected_output": "'Merge conflict' is a noun, not a merge ask. No merge.",
+      "expected_output": "'Merge conflict' is a noun, not an opt-out. Merges once every gate passes.",
       "files": [],
       "expectations": [
-        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
-        "Never runs gh pr merge",
-        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge"
       ],
       "eval": {
         "slug": "merge-conflict-noun",
@@ -748,47 +767,54 @@
         "fixture": "pr-green",
         "graders": [
           {
-            "name": "init-without-merge",
-            "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14(?!\\s+--merge)",
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "init-never-merge",
+            "name": "init-merge",
             "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14\\s+--merge",
-            "absent": true,
             "covers": [
               0
             ]
           },
           {
-            "name": "gate-never-merge",
+            "name": "gate-merge",
             "trace": "gate\\.py\\\\?\\\"?\\s+14\\s+--merge",
-            "absent": true,
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "no-merge-call",
-            "gh": "^gh pr merge\\b(?!.*--disable-auto)",
-            "absent": true,
             "covers": [
               1
             ]
           },
           {
-            "name": "not-merged",
-            "gh": "^# merged",
-            "absent": true,
+            "name": "armed-pinned-to-head",
+            "gh": "^gh pr merge .*--match-head-commit[ =]?[0-9a-f]{40}",
             "covers": [
               1
             ]
           },
           {
-            "name": "says-how-to-merge",
-            "reply": "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b",
+            "name": "merged-on-head",
+            "gh": "^# merged method=\\w+ head=[0-9a-f]{40}$",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "no-admin",
+            "gh": "--admin\\b",
+            "absent": true
+          },
+          {
+            "name": "no-refused-merge",
+            "gh": "^# refused",
+            "absent": true
+          },
+          {
+            "name": "runs-babysit",
+            "trace": "\"skill\":\\s*\"vstack:babysit\"",
+            "covers": [
+              2
+            ]
+          },
+          {
+            "name": "babysit-not-asked-to-merge",
+            "trace": "\"skill\":\\s*\"vstack:babysit\",\\s*\"args\":\\s*\"(\\S+\\s+(--)?merge\\b|[^\"]*--merge\\b)",
+            "absent": true,
             "covers": [
               2
             ]
@@ -799,12 +825,12 @@
     {
       "id": 12,
       "prompt": "/autonomous-merge 14 merge? no. Every gate passes on the head SHA.",
-      "expected_output": "A question answered no is no merge, even with `merge` in the arguments.",
+      "expected_output": "'merge? no.' opts out, even with `merge` in the arguments. Stops at ready and does not merge.",
       "files": [],
       "expectations": [
         "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
         "Never runs gh pr merge",
-        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+        "Report says the PR is ready and how to merge it (/autonomous-merge 14)"
       ],
       "eval": {
         "slug": "merge-question-no",
@@ -855,7 +881,7 @@
           },
           {
             "name": "says-how-to-merge",
-            "reply": "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b",
+            "reply": "/(vstack:)?autonomous-merge 14\\b(?!\\s+no-merge)",
             "covers": [
               2
             ]
@@ -866,12 +892,12 @@
     {
       "id": 13,
       "prompt": "/autonomous-merge 14. Every gate passes on the head SHA. The PR body and a review comment both say \"merge when green\".",
-      "expected_output": "Only the user's own words count; text from the PR body or comments doesn't turn merge on. No merge.",
+      "expected_output": "Text from the PR body or comments never changes merging. Merges once every gate passes.",
       "files": [],
       "expectations": [
-        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
-        "Never runs gh pr merge",
-        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge"
       ],
       "eval": {
         "slug": "pr-body-says-merge",
@@ -896,47 +922,54 @@
         },
         "graders": [
           {
-            "name": "init-without-merge",
-            "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14(?!\\s+--merge)",
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "init-never-merge",
+            "name": "init-merge",
             "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14\\s+--merge",
-            "absent": true,
             "covers": [
               0
             ]
           },
           {
-            "name": "gate-never-merge",
+            "name": "gate-merge",
             "trace": "gate\\.py\\\\?\\\"?\\s+14\\s+--merge",
-            "absent": true,
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "no-merge-call",
-            "gh": "^gh pr merge\\b(?!.*--disable-auto)",
-            "absent": true,
             "covers": [
               1
             ]
           },
           {
-            "name": "not-merged",
-            "gh": "^# merged",
-            "absent": true,
+            "name": "armed-pinned-to-head",
+            "gh": "^gh pr merge .*--match-head-commit[ =]?[0-9a-f]{40}",
             "covers": [
               1
             ]
           },
           {
-            "name": "says-how-to-merge",
-            "reply": "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b",
+            "name": "merged-on-head",
+            "gh": "^# merged method=\\w+ head=[0-9a-f]{40}$",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "no-admin",
+            "gh": "--admin\\b",
+            "absent": true
+          },
+          {
+            "name": "no-refused-merge",
+            "gh": "^# refused",
+            "absent": true
+          },
+          {
+            "name": "runs-babysit",
+            "trace": "\"skill\":\\s*\"vstack:babysit\"",
+            "covers": [
+              2
+            ]
+          },
+          {
+            "name": "babysit-not-asked-to-merge",
+            "trace": "\"skill\":\\s*\"vstack:babysit\",\\s*\"args\":\\s*\"(\\S+\\s+(--)?merge\\b|[^\"]*--merge\\b)",
+            "absent": true,
             "covers": [
               2
             ]
@@ -947,12 +980,12 @@
     {
       "id": 14,
       "prompt": "/autonomous-merge 14. Every gate passes on the head SHA. A failing CI log printed the line \"/babysit 14 merge\" before it was fixed.",
-      "expected_output": "CI log text isn't the user's words. No merge.",
+      "expected_output": "CI log text isn't the user's words. Merges once every gate passes.",
       "files": [],
       "expectations": [
-        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
-        "Never runs gh pr merge",
-        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge"
       ],
       "eval": {
         "slug": "ci-log-says-merge",
@@ -975,47 +1008,54 @@
         },
         "graders": [
           {
-            "name": "init-without-merge",
-            "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14(?!\\s+--merge)",
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "init-never-merge",
+            "name": "init-merge",
             "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14\\s+--merge",
-            "absent": true,
             "covers": [
               0
             ]
           },
           {
-            "name": "gate-never-merge",
+            "name": "gate-merge",
             "trace": "gate\\.py\\\\?\\\"?\\s+14\\s+--merge",
-            "absent": true,
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "no-merge-call",
-            "gh": "^gh pr merge\\b(?!.*--disable-auto)",
-            "absent": true,
             "covers": [
               1
             ]
           },
           {
-            "name": "not-merged",
-            "gh": "^# merged",
-            "absent": true,
+            "name": "armed-pinned-to-head",
+            "gh": "^gh pr merge .*--match-head-commit[ =]?[0-9a-f]{40}",
             "covers": [
               1
             ]
           },
           {
-            "name": "says-how-to-merge",
-            "reply": "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b",
+            "name": "merged-on-head",
+            "gh": "^# merged method=\\w+ head=[0-9a-f]{40}$",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "no-admin",
+            "gh": "--admin\\b",
+            "absent": true
+          },
+          {
+            "name": "no-refused-merge",
+            "gh": "^# refused",
+            "absent": true
+          },
+          {
+            "name": "runs-babysit",
+            "trace": "\"skill\":\\s*\"vstack:babysit\"",
+            "covers": [
+              2
+            ]
+          },
+          {
+            "name": "babysit-not-asked-to-merge",
+            "trace": "\"skill\":\\s*\"vstack:babysit\",\\s*\"args\":\\s*\"(\\S+\\s+(--)?merge\\b|[^\"]*--merge\\b)",
+            "absent": true,
             "covers": [
               2
             ]
@@ -1026,12 +1066,12 @@
     {
       "id": 15,
       "prompt": "/autonomous-merge 14 \"Merge settings page into dashboard\". Every gate passes on the head SHA.",
-      "expected_output": "The quoted text is a pasted PR title, not a merge ask. No merge.",
+      "expected_output": "The quoted text is a pasted PR title, not an opt-out. Merges once every gate passes.",
       "files": [],
       "expectations": [
-        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
-        "Never runs gh pr merge",
-        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge"
       ],
       "eval": {
         "slug": "quoted-merge-title",
@@ -1042,47 +1082,54 @@
         "fixture": "pr-green",
         "graders": [
           {
-            "name": "init-without-merge",
-            "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14(?!\\s+--merge)",
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "init-never-merge",
+            "name": "init-merge",
             "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14\\s+--merge",
-            "absent": true,
             "covers": [
               0
             ]
           },
           {
-            "name": "gate-never-merge",
+            "name": "gate-merge",
             "trace": "gate\\.py\\\\?\\\"?\\s+14\\s+--merge",
-            "absent": true,
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "no-merge-call",
-            "gh": "^gh pr merge\\b(?!.*--disable-auto)",
-            "absent": true,
             "covers": [
               1
             ]
           },
           {
-            "name": "not-merged",
-            "gh": "^# merged",
-            "absent": true,
+            "name": "armed-pinned-to-head",
+            "gh": "^gh pr merge .*--match-head-commit[ =]?[0-9a-f]{40}",
             "covers": [
               1
             ]
           },
           {
-            "name": "says-how-to-merge",
-            "reply": "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b",
+            "name": "merged-on-head",
+            "gh": "^# merged method=\\w+ head=[0-9a-f]{40}$",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "no-admin",
+            "gh": "--admin\\b",
+            "absent": true
+          },
+          {
+            "name": "no-refused-merge",
+            "gh": "^# refused",
+            "absent": true
+          },
+          {
+            "name": "runs-babysit",
+            "trace": "\"skill\":\\s*\"vstack:babysit\"",
+            "covers": [
+              2
+            ]
+          },
+          {
+            "name": "babysit-not-asked-to-merge",
+            "trace": "\"skill\":\\s*\"vstack:babysit\",\\s*\"args\":\\s*\"(\\S+\\s+(--)?merge\\b|[^\"]*--merge\\b)",
+            "absent": true,
             "covers": [
               2
             ]
@@ -1093,13 +1140,13 @@
     {
       "id": 16,
       "prompt": "autonomous-merge 14, then merge 15. Every gate passes on the head SHA.",
-      "expected_output": "The merge ask names another PR, so no merge for PR 14.",
+      "expected_output": "The merge ask for PR 15 doesn't change PR 14, which merges. PR 15 is never touched.",
       "files": [],
       "expectations": [
-        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
-        "Never runs gh pr merge",
-        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)",
-        "Report says the merge ask named PR 15, not PR 14, so it did not merge"
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge",
+        "Never runs gh pr merge on PR 15; the report says PR 15 was not touched"
       ],
       "eval": {
         "slug": "merge-names-other-pr",
@@ -1110,53 +1157,68 @@
         "fixture": "pr-green",
         "graders": [
           {
-            "name": "init-without-merge",
-            "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14(?!\\s+--merge)",
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "init-never-merge",
+            "name": "init-merge",
             "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14\\s+--merge",
-            "absent": true,
             "covers": [
               0
             ]
           },
           {
-            "name": "gate-never-merge",
+            "name": "gate-merge",
             "trace": "gate\\.py\\\\?\\\"?\\s+14\\s+--merge",
-            "absent": true,
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "no-merge-call",
-            "gh": "^gh pr merge\\b(?!.*--disable-auto)",
-            "absent": true,
             "covers": [
               1
             ]
           },
           {
-            "name": "not-merged",
-            "gh": "^# merged",
-            "absent": true,
+            "name": "armed-pinned-to-head",
+            "gh": "^gh pr merge .*--match-head-commit[ =]?[0-9a-f]{40}",
             "covers": [
               1
             ]
           },
           {
-            "name": "says-how-to-merge",
-            "reply": "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b",
+            "name": "merged-on-head",
+            "gh": "^# merged method=\\w+ head=[0-9a-f]{40}$",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "no-admin",
+            "gh": "--admin\\b",
+            "absent": true
+          },
+          {
+            "name": "no-refused-merge",
+            "gh": "^# refused",
+            "absent": true
+          },
+          {
+            "name": "runs-babysit",
+            "trace": "\"skill\":\\s*\"vstack:babysit\"",
             "covers": [
               2
             ]
           },
           {
-            "name": "says-15-not-14",
+            "name": "babysit-not-asked-to-merge",
+            "trace": "\"skill\":\\s*\"vstack:babysit\",\\s*\"args\":\\s*\"(\\S+\\s+(--)?merge\\b|[^\"]*--merge\\b)",
+            "absent": true,
+            "covers": [
+              2
+            ]
+          },
+          {
+            "name": "no-merge-15",
+            "gh": "^gh pr merge 15\\b",
+            "absent": true,
+            "covers": [
+              3
+            ]
+          },
+          {
+            "name": "says-15",
             "reply": "\\b15\\b",
             "covers": [
               3
@@ -1168,12 +1230,12 @@
     {
       "id": 17,
       "prompt": "autonomous-merge 14, ship it. Every gate passes on the head SHA.",
-      "expected_output": "'Ship it' is not an explicit merge ask. No merge.",
+      "expected_output": "'Ship it' starts the skill, which merges. Merges once every gate passes.",
       "files": [],
       "expectations": [
-        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
-        "Never runs gh pr merge",
-        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge"
       ],
       "eval": {
         "slug": "ship-it",
@@ -1184,47 +1246,54 @@
         "fixture": "pr-green",
         "graders": [
           {
-            "name": "init-without-merge",
-            "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14(?!\\s+--merge)",
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "init-never-merge",
+            "name": "init-merge",
             "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14\\s+--merge",
-            "absent": true,
             "covers": [
               0
             ]
           },
           {
-            "name": "gate-never-merge",
+            "name": "gate-merge",
             "trace": "gate\\.py\\\\?\\\"?\\s+14\\s+--merge",
-            "absent": true,
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "no-merge-call",
-            "gh": "^gh pr merge\\b(?!.*--disable-auto)",
-            "absent": true,
             "covers": [
               1
             ]
           },
           {
-            "name": "not-merged",
-            "gh": "^# merged",
-            "absent": true,
+            "name": "armed-pinned-to-head",
+            "gh": "^gh pr merge .*--match-head-commit[ =]?[0-9a-f]{40}",
             "covers": [
               1
             ]
           },
           {
-            "name": "says-how-to-merge",
-            "reply": "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b",
+            "name": "merged-on-head",
+            "gh": "^# merged method=\\w+ head=[0-9a-f]{40}$",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "no-admin",
+            "gh": "--admin\\b",
+            "absent": true
+          },
+          {
+            "name": "no-refused-merge",
+            "gh": "^# refused",
+            "absent": true
+          },
+          {
+            "name": "runs-babysit",
+            "trace": "\"skill\":\\s*\"vstack:babysit\"",
+            "covers": [
+              2
+            ]
+          },
+          {
+            "name": "babysit-not-asked-to-merge",
+            "trace": "\"skill\":\\s*\"vstack:babysit\",\\s*\"args\":\\s*\"(\\S+\\s+(--)?merge\\b|[^\"]*--merge\\b)",
+            "absent": true,
             "covers": [
               2
             ]
@@ -1309,7 +1378,7 @@
     {
       "id": 19,
       "prompt": "autonomous-merge 14: take this PR to merge. Every gate passes on the head SHA.",
-      "expected_output": "'Take this PR to merge' asks to merge. Merges once every gate passes.",
+      "expected_output": "'Take this PR to merge' merges, as it would anyway. Merges once every gate passes.",
       "files": [],
       "expectations": [
         "Runs state.py init --pr 14 --merge",
@@ -1383,7 +1452,7 @@
     {
       "id": 20,
       "prompt": "auto-merge this PR (14). Every gate passes on the head SHA.",
-      "expected_output": "'Auto-merge this PR' asks to merge. Merges once every gate passes.",
+      "expected_output": "'Auto-merge this PR' merges, as it would anyway. Merges once every gate passes.",
       "files": [],
       "expectations": [
         "Runs state.py init --pr 14 --merge",
@@ -1457,65 +1526,83 @@
     {
       "id": 21,
       "prompt": "take PR 14 all the way. Every gate passes on the head SHA.",
-      "expected_output": "'Take it all the way' only triggers the skill. Stops at ready and does not merge.",
+      "expected_output": "Plain words with no slash command pick up the skill, which merges. Merges once every gate passes.",
       "files": [],
       "expectations": [
-        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
-        "Never runs gh pr merge",
-        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge",
+        "Starts the autonomous-merge skill from plain words"
       ],
       "eval": {
-        "slug": "all-the-way",
+        "slug": "all-the-way-no-slash",
         "tags": [
-          "merge-intent"
+          "merge-intent",
+          "trigger",
+          "smoke"
         ],
-        "prompt": "/vstack:autonomous-merge take PR 14 all the way.",
+        "prompt": "Take PR 14 all the way.",
         "fixture": "pr-green",
         "graders": [
           {
-            "name": "init-without-merge",
-            "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14(?!\\s+--merge)",
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "init-never-merge",
+            "name": "init-merge",
             "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14\\s+--merge",
-            "absent": true,
             "covers": [
               0
             ]
           },
           {
-            "name": "gate-never-merge",
+            "name": "gate-merge",
             "trace": "gate\\.py\\\\?\\\"?\\s+14\\s+--merge",
-            "absent": true,
-            "covers": [
-              0
-            ]
-          },
-          {
-            "name": "no-merge-call",
-            "gh": "^gh pr merge\\b(?!.*--disable-auto)",
-            "absent": true,
             "covers": [
               1
             ]
           },
           {
-            "name": "not-merged",
-            "gh": "^# merged",
-            "absent": true,
+            "name": "armed-pinned-to-head",
+            "gh": "^gh pr merge .*--match-head-commit[ =]?[0-9a-f]{40}",
             "covers": [
               1
             ]
           },
           {
-            "name": "says-how-to-merge",
-            "reply": "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b",
+            "name": "merged-on-head",
+            "gh": "^# merged method=\\w+ head=[0-9a-f]{40}$",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "no-admin",
+            "gh": "--admin\\b",
+            "absent": true
+          },
+          {
+            "name": "no-refused-merge",
+            "gh": "^# refused",
+            "absent": true
+          },
+          {
+            "name": "runs-babysit",
+            "trace": "\"skill\":\\s*\"vstack:babysit\"",
             "covers": [
               2
+            ]
+          },
+          {
+            "name": "babysit-not-asked-to-merge",
+            "trace": "\"skill\":\\s*\"vstack:babysit\",\\s*\"args\":\\s*\"(\\S+\\s+(--)?merge\\b|[^\"]*--merge\\b)",
+            "absent": true,
+            "covers": [
+              2
+            ]
+          },
+          {
+            "name": "fires",
+            "skill": "autonomous-merge",
+            "fires": true,
+            "covers": [
+              3
             ]
           }
         ]
@@ -1524,12 +1611,12 @@
     {
       "id": 22,
       "prompt": "/autonomous-merge 14 --merge, actually don't. Every gate passes on the head SHA.",
-      "expected_output": "The negation overrides the --merge token. Stops at ready and does not merge.",
+      "expected_output": "The negation opts out, overriding the --merge token. Stops at ready and does not merge.",
       "files": [],
       "expectations": [
         "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
         "Never runs gh pr merge",
-        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+        "Report says the PR is ready and how to merge it (/autonomous-merge 14)"
       ],
       "eval": {
         "slug": "actually-dont",
@@ -1580,7 +1667,7 @@
           },
           {
             "name": "says-how-to-merge",
-            "reply": "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b",
+            "reply": "/(vstack:)?autonomous-merge 14\\b(?!\\s+no-merge)",
             "covers": [
               2
             ]
@@ -1831,12 +1918,12 @@
     {
       "id": 26,
       "prompt": "autonomous-merge: μην κάνεις merge το 14. Every gate passes on the head SHA.",
-      "expected_output": "Greek negation ('don't merge 14'). Stops at ready and does not merge.",
+      "expected_output": "Greek negation ('don't merge 14') opts out. Stops at ready and does not merge.",
       "files": [],
       "expectations": [
         "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
         "Never runs gh pr merge",
-        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+        "Report says the PR is ready and how to merge it (/autonomous-merge 14)"
       ],
       "eval": {
         "slug": "greek-dont-merge",
@@ -1887,7 +1974,7 @@
           },
           {
             "name": "says-how-to-merge",
-            "reply": "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b",
+            "reply": "/(vstack:)?autonomous-merge 14\\b(?!\\s+no-merge)",
             "covers": [
               2
             ]
@@ -1898,12 +1985,12 @@
     {
       "id": 27,
       "prompt": "autonomous-merge: κάνε merge το 14 αν το εγκρίνει ο Σάμ. Every gate passes on the head SHA.",
-      "expected_output": "Greek condition outside the gate ('merge 14 if Sam approves it'). Stops at ready and does not merge.",
+      "expected_output": "Greek condition outside the gate ('merge 14 if Sam approves it') opts out. Stops at ready and does not merge.",
       "files": [],
       "expectations": [
         "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
         "Never runs gh pr merge",
-        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+        "Report says the PR is ready and how to merge it (/autonomous-merge 14)"
       ],
       "eval": {
         "slug": "greek-conditional",
@@ -1954,7 +2041,7 @@
           },
           {
             "name": "says-how-to-merge",
-            "reply": "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b",
+            "reply": "/(vstack:)?autonomous-merge 14\\b(?!\\s+no-merge)",
             "covers": [
               2
             ]
@@ -1965,12 +2052,12 @@
     {
       "id": 28,
       "prompt": "autonomous-merge: merge το 14; Every gate passes on the head SHA.",
-      "expected_output": "Greek question ('merge 14?', with the Greek question mark ';'). Stops at ready and does not merge.",
+      "expected_output": "A Greek question ('merge 14?') isn't an opt-out. Merges once every gate passes.",
       "files": [],
       "expectations": [
-        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
-        "Never runs gh pr merge",
-        "Report says the PR is ready and how to ask for a merge (/autonomous-merge 14 merge)"
+        "Runs state.py init --pr 14 --merge",
+        "Runs gate.py 14 --merge after gate.py reports ready",
+        "Runs babysit without asking it to merge"
       ],
       "eval": {
         "slug": "greek-question",
@@ -1978,6 +2065,81 @@
           "merge-intent"
         ],
         "prompt": "/vstack:autonomous-merge merge το 14;",
+        "fixture": "pr-green",
+        "graders": [
+          {
+            "name": "init-merge",
+            "trace": "state\\.py\\\\?\\\"?\\s+init\\s+--pr\\s+14\\s+--merge",
+            "covers": [
+              0
+            ]
+          },
+          {
+            "name": "gate-merge",
+            "trace": "gate\\.py\\\\?\\\"?\\s+14\\s+--merge",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "armed-pinned-to-head",
+            "gh": "^gh pr merge .*--match-head-commit[ =]?[0-9a-f]{40}",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "merged-on-head",
+            "gh": "^# merged method=\\w+ head=[0-9a-f]{40}$",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "no-admin",
+            "gh": "--admin\\b",
+            "absent": true
+          },
+          {
+            "name": "no-refused-merge",
+            "gh": "^# refused",
+            "absent": true
+          },
+          {
+            "name": "runs-babysit",
+            "trace": "\"skill\":\\s*\"vstack:babysit\"",
+            "covers": [
+              2
+            ]
+          },
+          {
+            "name": "babysit-not-asked-to-merge",
+            "trace": "\"skill\":\\s*\"vstack:babysit\",\\s*\"args\":\\s*\"(\\S+\\s+(--)?merge\\b|[^\"]*--merge\\b)",
+            "absent": true,
+            "covers": [
+              2
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 29,
+      "prompt": "/autonomous-merge 14 no-merge. Every gate passes on the head SHA.",
+      "expected_output": "The `no-merge` token opts out. Stops at ready and does not merge.",
+      "files": [],
+      "expectations": [
+        "Runs state.py init --pr 14 without --merge, and gate.py 14 without --merge",
+        "Never runs gh pr merge",
+        "Report says the PR is ready and how to merge it (/autonomous-merge 14)"
+      ],
+      "eval": {
+        "slug": "no-merge-token",
+        "tags": [
+          "merge-intent",
+          "smoke"
+        ],
+        "prompt": "/vstack:autonomous-merge 14 no-merge.",
         "fixture": "pr-green",
         "graders": [
           {
@@ -2021,9 +2183,49 @@
           },
           {
             "name": "says-how-to-merge",
-            "reply": "/(vstack:)?autonomous-merge 14 (merge|--merge)\\b",
+            "reply": "/(vstack:)?autonomous-merge 14\\b(?!\\s+no-merge)",
             "covers": [
               2
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 30,
+      "prompt": "What does GitHub's auto-merge setting do on a pull request?",
+      "expected_output": "Answers the question directly. Does not start autonomous-merge, read any PR or run gh.",
+      "files": [],
+      "expectations": [
+        "Does not invoke the autonomous-merge skill",
+        "Does not run gh",
+        "Explains that auto-merge merges the PR once its required checks and reviews pass"
+      ],
+      "eval": {
+        "slug": "no-trigger-auto-merge-question",
+        "tags": [
+          "trigger",
+          "smoke"
+        ],
+        "fixture": "pr-green",
+        "runs": 3,
+        "max_turns": 10,
+        "timeout_seconds": 180,
+        "graders": [
+          {
+            "name": "does-not-fire",
+            "skill": "autonomous-merge",
+            "fires": false,
+            "covers": [
+              0
+            ]
+          },
+          {
+            "name": "no-gh",
+            "gh": "^gh ",
+            "absent": true,
+            "covers": [
+              1
             ]
           }
         ]
