@@ -73,7 +73,6 @@ its detail. Exit 2 usage (also -h), 4 internal error.
 """
 import argparse
 import importlib.util
-import json
 import os
 import re
 import signal
@@ -155,7 +154,7 @@ def github_checks(t, view):
     checks reported") or "unreadable" (gh failed or printed something that isn't a list)."""
     r = c.gh("pr", "checks", str(t["pr"]), "-R", c.gh_repo(t), "--required", "--json", "name,bucket")
     try:
-        required = json.loads(r.stdout)
+        required = c.loads(r.stdout)
     except ValueError:
         required = None
     if isinstance(required, list) and required:
@@ -173,7 +172,7 @@ def github_threads(t):
     if r.returncode != 0:
         return None
     try:
-        pages = json.loads(r.stdout)
+        pages = c.loads(r.stdout)
         threads, more = [], False
         for page in pages:
             rt = page["data"]["repository"]["pullRequest"]["reviewThreads"]
@@ -280,7 +279,7 @@ def github_reviews(t):
     if r.returncode != 0:
         return None
     try:
-        pages = json.loads(r.stdout)
+        pages = c.loads(r.stdout)
     except ValueError:
         return None
     if not (isinstance(pages, list) and all(isinstance(p, list) for p in pages)):
@@ -325,7 +324,7 @@ def protection_approvals(t, branch):
     r = c.gh("api", "--hostname", t["hostname"], f"{path}/protection")
     if r.returncode == 0:
         try:
-            p = json.loads(r.stdout)
+            p = c.loads(r.stdout)
         except ValueError:
             return None
         if not isinstance(p, dict):
@@ -336,7 +335,7 @@ def protection_approvals(t, branch):
         return 0
     r = c.gh("api", "--hostname", t["hostname"], path)
     try:
-        return 0 if r.returncode == 0 and json.loads(r.stdout).get("protected") is False else None
+        return 0 if r.returncode == 0 and c.loads(r.stdout).get("protected") is False else None
     except (ValueError, AttributeError):
         return None
 
@@ -352,7 +351,7 @@ def ruleset_approvals(t, branch):
     if r.returncode != 0:
         return 0 if "HTTP 404" in r.stderr + r.stdout else None
     try:
-        pages = json.loads(r.stdout)
+        pages = c.loads(r.stdout)
     except ValueError:
         return None
     if not (isinstance(pages, list) and all(isinstance(p, list) for p in pages)):
@@ -488,7 +487,7 @@ def gh_quiet(*args):
 def pr_state(t):
     r = gh_quiet("pr", "view", str(t["pr"]), "-R", c.gh_repo(t), "--json", "state")
     try:
-        view = json.loads(r.stdout) if r.returncode == 0 else None
+        view = c.loads(r.stdout) if r.returncode == 0 else None
     except ValueError:
         return None
     return view.get("state") if isinstance(view, dict) else None
@@ -519,7 +518,7 @@ def poll_merged(t, head, base):
     """True once the PR has merged; a handback on any change or new block."""
     r = c.gh("pr", "view", str(t["pr"]), "-R", c.gh_repo(t), "--json", VIEW_FIELDS)
     try:
-        view = json.loads(r.stdout) if r.returncode == 0 else None
+        view = c.loads(r.stdout) if r.returncode == 0 else None
     except ValueError:
         view = None
     if not isinstance(view, dict):

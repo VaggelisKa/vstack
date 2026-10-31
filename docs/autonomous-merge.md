@@ -7,7 +7,7 @@ or a condition the gate can't check).
 Scripts and sibling skills are found through `${CLAUDE_SKILL_DIR}`, the folder holding SKILL.md (other harnesses
 use its absolute path).
 
-- 116 script tests, with fake `gh` and `curl` on a `PATH` holding only git, in temp repos:
+- 118 script tests, with fake `gh` and `curl` on a `PATH` holding only git, in temp repos:
   `python3 -m unittest discover -s skills/autonomous-merge/scripts/tests`.
 - `preflight.py`: GitHub and Bitbucket ok paths, host from URL or remote, one test per handback
   (`no_cli`, `auth_missing`, `auth_expired`, `insufficient_permission`, `not_open`, `host_unsupported`,

@@ -4,7 +4,9 @@ the URL and the git remote, and no token ever in output or argv.
 
 Run from the repo root: python3 -m unittest discover -s skills/autonomous-merge/scripts/tests
 """
+import importlib.util
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -33,6 +35,32 @@ class Preflight(unittest.TestCase):
         self.assertEqual(sorted(data), ["action", "detail", "outcome", "reason"])
         self.assertIn(reason, err)
         return data
+
+    def test_colored_gh_json_still_parses(self):
+        raw = json.dumps({"permissions": {"push": True}, "allow_merge_commit": True,
+                          "allow_squash_merge": True, "allow_rebase_merge": True}, indent=2)
+        repo = gh_rule(["api --hostname github.com repos/o/r"],
+                       "A new release of gh is available\n\x1b[1;37m" + raw[0] + "\x1b[m" + raw[1:])
+        code, data, out, err = self.go(repo=repo, env=self.stubs.env(FORCE_COLOR="1", CLICOLOR_FORCE="1"))
+        self.assertEqual(code, 0, (out, err))
+        self.assertEqual(data["outcome"], "ok")
+        for call in self.stubs.calls("gh"):
+            self.assertIsNone(call["force_color"])
+            self.assertIsNone(call["clicolor_force"])
+            self.assertEqual(call["no_color"], "1")
+
+    def test_loads_rejects_text_that_is_not_json(self):
+        spec = importlib.util.spec_from_file_location("am_common_loads", SCRIPTS / "common.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        os.environ["FORCE_COLOR"] = "1"
+        try:
+            self.assertNotIn("FORCE_COLOR", mod.gh_env())
+        finally:
+            os.environ.pop("FORCE_COLOR", None)
+        self.assertEqual(mod.loads("\x1b[1;37m{\x1b[m\"a\": 1}"), {"a": 1})
+        with self.assertRaises(ValueError):
+            mod.loads("no json here")
 
     def test_github_ok(self):
         code, data, out, err = self.go()

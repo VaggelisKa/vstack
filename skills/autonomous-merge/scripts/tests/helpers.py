@@ -36,7 +36,10 @@ args = sys.argv[1:]
 stdin = sys.stdin.read()
 with open(os.path.join(d, "log.jsonl"), "a") as f:
     f.write(json.dumps({"cmd": name, "argv": args, "stdin": stdin,
-                        "prompt_disabled": os.environ.get("GH_PROMPT_DISABLED")}) + "\n")
+                        "prompt_disabled": os.environ.get("GH_PROMPT_DISABLED"),
+                        "force_color": os.environ.get("FORCE_COLOR"),
+                        "clicolor_force": os.environ.get("CLICOLOR_FORCE"),
+                        "no_color": os.environ.get("NO_COLOR")}) + "\n")
 joined = " ".join(args)
 with open(os.path.join(d, "rules.json")) as f:
     rules = json.load(f)

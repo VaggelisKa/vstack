@@ -37,6 +37,8 @@ COORDINATION = os.path.join(HERE, "..", "..", "babysit", "scripts", "coordinatio
 
 NAME = re.compile(r"[A-Za-z0-9_.-]+")
 PR_NUM = re.compile(r"#?([1-9][0-9]{0,9})")
+ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+COLOR_OFF = ("FORCE_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "GH_FORCE_TTY")
 MAX_PR = 2**31 - 1
 BB_API = "https://api.bitbucket.org/2.0"
 TOKEN_ENV = ("BITBUCKET_TOKEN", "BITBUCKET_APP_PASSWORD", "GH_TOKEN", "GITHUB_TOKEN",
@@ -205,8 +207,31 @@ def parse_target(arg):
 
 
 def gh_env():
-    return {**os.environ, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1", "NO_COLOR": "1",
-            "GH_PAGER": "cat", "PAGER": "cat", "GH_SPINNER_DISABLED": "1", "LC_ALL": "C"}
+    """The environment for gh. Color-forcing variables are dropped: with them set, gh
+    colors its JSON even when NO_COLOR is set and stdout is a pipe."""
+    env = {k: v for k, v in os.environ.items() if k not in COLOR_OFF}
+    env.update({"GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1", "NO_COLOR": "1",
+                "GH_PAGER": "cat", "PAGER": "cat", "GH_SPINNER_DISABLED": "1", "LC_ALL": "C"})
+    return env
+
+
+def loads(text):
+    """JSON from gh. ANSI color, and any note printed before the value, is ignored."""
+    text = ANSI.sub("", text)
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(text):
+        if ch not in "{[":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text[i:])
+        except ValueError:
+            continue
+        return value
+    raise ValueError("not JSON")
 
 
 DEADLINE = None  # a time.monotonic() every gh call must end by; the gate sets it while polling a merge
@@ -220,7 +245,7 @@ def gh(*args, timeout=120):
 
 def gh_json(r, what):
     try:
-        return json.loads(r.stdout)
+        return loads(r.stdout)
     except ValueError:
         raise Handback("unknown", f"{what}: gh printed something that isn't JSON",
                        "Check `gh --version` (2.42 or newer) and rerun.")

@@ -235,9 +235,35 @@ def own_comment(c, viewer, item=None):
 
 # ---- gh -------------------------------------------------------------------
 
+COLOR_OFF = ("FORCE_COLOR", "CLICOLOR", "CLICOLOR_FORCE", "GH_FORCE_TTY")
+ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
 def gh_env():
-    return {**os.environ, "GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1", "NO_COLOR": "1",
-            "GH_PAGER": "cat", "PAGER": "cat", "GH_SPINNER_DISABLED": "1", "LC_ALL": "C"}
+    """Same rule as autonomous-merge's common.gh_env: drop the variables that make gh color its JSON."""
+    env = {k: v for k, v in os.environ.items() if k not in COLOR_OFF}
+    env.update({"GH_PROMPT_DISABLED": "1", "GH_NO_UPDATE_NOTIFIER": "1", "NO_COLOR": "1",
+                "GH_PAGER": "cat", "PAGER": "cat", "GH_SPINNER_DISABLED": "1", "LC_ALL": "C"})
+    return env
+
+
+def loads(text):
+    """JSON from gh. ANSI color, and any note printed before the value, is ignored."""
+    text = ANSI.sub("", text)
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    decoder = json.JSONDecoder()
+    for i, ch in enumerate(text):
+        if ch not in "{[":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text[i:])
+        except ValueError:
+            continue
+        return value
+    raise ValueError("not JSON")
 
 
 def default_gh(*args, timeout=120):
@@ -254,7 +280,7 @@ def gh_json(r, what):
     if r.returncode != 0:
         raise Internal(f"{what}: gh exited {r.returncode}: {redact(r.stderr or '')}")
     try:
-        return json.loads(r.stdout)
+        return loads(r.stdout)
     except ValueError:
         raise Internal(f"{what}: gh printed something that isn't JSON")
 
@@ -283,7 +309,7 @@ def fetch_threads(gh, host, owner, repo, pr):
         return None, None
     try:
         threads, viewer, more = [], None, False
-        for page in json.loads(r.stdout):
+        for page in loads(r.stdout):
             viewer = viewer or ((page["data"].get("viewer") or {}).get("login"))
             rt = page["data"]["repository"]["pullRequest"]["reviewThreads"]
             threads += rt["nodes"]
@@ -298,7 +324,7 @@ def fetch_viewer(gh, host):
     """The viewer's login from `gh api user`, or None."""
     r = gh("api", "--hostname", host, "user")
     try:
-        user = json.loads(r.stdout) if r.returncode == 0 else None
+        user = loads(r.stdout) if r.returncode == 0 else None
     except ValueError:
         return None
     return user.get("login") if isinstance(user, dict) and isinstance(user.get("login"), str) else None
@@ -310,7 +336,7 @@ def fetch_reactions(gh, host, endpoint):
     if r.returncode != 0:
         return None
     try:
-        pages = json.loads(r.stdout)
+        pages = loads(r.stdout)
     except ValueError:
         return None
     if not (isinstance(pages, list) and all(isinstance(p, list) for p in pages)):
@@ -345,7 +371,7 @@ def fill_committers(gh, host, owner, repo, view, viewer):
             continue
         r = gh("api", "--hostname", host, "--method", "GET", f"repos/{owner}/{repo}/commits/{c['oid']}")
         try:
-            data = json.loads(r.stdout) if r.returncode == 0 else None
+            data = loads(r.stdout) if r.returncode == 0 else None
         except ValueError:
             data = None
         committer = data.get("committer") if isinstance(data, dict) else None
@@ -389,7 +415,7 @@ def commit_files(sha, cache, gh, repo):
         host, owner, name = repo
         r = gh("api", "--hostname", host, "--method", "GET", f"repos/{owner}/{name}/commits/{sha}")
         try:
-            data = json.loads(r.stdout) if r.returncode == 0 else None
+            data = loads(r.stdout) if r.returncode == 0 else None
             files = [f["filename"] for f in data["files"]] if isinstance(data, dict) else None
         except (ValueError, KeyError, TypeError):
             files = None
