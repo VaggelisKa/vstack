@@ -175,7 +175,7 @@ def gh_review(state="APPROVED", login="bob", commit=None, bot=False):
 def github_view(head, base, **over):
     v = {"state": "OPEN", "isDraft": False, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
          "reviewDecision": "APPROVED", "headRefOid": head, "baseRefOid": base, "baseRefName": "main",
-         "author": {"login": "me"},
+         "author": {"login": "me"}, "labels": [{"name": "enhancement"}],
          "statusCheckRollup": [{"__typename": "CheckRun", "name": "test", "status": "COMPLETED",
                                 "conclusion": "SUCCESS"}]}
     v.update(over)
@@ -223,7 +223,8 @@ def github_rules(head, base, **over):
         "viewer": gh_rule(["repo view github.com/o/r --json viewerPermission"], {"viewerPermission": "WRITE"}),
         "pr": gh_rule(["pr view 42 -R github.com/o/r --json number,url"],
                       {"number": 42, "url": "https://github.com/o/r/pull/42", "state": "OPEN", "isDraft": False,
-                       "headRefName": "feature", "baseRefName": "main", "headRefOid": head, "baseRefOid": base}),
+                       "headRefName": "feature", "baseRefName": "main", "headRefOid": head, "baseRefOid": base,
+                       "isCrossRepository": False}),
         "view": gh_rule(VIEW_MATCH, github_view(head, base)),
         "checks": gh_rule(["pr checks 42 -R github.com/o/r --required"], [{"name": "test", "bucket": "pass"}]),
         "threads": gh_rule(["api graphql"], [threads_page(thread(resolved=True))]),

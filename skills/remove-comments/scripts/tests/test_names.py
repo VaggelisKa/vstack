@@ -20,7 +20,12 @@ class Names(unittest.TestCase):
         self.repo = new_repo(self)
         (self.repo / "ok.py").write_text("x = 1\n")
         commit_all(self.repo, "base")
-        with open(os.path.join(os.fsencode(self.repo), BAD), "wb") as f:
+        try:
+            f = open(os.path.join(os.fsencode(self.repo), BAD), "wb")
+        except OSError as e:
+            # APFS (macOS) only stores UTF-8 names and refuses this one with EILSEQ; Linux CI keeps running it.
+            self.skipTest(f"this filesystem can't create a non-UTF-8 file name: {e}")
+        with f:
             f.write(b"y = 2  # c\n")
         (self.repo / HOSTILE).write_text("z = 3  # z\n")
         (self.repo / "ok.py").write_text("x = 1  # one\n")

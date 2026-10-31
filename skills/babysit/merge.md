@@ -1,7 +1,8 @@
 # babysit merge mode: merge gates
 
 Read this only when the request explicitly asked to merge (see SKILL.md). Otherwise, never merge,
-and read only gate 2: SKILL.md's done condition uses its approval rule.
+and read only gate 2: SKILL.md's done condition uses its approval rule (and gate 5's branch
+update, when autonomous-merge asks for it).
 
 Evaluate every gate against the **current head SHA** (`headRefOid`). Re-fetch
 state right before deciding; if the SHA changed, start over.
@@ -58,6 +59,8 @@ gh pr view <pr> --json author,baseRefName,headRefOid,isDraft,mergeable,mergeStat
    to be up to date, the branch is not behind base. If behind and no escalation
    is open, run `gh pr update-branch <pr>` (merge, never `--rebase`); that counts
    as a round's push (see SKILL.md) and creates a new SHA, so go back to the loop.
+   (autonomous-merge asks babysit for this step without merge mode; its gate
+   then blocks `BEHIND` until babysit has updated the branch.)
    Conflicts → escalate.
 6. **No hold label.** Case-insensitive exact match against: `hold`, `on-hold`,
    `do-not-merge`, `do not merge`, `DNM`, `wip`.
@@ -76,13 +79,9 @@ gh pr merge <pr> --auto --<method> --match-head-commit <headRefOid>
 - Always pass a method: `gh pr merge` won't run without a prompt otherwise.
   Read what the repo allows
   (`gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed`).
-  If only one is allowed, use it. If several are, match how recent PRs were
-  merged into BASE: for the last few `gh pr list --base BASE --state merged -L 5 --json mergeCommit`,
-  fetch BASE and look at each merge commit (`git log -1 --format='%P%x09%s' <oid>`):
-  two parents is `--merge`; one parent with a subject ending `(#N)` is
-  `--squash`; anything else is `--rebase`. Use the method most of them used.
-  With no history or a tie, use `--squash` if allowed, else `--merge` (as
-  autonomous-merge's gate does). Method words in the request don't change this
+  If only one is allowed, use it. Otherwise use `--squash` if it is allowed
+  (or the settings can't be read), else `--merge`. This is the same rule as
+  autonomous-merge's gate. Method words in the request don't change it
   (SKILL.md). Log the method and why.
 - **Never** use `--admin`, bypass branch protection, or force-push.
 

@@ -25,8 +25,8 @@ OK, USAGE, INTERNAL, HANDBACK = 0, 2, 4, 5
 REASONS = (
     "no_cli", "auth_missing", "auth_expired", "insufficient_permission", "host_unsupported",
     "branch_protection", "checks_failing", "unresolved_threads", "changes_requested", "not_approved",
-    "conflicts", "draft", "not_open", "needs_review", "escalated", "cap_reached", "oscillation", "no_progress",
-    "security_blocker", "ci_unreproducible", "conflict_judgement", "design_change", "scope_change",
+    "conflicts", "draft", "hold_label", "not_open", "needs_review", "escalated", "cap_reached", "oscillation",
+    "no_progress", "security_blocker", "ci_unreproducible", "conflict_judgement", "design_change", "scope_change",
     "merge_unsupported_host", "merge_failed", "not_settled", "claimed_items", "conflicting_fixer", "stale_claim",
     "unknown",
 )
@@ -277,7 +277,7 @@ def github_access(t):
                        f"the token can read {t['owner']}/{t['repo']} but has no push or merge permission",
                        refresh_action(t))
     r = gh("pr", "view", str(t["pr"]), "-R", gh_repo(t), "--json",
-           "number,url,state,isDraft,headRefName,baseRefName,headRefOid,baseRefOid")
+           "number,url,state,isDraft,headRefName,baseRefName,headRefOid,baseRefOid,isCrossRepository")
     if r.returncode != 0:
         raise gh_api_error(r, t, f"reading PR {t['pr']}")
     return repo, gh_json(r, "gh pr view")

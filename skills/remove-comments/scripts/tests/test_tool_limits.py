@@ -2,7 +2,7 @@
 a timeout kills everything they started: a C file that includes /dev/zero ends the gcc
 cross-check in about a second as skipped, and a tool's background child doesn't
 outlive it. The caps make a hostile file cheap to check, not safe to run: they are no
-sandbox. POSIX only.
+sandbox. POSIX only. The memory cap (RLIMIT_AS) is only enforced on Linux; macOS accepts it and ignores it.
 
 Run from the repo root: python3 -m unittest discover -s skills/remove-comments/scripts/tests
 """
@@ -61,6 +61,9 @@ class ToolLimits(unittest.TestCase):
         out = r.stdout.decode()
         self.assertEqual(r.returncode, 0, out + r.stderr.decode())
         self.assertLess(took, comments.TOOL_TIMEOUT / 2, out)
+        if not sys.platform.startswith("linux") and re.search(r"cross-check \S+: ok", out):
+            # Apple clang reads /dev/zero as an empty file, so there's nothing to hang on or skip.
+            self.skipTest("this preprocessor doesn't hang on #include \"/dev/zero\"")
         self.assertRegex(out, r"cross-check \S+: skipped \(the before file doesn't preprocess")
         self.assertNotRegex(out, r"cross-check \S+: ok")
         if sys.platform.startswith("linux"):
@@ -82,11 +85,12 @@ class ToolLimits(unittest.TestCase):
         self.assertFalse(alive(pid), f"background child {pid} survived the timeout")
 
     def test_memory_cpu_and_output_are_capped(self):
-        r = comments.run_tool([sys.executable, "-I", "-c", "b = bytearray(%d)" % (comments.TOOL_MEMORY + (1 << 30))],
-                              self.scratch, self.env)
-        self.assertIsNotNone(r)
-        self.assertNotEqual(r[0], 0)
-        self.assertIn(b"MemoryError", r[2])
+        if sys.platform.startswith("linux"):
+            huge = "b = bytearray(%d)" % (comments.TOOL_MEMORY + (1 << 30))
+            r = comments.run_tool([sys.executable, "-I", "-c", huge], self.scratch, self.env)
+            self.assertIsNotNone(r)
+            self.assertNotEqual(r[0], 0)
+            self.assertIn(b"MemoryError", r[2])
         cpu = "import resource; print(resource.getrlimit(resource.RLIMIT_CPU))"
         r = comments.run_tool([sys.executable, "-I", "-c", cpu], self.scratch, self.env)
         self.assertEqual(r[0], 0, r)

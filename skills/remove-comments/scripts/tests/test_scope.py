@@ -84,11 +84,13 @@ class DiffScope(unittest.TestCase):
         self.assertEqual(len(in_scope(doc)), 21)
 
     def test_refusals(self):
-        r, doc, _ = listing(self, self.repo, "--diff=--output=/tmp/x")
+        # A path this test owns, so a real write would show and nothing else on the machine can fake one.
+        target = tmpdir(self) / "git-output"
+        r, doc, _ = listing(self, self.repo, f"--diff=--output={target}")
         self.assertEqual(r.returncode, 2)
         self.assertIn(b"refusing ref", r.stderr)
-        self.assertEqual(listing(self, self.repo, "--diff", "--output=/tmp/x")[0].returncode, 2)
-        self.assertFalse(os.path.exists("/tmp/x"))
+        self.assertEqual(listing(self, self.repo, "--diff", f"--output={target}")[0].returncode, 2)
+        self.assertFalse(target.exists())
         r, doc, _ = listing(self, self.repo, "--diff", "no-such-ref")
         self.assertEqual(r.returncode, 2)
         r = run("list", "--out", self.repo / "comments.json", cwd=self.repo)

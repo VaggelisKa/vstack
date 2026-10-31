@@ -9,14 +9,19 @@ file it reads is review's result, through review's read-result.py, and only to
 require a review whose head and base match the live PR and whose merge_ok is
 true; the file can't make a blocked PR pass.
 
-GitHub blocks: closed or merged, draft, conflicts, changes requested (by
+GitHub blocks: closed or merged, draft, a hold label (hold, on-hold,
+do-not-merge, "do not merge", DNM or wip, case-insensitive exact match, the
+same set as babysit's merge.md; labels that can't be read count as one),
+conflicts, changes requested (by
 reviewDecision, or by any human reviewer whose latest approving, dismissed or
 changes-requested review is CHANGES_REQUESTED), a missing approval, a required
 check not passing (all checks, if none are required or the required ones
 can't be read), any
 unresolved review thread (a human's stays until a human resolves it),
-mergeStateStatus BLOCKED or BEHIND, unknown mergeability (re-polled first, after
-each delay in VSTACK_POLL_DELAYS, comma-separated seconds, default 2,4,8,16),
+mergeStateStatus BLOCKED or BEHIND (the gate never updates the branch: babysit
+does that, and the new head goes back through review), unknown mergeability
+(re-polled first, after each delay in VSTACK_POLL_DELAYS, comma-separated
+seconds, default 2,4,8,16),
 no clean review on this head, and, before a merge is armed,
 babysit's fixer coordination (../../babysit/scripts/coordination.py, which
 records this look in its state): a handback from it (conflicting_fixer,
@@ -96,7 +101,9 @@ MERGE_POLL_DELAYS = (5, 10, 15) + (30,) * 9
 MERGE_DEADLINE = 480
 VERDICTS = ("APPROVED", "CHANGES_REQUESTED", "DISMISSED")
 VIEW_FIELDS = ("state,isDraft,mergeable,mergeStateStatus,reviewDecision,headRefOid,baseRefOid,baseRefName,author,"
-               "statusCheckRollup")
+               "statusCheckRollup,labels")
+# The same set as babysit's merge.md gate 6, matched case-insensitively and exactly.
+HOLD_LABELS = {"hold", "on-hold", "do-not-merge", "do not merge", "dnm", "wip"}
 
 THREADS_QUERY = """
 query($owner:String!,$repo:String!,$pr:Int!,$endCursor:String){
@@ -199,6 +206,18 @@ def thread_block(blocks, threads):
     elif bot:
         blocks.add("unresolved_threads", f"{len(bot)} unresolved bot review thread(s): {', '.join(bot[:10])}",
                    "Run babysit to answer and resolve the bot threads, or resolve them yourself, then rerun.")
+
+
+def label_block(blocks, view):
+    labels = view.get("labels")
+    if not (isinstance(labels, list) and all(isinstance(x, dict) and isinstance(x.get("name"), str) for x in labels)):
+        blocks.add("hold_label", "couldn't read the PR's labels, so treating one as a hold label",
+                   "Check the PR's labels by hand, then rerun.")
+        return
+    held = [x["name"] for x in labels if x["name"].lower() in HOLD_LABELS]
+    if held:
+        blocks.add("hold_label", f"the PR has a hold label: {', '.join(held)}",
+                   "Whoever added it removes it when the PR may merge; never remove it yourself. Then rerun.")
 
 
 def merge_method(repo):
@@ -396,6 +415,7 @@ def github_blocks(t, view, head, base, settled=True):
     if view.get("isDraft"):
         blocks.add("draft", f"PR {t['pr']} is a draft",
                    f"Mark it ready for review yourself (`gh pr ready {t['pr']}`) when it is, then rerun.")
+    label_block(blocks, view)
     if view.get("mergeable") == "CONFLICTING" or view.get("mergeStateStatus") == "DIRTY":
         blocks.add("conflicts", "the PR conflicts with its base",
                    "Resolve the conflicts with the base branch, then rerun.")
@@ -413,7 +433,8 @@ def github_blocks(t, view, head, base, settled=True):
         why = "behind its base, and protection requires it up to date" if status == "BEHIND" else "blocked"
         blocks.add("branch_protection", f"branch protection: the PR is {why} (mergeStateStatus {status})",
                    "Check what the base branch's protection rules still need (approvals, checks, an up-to-date "
-                   "branch via babysit); never bypass them. Then rerun.")
+                   "branch: babysit runs `gh pr update-branch`, then review reruns on the new head); never bypass "
+                   "them. Then rerun.")
     if settled and mergeability_unknown(view):
         blocks.add("unknown", "GitHub still hadn't computed mergeability after re-polling",
                    "Rerun the gate in a minute.")
