@@ -953,6 +953,16 @@ class WorkingSignals(unittest.TestCase):
             with self.subTest(body):
                 self.assertFalse(self.mod.says_working(body))
 
+    def test_colored_gh_json_still_parses(self):
+        os.environ["FORCE_COLOR"] = "1"
+        try:
+            self.assertNotIn("FORCE_COLOR", self.mod.gh_env())
+        finally:
+            os.environ.pop("FORCE_COLOR", None)
+        self.assertEqual(self.mod.loads("note\n\x1b[1;37m{\x1b[m\"a\": 1}"), {"a": 1})
+        with self.assertRaises(ValueError):
+            self.mod.loads("no json here")
+
 
 if __name__ == "__main__":
     unittest.main()

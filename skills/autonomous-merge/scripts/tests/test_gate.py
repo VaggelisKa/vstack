@@ -241,6 +241,29 @@ class Gate(unittest.TestCase):
     def test_draft(self):
         self.handback("draft", "--merge", view=self.view(isDraft=True, mergeStateStatus="DRAFT"))
 
+    def test_hold_label(self):
+        for name in ("hold", "On-Hold", "do-not-merge", "Do Not Merge", "DNM", "WIP"):
+            with self.subTest(name):
+                data = self.handback("hold_label", "--merge", view=self.view(labels=[{"name": "bug"}, {"name": name}]))
+                self.assertIn(name, data["detail"])
+        for names in (["holder"], ["wip-ok"], ["needs hold"], [" wip"]):
+            with self.subTest(names):
+                self.assertEqual(self.gate(view=self.view(labels=[{"name": n} for n in names]))[0], 0)
+
+    def test_unreadable_labels_hold(self):
+        for labels in (None, "wip", [{"name": None}], ["wip"]):
+            with self.subTest(labels):
+                self.assertIn("couldn't read", self.handback("hold_label", view=self.view(labels=labels))["detail"])
+        view = github_view(self.head, self.base)
+        del view["labels"]
+        self.handback("hold_label", view=gh_rule(VIEW_MATCH, view))
+
+    def test_hold_label_added_while_pending_disables_auto(self):
+        code, data, out, err = self.gate("--merge", view=self.view({}, {"labels": [{"name": "do-not-merge"}]}))
+        self.assertEqual((code, data["reason"]), (5, "hold_label"), (out, err))
+        self.assertIn("auto-merge disabled", data["detail"])
+        self.assertEqual(len(self.disables()), 1)
+
     def test_conflicts(self):
         data = self.handback("conflicts", "--merge", view=self.view(mergeable="CONFLICTING", mergeStateStatus="DIRTY"))
         self.handback("conflicts", view=self.view(mergeStateStatus="DIRTY"))

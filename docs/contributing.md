@@ -34,6 +34,10 @@ Arguments are free text: `$ARGUMENTS` in Claude Code, the request itself on
 other harnesses, so the same skill works whether it was invoked as
 `/vstack:babysit 42 merge`, `$babysit 42`, `/babysit 42`, or in plain words.
 
+One exception: `skills/html-plan/SKILL.md` has no `### Arguments` section or
+`Request: $ARGUMENTS` line, on purpose; as the comment at its top says, it reads
+the request from the user's message. Don't add the placeholder back.
+
 ## Authoring skills
 
 New skills are authored using Anthropic's
@@ -48,7 +52,8 @@ separately as a personal skill (for Claude Code, copy it to
   substitutes it. Other harnesses use the folder holding SKILL.md.
 - Every SKILL.md has an `### Arguments` section with a `Request: $ARGUMENTS`
   line and a fallback sentence for harnesses that leave it unfilled: read the
-  arguments from the request itself.
+  arguments from the request itself. html-plan is the one exception (see
+  Arguments).
 - Descriptions stay under 700 characters, in the third person. They say what
   the skill does, when to use it, and what it is not for.
 - Skills with side effects (push, comment, merge) set
@@ -77,12 +82,14 @@ python3 -m unittest discover -s skills/babysit/scripts/tests
 python3 -m unittest discover -s skills/autonomous-merge/scripts/tests
 python3 -m unittest discover -s skills/remove-comments/scripts/tests
 python3 -m unittest discover -s evals/_harness/tests
+node --test skills/html-plan/tests/pack.test.mjs
 ```
 
 The tests create git repos, so git needs `user.name` and `user.email`. CI
 ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs them on every
 pull request and push to `main`, on Python 3.11 and 3.13. It also checks script
-syntax, lints the html-plan example and runs `claude plugin validate .`.
+syntax, lints the html-plan example, runs its packer tests and runs
+`claude plugin validate .`.
 
 ### Evals
 

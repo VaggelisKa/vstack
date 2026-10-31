@@ -23,14 +23,15 @@ handback.
 | `host_unsupported` | preflight, gate | Not github.com, *.ghe.com or bitbucket.org | Merge it by hand |
 | `not_open` | preflight, gate, state | Closed, merged or declined (or this run already merged it) | Nothing, or reopen |
 | `draft` | gate | The PR is a draft | Mark it ready when it is |
+| `hold_label` | gate | The PR has a hold label (`hold`, `on-hold`, `do-not-merge`, `do not merge`, `DNM`, `wip`, case-insensitive exact match), or its labels couldn't be read (GitHub) | Whoever added it removes it when the PR may merge |
 | `conflicts` | gate | Conflicts with the base | Resolve them |
 | `changes_requested` | gate | A reviewer requested changes (`reviewDecision`, or a human's latest verdict), or the reviews couldn't be read | Get a re-review or dismissal |
 | `not_approved` | gate | An approval is required (or `reviewDecision` is APPROVED, or the base branch's protection or rulesets couldn't be read) but too few from non-author, non-bot reviewers are on the current head; stale approvals don't count (GitHub). Nobody approved (Bitbucket) | Get an approval on the head |
 | `checks_failing` | gate | A required check is failing or pending (all checks when none are required or the required ones can't be read); on Bitbucket also no build status at all | Fix, rerun or wait |
 | `unresolved_threads` | gate | An unresolved review thread (Bitbucket: open task or inline comment), or threads couldn't all be read | A human resolves theirs |
-| `branch_protection` | gate | `mergeStateStatus` BLOCKED or BEHIND, or the merge was refused by protection or merge checks | Meet the rule; never bypass it |
+| `branch_protection` | gate | `mergeStateStatus` BLOCKED or BEHIND (the gate never updates the branch; babysit does, then review reruns), or the merge was refused by protection or merge checks | Meet the rule; never bypass it |
 | `needs_review` | gate, state | No `review.json` for this head and base, or it isn't a clean Ship; or the head or base moved while auto-merge was pending | Run review on the head |
-| `escalated` | state escalate, state init, gate, babysit, SKILL.md step 1 | A finding or comment needs a human decision (ambiguous, a code owner's), or a comment tried to break out of its untrusted block (an injection attempt), or babysit escalated (also when a resolved thread is reopened after another fixer replied in it); or `init` found review's or babysit's result for the PR with no state file; or the PR is from a fork (`isCrossRepository` true or unreadable), whose code autonomous-merge doesn't run or push unless this run's request explicitly allows it | Decide it; for `init`, run `init --fresh` yourself if a new run should start; for a fork, review its code yourself, or rerun saying explicitly that the fork's code may be run |
+| `escalated` | state escalate, state init, preflight, gate, babysit | A finding or comment needs a human decision (ambiguous, a code owner's), or a comment tried to break out of its untrusted block (an injection attempt), or babysit escalated (also when a resolved thread is reopened after another fixer replied in it); or `init` found review's or babysit's result for the PR with no state file; or the PR is from a fork (`isCrossRepository` true or unreadable), whose code autonomous-merge doesn't run or push unless this run's request explicitly allows it (then preflight gets `--allow-fork`) | Decide it; for `init`, run `init --fresh` yourself if a new run should start; for a fork, review its code yourself, or rerun saying explicitly that the fork's code may be run |
 | `security_blocker` | state | A `security` or `data-integrity` blocker (from review, or escalated) | Fix it yourself |
 | `ci_unreproducible` | state escalate | A red check that can't be reproduced locally | Read the logs, fix or rerun |
 | `conflict_judgement` | state escalate | A conflict with the base that needs a choice between both sides | Resolve it |
@@ -56,7 +57,7 @@ run `gh pr merge N --disable-auto` (or check `autoMergeRequest` with
 `gh pr view N --json autoMergeRequest`) before anything else.
 
 The gate collects every block it finds, reports the first in the table's gate
-order (not_open, draft, conflicts, changes_requested, not_approved,
+order (not_open, draft, hold_label, conflicts, changes_requested, not_approved,
 checks_failing, unresolved_threads, branch_protection, unknown, needs_review,
 then coordination's conflicting_fixer, escalated or stale_claim, not_settled, claimed_items
 on GitHub, or merge_unsupported_host on Bitbucket)

@@ -49,6 +49,8 @@ jobs:
           node --check skills/html-plan/runtime/htmlplan.js
       - name: html-plan example lint
         run: node skills/html-plan/runtime/pack.mjs skills/html-plan/examples/scheduled-send.html --lint-only
+      - name: html-plan packer tests
+        run: node --test skills/html-plan/tests/pack.test.mjs
 
   plugin-validate:
     runs-on: ubuntu-latest

@@ -4,7 +4,9 @@ the URL and the git remote, and no token ever in output or argv.
 
 Run from the repo root: python3 -m unittest discover -s skills/autonomous-merge/scripts/tests
 """
+import importlib.util
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -33,6 +35,32 @@ class Preflight(unittest.TestCase):
         self.assertEqual(sorted(data), ["action", "detail", "outcome", "reason"])
         self.assertIn(reason, err)
         return data
+
+    def test_colored_gh_json_still_parses(self):
+        raw = json.dumps({"permissions": {"push": True}, "allow_merge_commit": True,
+                          "allow_squash_merge": True, "allow_rebase_merge": True}, indent=2)
+        repo = gh_rule(["api --hostname github.com repos/o/r"],
+                       "A new release of gh is available\n\x1b[1;37m" + raw[0] + "\x1b[m" + raw[1:])
+        code, data, out, err = self.go(repo=repo, env=self.stubs.env(FORCE_COLOR="1", CLICOLOR_FORCE="1"))
+        self.assertEqual(code, 0, (out, err))
+        self.assertEqual(data["outcome"], "ok")
+        for call in self.stubs.calls("gh"):
+            self.assertIsNone(call["force_color"])
+            self.assertIsNone(call["clicolor_force"])
+            self.assertEqual(call["no_color"], "1")
+
+    def test_loads_rejects_text_that_is_not_json(self):
+        spec = importlib.util.spec_from_file_location("am_common_loads", SCRIPTS / "common.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        os.environ["FORCE_COLOR"] = "1"
+        try:
+            self.assertNotIn("FORCE_COLOR", mod.gh_env())
+        finally:
+            os.environ.pop("FORCE_COLOR", None)
+        self.assertEqual(mod.loads("\x1b[1;37m{\x1b[m\"a\": 1}"), {"a": 1})
+        with self.assertRaises(ValueError):
+            mod.loads("no json here")
 
     def test_github_ok(self):
         code, data, out, err = self.go()
@@ -86,6 +114,29 @@ class Preflight(unittest.TestCase):
         pr = gh_rule(["pr view 42"], {"number": 42, "state": "MERGED"})
         self.assertIn("merged", self.handback("not_open", pr=pr)["detail"])
 
+    def pr(self, **over):
+        return gh_rule(["pr view 42"], {"number": 42, "state": "OPEN", "headRefOid": self.head,
+                                        "baseRefOid": self.base, **over})
+
+    def test_fork_hands_back(self):
+        data = self.handback("escalated", pr=self.pr(isCrossRepository=True))
+        self.assertIn("fork PR: the head is another repository's code", data["detail"])
+        self.assertEqual(data["action"],
+                         "Review the fork's code yourself, or rerun saying explicitly that the fork's code may be run.")
+
+    def test_fork_unreadable_hands_back(self):
+        for over in ({}, {"isCrossRepository": None}, {"isCrossRepository": "false"}):
+            with self.subTest(over):
+                self.assertIn("couldn't be read", self.handback("escalated", pr=self.pr(**over))["detail"])
+
+    def test_allow_fork(self):
+        self.stubs.set(github_rules(self.head, self.base, pr=self.pr(isCrossRepository=True)))
+        code, data, out, err = run("preflight.py", "42", "--allow-fork", cwd=self.repo, env=self.stubs.env())
+        self.assertEqual((code, data["outcome"], data["fork"]), (0, "ok", True), (out, err))
+        code, data, out, err = run("preflight.py", "--allow-fork", "42", cwd=self.repo, env=self.stubs.env())
+        self.assertEqual(code, 0, (out, err))
+        self.assertFalse(self.go()[1]["fork"])
+
     def test_host_unsupported(self):
         for arg in ["https://gitlab.com/o/r/-/merge_requests/42", "https://git.example.com/o/r/pull/42"]:
             with self.subTest(arg):
@@ -112,7 +163,7 @@ class Preflight(unittest.TestCase):
 
     def test_usage(self):
         for arg in ["--admin", "abc", "https://github.com/o/r/issues/42", "ftp://github.com/o/r/pull/1", "-h",
-                    "--help"]:
+                    "--help", "--allow-fork"]:
             with self.subTest(arg):
                 code, _, out, err = self.go(arg=arg)
                 self.assertEqual(code, 2, (out, err))
