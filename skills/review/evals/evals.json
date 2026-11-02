@@ -595,6 +595,89 @@
           }
         ]
       }
+    },
+    {
+      "id": 10,
+      "prompt": "review PR 15. It adds src/users.js with getUser (fetches a user, retrying 5xx responses) and a test for it.",
+      "expected_output": "The consistency reviewer surveys the codebase before judging, finds the shared helpers the change re-implements (withRetry in src/util/retry.js, HttpError in src/util/errors.js, the reply/replies test helpers in test/helpers.js) and the fetchOrder/fetchAccount naming of the closest analogues, and reports them as reuse and naming findings with the existing code's paths, alongside a consistency grade.",
+      "files": [],
+      "expectations": [
+        "Plans a consistency reviewer for the src area and pastes the consistency lens text, including its 'Map the codebase first' survey, into that reviewer's prompt",
+        "The consistency reviewer reads beyond the diff: it opens or searches src/util/ (or otherwise finds src/util/retry.js) and reads an analogue such as src/orders.js or src/accounts.js before reporting",
+        "Reports that getUser hand-rolls the retry loop that src/util/retry.js already provides as withRetry, quoting or naming that path",
+        "Reports at least one more divergence backed by existing examples: plain Error instead of HttpError from src/util/errors.js, the getUser name next to fetchOrder and fetchAccount, or the test redefining the fetch stub instead of using reply/replies from test/helpers.js",
+        "The report and the chat summary give a consistency grade below 10 and name what it was compared against",
+        "Does not edit files, commit, push or post PR comments"
+      ],
+      "eval": {
+        "slug": "consistency-finds-existing-helpers",
+        "prompt": "/vstack:review 15",
+        "fixture": "pr-green",
+        "patch": {
+          "repo": {
+            "files": {
+              "src/util/retry.js": "import { HttpError } from \"./errors.js\";\n\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\n\n// Calls fn until it succeeds, retrying HttpErrors with a 5xx status.\nexport async function withRetry(fn, { attempts = 3, delayMs = 100 } = {}) {\n  for (let attempt = 1; ; attempt++) {\n    try {\n      return await fn();\n    } catch (err) {\n      const retryable = err instanceof HttpError && err.status >= 500;\n      if (!retryable || attempt >= attempts) throw err;\n      await sleep(delayMs * 2 ** (attempt - 1));\n    }\n  }\n}\n",
+              "src/util/errors.js": "export class HttpError extends Error {\n  constructor(method, path, status) {\n    super(`${method} ${path} failed: ${status}`);\n    this.status = status;\n  }\n}\n",
+              "src/orders.js": "import { withRetry } from \"./util/retry.js\";\nimport { HttpError } from \"./util/errors.js\";\n\nexport async function fetchOrder(client, id) {\n  return withRetry(async () => {\n    const res = await client.fetchImpl(`${client.baseUrl}/orders/${id}`);\n    if (!res.ok) throw new HttpError(\"GET\", `/orders/${id}`, res.status);\n    return res.json();\n  });\n}\n",
+              "src/accounts.js": "import { withRetry } from \"./util/retry.js\";\nimport { HttpError } from \"./util/errors.js\";\n\nexport async function fetchAccount(client, id) {\n  return withRetry(async () => {\n    const res = await client.fetchImpl(`${client.baseUrl}/accounts/${id}`);\n    if (!res.ok) throw new HttpError(\"GET\", `/accounts/${id}`, res.status);\n    return res.json();\n  });\n}\n",
+              "test/helpers.js": "export const reply = (status, body = {}) => ({ ok: status < 400, status, json: async () => body });\n\n// A fetch stub that answers with the given replies in order.\nexport const replies = (...rs) => {\n  let i = 0;\n  return async () => rs[Math.min(i++, rs.length - 1)];\n};\n",
+              "test/orders.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { fetchOrder } from \"../src/orders.js\";\nimport { reply, replies } from \"./helpers.js\";\n\ntest(\"fetchOrder retries a 503\", async () => {\n  const client = { baseUrl: \"https://x\", fetchImpl: replies(reply(503), reply(200, { id: 7 })) };\n  assert.deepEqual(await fetchOrder(client, 7), { id: 7 });\n});\n",
+              "test/accounts.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { fetchAccount } from \"../src/accounts.js\";\nimport { reply, replies } from \"./helpers.js\";\n\ntest(\"fetchAccount retries a 503\", async () => {\n  const client = { baseUrl: \"https://x\", fetchImpl: replies(reply(503), reply(200, { id: 7 })) };\n  assert.deepEqual(await fetchAccount(client, 7), { id: 7 });\n});\n"
+            },
+            "commits": [
+              {
+                "message": "Add getUser",
+                "files": {
+                  "src/users.js": "export async function getUser(client, id) {\n  let lastErr;\n  for (let i = 0; i < 3; i++) {\n    const res = await client.fetchImpl(`${client.baseUrl}/users/${id}`);\n    if (res.ok) return res.json();\n    lastErr = new Error(`GET /users/${id} failed: ${res.status}`);\n    if (res.status < 500) break;\n    await new Promise((r) => setTimeout(r, 100 * 2 ** i));\n  }\n  throw lastErr;\n}\n",
+                  "test/users.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { getUser } from \"../src/users.js\";\n\ntest(\"getUser retries a 503\", async () => {\n  let calls = 0;\n  const fetchImpl = async () => {\n    calls++;\n    return calls === 1\n      ? { ok: false, status: 503, json: async () => ({}) }\n      : { ok: true, status: 200, json: async () => ({ id: 7 }) };\n  };\n  assert.deepEqual(await getUser({ baseUrl: \"https://x\", fetchImpl }, 7), { id: 7 });\n});\n"
+                }
+              }
+            ]
+          },
+          "github": {
+            "pr": {
+              "number": 15,
+              "title": "Add getUser",
+              "headRefName": "feature/users",
+              "body": "Adds getUser, which fetches a user and retries 5xx responses, with a test."
+            }
+          }
+        },
+        "graders": [
+          {
+            "name": "survey-in-prompt",
+            "trace": "Map the codebase first",
+            "covers": [
+              0
+            ]
+          },
+          {
+            "name": "finds-with-retry",
+            "reply": "withRetry|util/retry\\.js"
+          },
+          {
+            "name": "consistency-grade",
+            "reply": "Consistency",
+            "weight": 0.5
+          },
+          {
+            "name": "no-pr-comments",
+            "gh": "^# (comment|reply|review|resolve)",
+            "absent": true
+          },
+          {
+            "name": "no-push",
+            "gh": "^# push",
+            "absent": true
+          },
+          {
+            "name": "no-commit",
+            "tool": "Bash",
+            "input": "git (commit|push|stash|reset|checkout)\\b",
+            "max": 0
+          }
+        ]
+      }
     }
   ]
 }
