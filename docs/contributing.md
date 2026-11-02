@@ -21,7 +21,8 @@ skills/
 evals/<skill>-<id>-<slug>/        # cases for `claude plugin eval`, generated from evals.json (see Evals)
 evals/_harness/                   # sync.py, scaffold.py, the fake gh, fixtures, and their tests
 evals/run.sh                      # runs the evals locally
-.github/workflows/ci.yml          # tests and plugin validation on every PR
+.github/workflows/ci.yml          # tests, version check and plugin validation on every PR
+.github/scripts/check-version.py  # every PR bumps the Codex and Gemini version (see Releasing)
 LICENSE                           # Apache-2.0, this repo's own work
 NOTICE                            # bundled skills and their upstreams
 ```
@@ -56,6 +57,7 @@ separately as a personal skill (for Claude Code, copy it to
   Arguments).
 - Descriptions stay under 700 characters, in the third person. They say what
   the skill does, when to use it, and what it is not for.
+- Every pull request bumps the version (see Releasing).
 - Skills with side effects (push, comment, merge) set
   `disable-model-invocation: true`, or keep their triggers to explicit asks.
 
@@ -69,7 +71,7 @@ separately as a personal skill (for Claude Code, copy it to
 2. If the skill comes from another repo, keep its files and upstream license,
    add a `NOTICE.md` with the source repo, path and commit, record any changes as
    `Modified by <name>, <date>: <what>` lines, and list it in the root `NOTICE`.
-3. Open a pull request.
+3. Bump the version (see Releasing) and open a pull request.
 
 ## Testing
 
@@ -82,6 +84,7 @@ python3 -m unittest discover -s skills/babysit/scripts/tests
 python3 -m unittest discover -s skills/autonomous-merge/scripts/tests
 python3 -m unittest discover -s skills/remove-comments/scripts/tests
 python3 -m unittest discover -s evals/_harness/tests
+python3 -m unittest discover -s .github/scripts
 node --test skills/html-plan/tests/pack.test.mjs
 ```
 
@@ -153,4 +156,14 @@ they cost API calls. To run them in CI, add a workflow with an
 
 ## Releasing
 
-Leave `version` out of `.claude-plugin/plugin.json` and the marketplace entries: without it Claude Code versions the plugin by git commit, so every push to `main` is an update; with it, users stay on that version until it's bumped. Codex caches installs by the `version` in `.codex-plugin/plugin.json`, so bump it when releasing changes, and keep `gemini-extension.json` at the same version. Gemini CLI shows it, but a git install updates by comparing commits with the repo's `HEAD`, not versions; only local-path installs compare version against their source folder; linked installs read the folder live. Still bump the version on each change: for a git install, Gemini prints "already up to date" when the version is unchanged, even after re-cloning. Installs from the URL try GitHub releases first; there are none now, so installs are `Type: git`, but if a release ever exists, new installs become `github-release` installs and compare release tags. If an update doesn't show up, remove and re-add the plugin (`codex plugin remove vstack@vaggeliska`, then `codex plugin add vstack@vaggeliska`).
+**Every change bumps the version.** Each pull request raises `version` in
+`.codex-plugin/plugin.json` and `gemini-extension.json`, to the same value, or
+Codex and Gemini CLI users never get it. Use semver: patch for fixes and
+wording, minor for new behaviour (a skill, a lens, a flag, a changed default),
+major for a change that breaks how a skill is invoked or what it writes. CI's
+`version` job fails a PR whose version isn't higher than its base's, whose two
+versions differ, or that adds `version` to a Claude Code manifest
+(`.github/scripts/check-version.py`). If another PR merges first with the same
+bump, bump again.
+
+Leave `version` out of `.claude-plugin/plugin.json` and the marketplace entries: without it Claude Code versions the plugin by git commit, so every push to `main` is an update; with it, users stay on that version until it's bumped. Codex caches installs by the `version` in `.codex-plugin/plugin.json`, which is why every change bumps it, and `gemini-extension.json` stays at the same version. Gemini CLI shows it, but a git install updates by comparing commits with the repo's `HEAD`, not versions; only local-path installs compare version against their source folder; linked installs read the folder live. Still bump the version on each change: for a git install, Gemini prints "already up to date" when the version is unchanged, even after re-cloning. Installs from the URL try GitHub releases first; there are none now, so installs are `Type: git`, but if a release ever exists, new installs become `github-release` installs and compare release tags. If an update doesn't show up, remove and re-add the plugin (`codex plugin remove vstack@vaggeliska`, then `codex plugin add vstack@vaggeliska`).
