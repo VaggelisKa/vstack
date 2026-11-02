@@ -183,10 +183,12 @@ Read [references/scoring.md](references/scoring.md) and give each area a
 crypto, secrets, money, PII, data writes, migrations or deletes, shared mutable
 state, prod infra or deploy config, or anything irreversible. `bug-hunt` runs
 on every area. `consistency` runs on every area except `generated` and C=0
-areas: it is the reviewer that reads beyond the diff, compares the change with
-how the rest of the codebase already does the same things (naming, idioms,
-error handling, reuse of existing helpers, structure, test style) and grades
-how well it fits.
+areas: it is the reviewer that reads beyond the diff. It starts with a quick
+survey of the codebase (layout, convention docs, shared helpers, prior art for
+what the diff adds, the closest existing analogue), then compares the change
+with how the rest of the codebase already does the same things (naming,
+idioms, error handling, reuse of existing helpers, structure, test style) and
+grades how well it fits.
 
 ### Count, tier, budget
 
