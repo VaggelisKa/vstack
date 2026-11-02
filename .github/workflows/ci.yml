@@ -52,6 +52,27 @@ jobs:
       - name: html-plan packer tests
         run: node --test skills/html-plan/tests/pack.test.mjs
 
+  # Codex and Gemini CLI only see an update when the version goes up, so every PR bumps it.
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: check-version tests
+        run: python3 -m unittest discover -s .github/scripts -v
+      - name: Version bumped and in sync
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            git fetch --no-tags --depth=1 origin "refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF"
+            python3 .github/scripts/check-version.py --base "origin/$BASE_REF"
+          else
+            python3 .github/scripts/check-version.py
+          fi
+
   plugin-validate:
     runs-on: ubuntu-latest
     steps:
