@@ -11,6 +11,10 @@ effects GitHub would have are also logged as `# <event> key=value...` lines, whi
     # reply thread=<id> body=<first line>      # resolve thread=<id>
     # reaction add|remove target=<endpoint>    # rerun run=<id>
     # update-branch head=<sha>                 # refused <why>
+    # edit title=<title> / body=<first line>   # review kind=<kind> body=<first line>
+
+Every body it posts (a reply, a PR comment, a review, a new title or body) is also appended in full to
+.vstack-eval/posted.md, under a `=== <event> <key>=<value> ===` line, so graders can read the whole text.
 
 Anything it doesn't model fails with exit 1 and a message, the way gh fails on an unknown endpoint.
 """
@@ -73,6 +77,12 @@ def log(line):
 
 def event(name, **kv):
     log("# " + name + "".join(f" {k}={str(v).splitlines()[0] if str(v) else ''}" for k, v in kv.items()))
+
+
+def posted(header, body):
+    """The whole text of something posted, for graders that judge more than its first line."""
+    with open(os.path.join(STATE, "posted.md"), "a") as f:
+        f.write(f"=== {header} ===\n{body.strip()}\n\n")
 
 
 def refused(why):
@@ -482,10 +492,14 @@ def cmd_pr(s, pos, opts, fields):
         s["issue_comments"].append({"id": 900 + len(s["issue_comments"]), "user": s["viewer"]["login"], "body": body})
         s.dirty = True
         event("comment", target="pr", body=body.strip())
+        posted("comment target=pr", body)
         raise Exit(0, pr_url(s) + f"#issuecomment-{900 + len(s['issue_comments'])}\n")
     if sub == "review":
-        event("review", kind=next((k for k in ("approve", "request-changes", "comment") if k in opts), "comment"),
-              body=body_of(opts).strip())
+        kind = next((k for k in ("approve", "request-changes", "comment") if k in opts), "comment")
+        body = body_of(opts)
+        event("review", kind=kind, body=body.strip())
+        if body.strip():
+            posted(f"review kind={kind}", body)
         raise Exit(0)
     if sub == "update-branch":
         if "rebase" in opts:
@@ -497,9 +511,15 @@ def cmd_pr(s, pos, opts, fields):
         event("ready")
         raise Exit(0, err=f"✓ Pull request {s['owner']}/{s['repo']}#{p['number']} is marked as \"ready for review\"\n")
     if sub == "edit":
+        if "body-file" in opts:
+            opts["body"] = body_of(opts)
         for k in ("add-label", "remove-label", "title", "body"):
             if k in opts:
                 event("edit", **{k: opts[k]})
+                if k in ("title", "body"):
+                    p[k] = opts[k]
+                    s.dirty = True
+                    posted(f"edit {k}", opts[k])
         raise Exit(0, pr_url(s) + "\n")
     fail(f"fake gh: `gh pr {sub}` is not available in this evaluation")
 
@@ -706,12 +726,14 @@ def graphql(s, fields):
                                    "user": s["viewer"]["login"], "body": body})
         s.dirty = True
         event("reply", thread=tid, body=body.strip())
+        posted(f"reply thread={tid}", body)
         return {"data": {"addPullRequestReviewThreadReply": {"comment": {"id": "PRRC_new", "url": pr_url(s)}}}}
     if re.search(r"\baddComment\b", q):
         body = fields.get("body", "")
         s["issue_comments"].append({"id": 900 + len(s["issue_comments"]), "user": s["viewer"]["login"], "body": body})
         s.dirty = True
         event("comment", target="pr", body=body.strip())
+        posted("comment target=pr", body)
         return {"data": {"addComment": {"commentEdge": {"node": {"id": "IC_new", "url": pr_url(s)}}}}}
     if re.search(r"\bmutation\b", q):
         refused("unsupported graphql mutation")
@@ -781,7 +803,8 @@ def rest(s, method, path, fields):
                                    "user": s["viewer"]["login"], "body": body})
         s.dirty = True
         event("reply", thread=thread["id"], body=body.strip())
-        return {"id": 7000, "body": body, "html_url": pr_url(s)}
+        posted(f"reply thread={thread['id']}", body)
+        return {"id": 7000, "body": body, "html_url": pr_url(s) + f"#discussion_r{7000 + len(thread['comments']) - 1}"}
     m3 = re.fullmatch(rf"(issues/{n}|pulls/comments/(\d+)|issues/comments/(\d+))/reactions(?:/(\d+))?", rp)
     if m3:
         key = m3.group(1)
@@ -806,6 +829,7 @@ def rest(s, method, path, fields):
             s["issue_comments"].append({"id": 900 + len(s["issue_comments"]), "user": s["viewer"]["login"], "body": body})
             s.dirty = True
             event("comment", target="pr", body=body.strip())
+            posted("comment target=pr", body)
             return {"id": 900, "html_url": pr_url(s)}
         return [{"id": c["id"], "user": {"login": c["user"], "type": "Bot" if c.get("bot") else "User"}, "body": c["body"],
                  "created_at": c.get("created_at", NOW)} for c in s["issue_comments"]]

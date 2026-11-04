@@ -192,6 +192,11 @@ a reproduction, or a contradiction with the spec or the code. Fix those. For
 the rest, reply on the thread (or reject the finding) with
 "Not changing: <reason with file:line, test or spec>. Reopen if you disagree."
 Taste, or a claim against the PR's stated intent, is rejected the same way.
+Word every reply and the report comment the way
+[pr-writing](../pr-writing/SKILL.md#how-it-reads) says (same plugin: answer
+first, short, no praise, agreement, apology or filler, a rude comment
+answered as plainly as a polite one), and check each with its
+`scripts/check-text.py` before posting.
 Escalate (`escalated`) a code owner's comment you'd reject and anything
 ambiguous. After replying, resolve a thread only when every comment in it is
 from a bot; leave a human's thread open (the gate then waits for that human).

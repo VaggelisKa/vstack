@@ -23,7 +23,9 @@ Each expectation becomes an llm grader over the trace unless a grader lists its 
     {"exists": "<glob>"}                     a file the run created ("absent": true for none)
     {"tool": "Read", "input": "<regex>", "min": 0, "max": 0}   tool calls, scored in both arms
     {"skill": "babysit", "fires": true}      the Skill tool was (or was not) called for vstack:<skill>
-    {"llm": "<criteria>", "focus": "trace"}  an extra llm grader
+    {"llm": "<criteria>", "focus": "trace"}  an extra llm grader; focus is trace, last_message, or
+                                             {"source": "file", "path": ".vstack-eval/posted.md"} for every
+                                             body the fake gh posted, in full
 
 Usage: python3 evals/_harness/sync.py            # write evals/
        python3 evals/_harness/sync.py --check    # exit 1 if evals/ is out of date (CI)
@@ -52,6 +54,7 @@ DEFAULTS = {
     "review": {"allowed_tools": GH_TOOLS, "max_turns": 80, "timeout_seconds": 1500},
     "remove-comments": {"allowed_tools": GH_TOOLS, "max_turns": 60, "timeout_seconds": 900},
     "html-plan": {"allowed_tools": GH_TOOLS, "max_turns": 60, "timeout_seconds": 1200},
+    "pr-writing": {"allowed_tools": GH_TOOLS, "max_turns": 50, "timeout_seconds": 900},
 }
 # Both arms get this: an eval run is one non-interactive session, so a skill that would wait for
 # GitHub or a person has to finish with what it has.

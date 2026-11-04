@@ -120,6 +120,30 @@ class Scenarios(unittest.TestCase):
         self.assertRegex(log(cwd), r"(?m)^# reply thread=PRRT_1 body=Fixed\.$")
         self.assertRegex(log(cwd), r"(?m)^# resolve thread=PRRT_1$")
 
+    def test_posted_bodies_are_kept_in_full(self):
+        cwd, env = workspace(self, fixture(threads=[{"id": "PRRT_1", "path": "src/client.js", "line": 3, "comments": [
+            {"id": "PRRC_1", "databaseId": 3001, "user": "dave", "body": "why?"}]}]))
+        draft = cwd.parent / "reply.md"
+        draft.write_text("No, 404s aren't retried.\n\nLine 17 breaks on any status below 500.\n")
+        r = sh(cwd, env, "gh", "api", "repos/acme/api/pulls/14/comments/3001/replies", "-F", f"body=@{draft}")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        sh(cwd, env, "gh", "pr", "comment", "14", "--body-file", "-", stdin="One.\nTwo.\n")
+        r = sh(cwd, env, "gh", "pr", "edit", "14", "--title", "Retry 5xx responses", "--body-file", "-",
+               stdin="## What\nRetries 5xx.\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        sh(cwd, env, "gh", "pr", "review", "14", "--comment", "--body", "nit: name it")
+        self.assertRegex(log(cwd), r"(?m)^# reply thread=PRRT_1 body=No, 404s aren't retried\.$")
+        self.assertRegex(log(cwd), r"(?m)^# edit title=Retry 5xx responses$")
+        self.assertRegex(log(cwd), r"(?m)^# edit body=## What$")
+        posted = (cwd / ".vstack-eval" / "posted.md").read_text()
+        self.assertEqual(posted, "=== reply thread=PRRT_1 ===\nNo, 404s aren't retried.\n\nLine 17 breaks on any status below 500.\n\n"
+                                 "=== comment target=pr ===\nOne.\nTwo.\n\n"
+                                 "=== edit title ===\nRetry 5xx responses\n\n"
+                                 "=== edit body ===\n## What\nRetries 5xx.\n\n"
+                                 "=== review kind=comment ===\nnit: name it\n\n")
+        v = json.loads(sh(cwd, env, "gh", "pr", "view", "14", "--json", "title,body").stdout)
+        self.assertEqual(v, {"title": "Retry 5xx responses", "body": "## What\nRetries 5xx.\n"})
+
     def test_rerun_and_base_runs(self):
         cwd, env = workspace(self, fixture(
             checks=[{"name": "e2e", "workflow": "CI", "conclusion": "FAILURE", "run_id": 103, "log": "runner lost",
@@ -184,6 +208,101 @@ class Sync(unittest.TestCase):
         for d in sorted(p for p in EVALS.iterdir() if (p / "fixture.json").exists()):
             with self.subTest(case=d.name):
                 workspace(self, json.loads((d / "fixture.json").read_text()))
+
+
+def pr_writing_case(case_id):
+    data = json.loads((ROOT / "skills/pr-writing/evals/evals.json").read_text())
+    case = next(c for c in data["evals"] if c["id"] == case_id)
+    return sync.build("pr-writing", case)
+
+
+def regex_verdicts(doc, cwd):
+    """What the case's regex graders say about a workspace, the way claude plugin eval scores them."""
+    out = {}
+    for g in doc["graders"]:
+        if g["type"] != "regex":
+            continue
+        pat, flags = g["pattern"], re.M if "m" in g.get("flags", "") else 0
+        if pat.startswith("(?i)"):
+            pat, flags = pat[4:], flags | re.I
+        path = cwd / g["target"]["path"]
+        n = len(re.findall(pat, path.read_text(), flags)) if path.exists() else None
+        match = g.get("match", "contains")
+        out[g["name"]] = (n == 0 if match == "not_contains" else n == int(match[6:]) if match.startswith("count:")
+                          else bool(n)) if n is not None else False
+    return out
+
+
+@unittest.skipUnless(PY, "needs a Python 3.10+ outside the home directory for the skills' scripts")
+class PrWritingGraders(unittest.TestCase):
+    """The pr-writing graders pass a human-sounding reply and fail a robotic one, with no model involved."""
+
+    def reply(self, cwd, env, database_id, body):
+        draft = cwd.parent / f"r{database_id}.md"
+        draft.write_text(body)
+        r = sh(cwd, env, "gh", "api", f"repos/acme/api/pulls/14/comments/{database_id}/replies", "-F", f"body=@{draft}")
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_tells_pattern(self):
+        _, doc, _ = pr_writing_case(1)
+        tells = re.compile(next(g["pattern"] for g in doc["graders"] if g["name"] == "no-tells")[4:], re.I)
+        for bad in ["You're absolutely right, it retries.", "Good catch!", "Great question: keys are paths.",
+                    "Thanks for catching this.", "Sorry about that, fixed.", "I apologize for the confusion.",
+                    "Let me know if you have questions.", "Hope this helps.", "Happy to change it.",
+                    "Respectfully, it doesn't.", "As I said, it breaks on 4xx.", "I understand your frustration.",
+                    "No need to be rude.", "Fixed in 4e1a9c2 — the loop runs three times.", "I've gone ahead and fixed it."]:
+            with self.subTest(bad=bad):
+                self.assertTrue(tells.search(bad))
+        for good in ["404s aren't retried: line 17 breaks on any status below 500.", "Fixed in 4e1a9c2.",
+                     "Milliseconds. It doubles after each retry.", "Keeping exponential backoff: the gateway rate-limits bursts.",
+                     "That's a separate change; I can open an issue for it.", "Yes, 503s are retried up to three times."]:
+            with self.subTest(good=good):
+                self.assertIsNone(tells.search(good))
+
+    def test_rude_and_wrong_scores_a_plain_reply_and_a_robotic_one(self):
+        _, doc, fx = pr_writing_case(1)
+        cwd, env = workspace(self, fx)
+        self.reply(cwd, env, 3011, "404s aren't retried: line 17 breaks on any status below 500, and "
+                                   "`get does not retry a 404` checks there's exactly one call.\n")
+        self.assertEqual(regex_verdicts(doc, cwd), dict.fromkeys(regex_verdicts(doc, cwd), True))
+        cwd, env = workspace(self, fx)
+        self.reply(cwd, env, 3011, "I understand the frustration, but you're absolutely right to check! "
+                                   "Actually, 404s aren't retried (line 17). Let me know if you have any other questions.\n")
+        v = regex_verdicts(doc, cwd)
+        self.assertFalse(v["no-tells"])
+        self.assertTrue(v["one-reply-PRRT_1"])
+
+    def test_many_threads_counts_each_reply_and_the_skipped_threads(self):
+        _, doc, fx = pr_writing_case(3)
+        cwd, env = workspace(self, fx)
+        sha = sh(cwd, env, "git", "rev-parse", "--short", "HEAD").stdout.strip()
+        for db, body in [(3011, "Every caller of one client talks to the same gateway, so they share one retry policy."),
+                         (3021, "I'd keep it inline: it's one expression used once."),
+                         (3041, "That's out of scope for this PR: fetch throws before there's a status. I can open an issue."),
+                         (3051, f"Fixed in {sha}: the error now names the attempt.")]:
+            self.reply(cwd, env, db, body + "\n")
+        v = regex_verdicts(doc, cwd)
+        self.assertEqual(v, dict.fromkeys(v, True), v)
+        self.reply(cwd, env, 3031, "Thanks!\n")  # praise needs no reply
+        self.reply(cwd, env, 3011, "Same answer as before.\n")  # a second reply in one thread
+        v = regex_verdicts(doc, cwd)
+        self.assertFalse(v["no-reply-PRRT_3"])
+        self.assertFalse(v["one-reply-PRRT_1"])
+
+    def test_description_case_reads_the_edited_title_and_body(self):
+        _, doc, fx = pr_writing_case(4)
+        cwd, env = workspace(self, fx)
+        body = ("## What\n\n`ApiClient.get` retries 5xx responses up to 3 times, doubling the delay from 100ms. "
+                "4xx responses still fail on the first try.\n\n## Why\n\nThe exports job fails on 503s from the gateway "
+                "during deploys.\n\n## How to test\n\n`npm test`\n\n## Checklist\n\n- [x] Tests added or updated\n- [ ] Docs updated\n")
+        r = sh(cwd, env, "gh", "pr", "edit", "14", "--title", "Retry 5xx responses with exponential backoff", "--body-file", "-", stdin=body)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        v = regex_verdicts(doc, cwd)
+        self.assertEqual(v, dict.fromkeys(v, True), v)
+        sh(cwd, env, "gh", "pr", "edit", "14", "--body-file", "-",
+           stdin="## 🚀 Summary\n<!-- What does this PR change? -->\nA robust retry.\n- [x] Docs updated\n")
+        v = regex_verdicts(doc, cwd)
+        self.assertFalse(v["no-marketing"] or v["no-template-comments"] or v["docs-unticked"], v)
 
 
 class Chart(unittest.TestCase):
