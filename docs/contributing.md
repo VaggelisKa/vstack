@@ -9,7 +9,7 @@ there are no symlinks; the manifests just point at the repo root.
 .claude-plugin/plugin.json        # Claude Code plugin manifest (skills/ is scanned automatically)
 .claude-plugin/marketplace.json   # Claude Code marketplace, one entry, source "./"
 .codex-plugin/plugin.json         # Codex plugin manifest (name, version, metadata)
-plugin.json                       # Antigravity plugin manifest (name and description only)
+plugin.json                       # Antigravity plugin manifest (name, version, description)
 gemini-extension.json             # Gemini CLI extension manifest (name, version, description; skills/ is scanned automatically)
 .agents/plugins/marketplace.json  # Codex marketplace, one entry, source.path "./"
 lib/                              # shared Python for the skills' scripts, loaded by path
@@ -23,6 +23,7 @@ evals/_harness/                   # sync.py, scaffold.py, the fake gh, fixtures,
 evals/run.sh                      # runs the evals locally
 .github/workflows/ci.yml          # tests, version check and plugin validation on every PR
 .github/scripts/check-version.py  # every PR bumps the Codex and Gemini version (see Releasing)
+AGENTS.md                         # rules for coding agents: README eval results, version bumps (CLAUDE.md imports it)
 LICENSE                           # Apache-2.0, this repo's own work
 NOTICE                            # bundled skills and their upstreams
 ```
@@ -143,11 +144,16 @@ per run), so cap it with `--max-cost-usd`. Tags: `smoke`, `merge-intent` and
 (replies to hostile reviewers), `injection` and `language`.
 
 The README's chart comes from one run with both arms. Regenerate it, and the
-table under it, after a run:
+table under it, after every run whose results you report, and run the evals
+again whenever cases or graders change (see [AGENTS.md](../AGENTS.md)):
 
 ```
 python3 evals/_harness/chart.py evals/results/<timestamp>/aggregate-result.json
 ```
+
+A skill with eval cases but no scored case in the run is named under the
+table ("Not in this run yet"), and the harness tests fail when a skill with
+cases is missing from the README's eval section, or a skill from its list.
 
 The eval sandbox hides your home directory, and the skills' scripts need Python
 3.10+. If the only Python 3.10+ you have is under `~` (pyenv, uv), `run.sh` puts
@@ -164,13 +170,20 @@ they cost API calls. To run them in CI, add a workflow with an
 ## Releasing
 
 **Every change bumps the version.** Each pull request raises `version` in
-`.codex-plugin/plugin.json` and `gemini-extension.json`, to the same value, or
-Codex and Gemini CLI users never get it. Use semver: patch for fixes and
+`.codex-plugin/plugin.json`, `gemini-extension.json` and the root `plugin.json`
+(Antigravity), all to the same value, or Codex, Gemini CLI and Antigravity
+users never get it. Use semver: patch for fixes and
 wording, minor for new behaviour (a skill, a lens, a flag, a changed default),
 major for a change that breaks how a skill is invoked or what it writes. CI's
-`version` job fails a PR whose version isn't higher than its base's, whose two
+`version` job fails a PR whose version isn't higher than its base's, whose
 versions differ, or that adds `version` to a Claude Code manifest
 (`.github/scripts/check-version.py`). If another PR merges first with the same
 bump, bump again.
+
+The root `plugin.json` carries the same version for Antigravity, whose
+manifest takes `name`, `version` and `description`
+([docs](https://antigravity.google/docs/build-plugins/)); `agy plugin list
+--json` shows the installed version. GitHub Copilot also loads this file as a
+legacy plugin.
 
 Leave `version` out of `.claude-plugin/plugin.json` and the marketplace entries: without it Claude Code versions the plugin by git commit, so every push to `main` is an update; with it, users stay on that version until it's bumped. Codex caches installs by the `version` in `.codex-plugin/plugin.json`, which is why every change bumps it, and `gemini-extension.json` stays at the same version. Gemini CLI shows it, but a git install updates by comparing commits with the repo's `HEAD`, not versions; only local-path installs compare version against their source folder; linked installs read the folder live. Still bump the version on each change: for a git install, Gemini prints "already up to date" when the version is unchanged, even after re-cloning. Installs from the URL try GitHub releases first; there are none now, so installs are `Type: git`, but if a release ever exists, new installs become `github-release` installs and compare release tags. If an update doesn't show up, remove and re-add the plugin (`codex plugin remove vstack@vaggeliska`, then `codex plugin add vstack@vaggeliska`).
