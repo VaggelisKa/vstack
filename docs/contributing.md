@@ -83,6 +83,7 @@ python3 -m unittest discover -s skills/review/scripts/tests
 python3 -m unittest discover -s skills/babysit/scripts/tests
 python3 -m unittest discover -s skills/autonomous-merge/scripts/tests
 python3 -m unittest discover -s skills/remove-comments/scripts/tests
+python3 -m unittest discover -s skills/pr-writing/scripts/tests
 python3 -m unittest discover -s evals/_harness/tests
 python3 -m unittest discover -s .github/scripts
 node --test skills/html-plan/tests/pack.test.mjs
@@ -117,7 +118,12 @@ answers from the fixture's PR state: checks, reviews, threads, labels and branch
 protection. Every call it gets, and every side effect (a push, a merge, a reply, a
 resolved thread, a rerun), is logged in `.vstack-eval/gh-calls.log`, which the
 graders match. So "never merges" is checked as `# merged` never appearing, not
-inferred from the transcript.
+inferred from the transcript. The log keeps only a body's first line, so every
+body posted (a reply, a PR comment, a review, a new title or description) is
+also kept in full in `.vstack-eval/posted.md`, under a `=== reply thread=<id> ===`
+style header. Graders that judge wording read that file: a regex for phrases
+that must never appear, or an llm grader with
+`"focus": {"source": "file", "path": ".vstack-eval/posted.md"}`.
 
 Run them locally with your Claude Code login:
 
@@ -133,7 +139,8 @@ sonnet). Results go to `evals/results/`, which is ignored. The headline number
 is the with-minus-without delta per case. The full suite is expensive: the
 babysit and autonomous-merge cases run whole review and CI loops ($0.30 to $3
 per run), so cap it with `--max-cost-usd`. Tags: `smoke`, `merge-intent` and
-`trigger` (cases checking that a skill does or doesn't start from plain words).
+`trigger` (cases checking that a skill does or doesn't start from plain words), `rude`
+(replies to hostile reviewers), `injection` and `language`.
 
 The README's chart comes from one run with both arms. Regenerate it, and the
 table under it, after a run:

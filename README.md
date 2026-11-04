@@ -7,8 +7,11 @@ Personal agent skills, packaged as one plugin (`vstack`) for Claude Code, Codex,
 - `autonomous-merge`: run `review` and `babysit` in a capped loop, then merge through a live gate without asking (`/autonomous-merge <pr> no-merge` to stop at ready; Bitbucket PRs are handed back for you to merge), hands back anything that needs you
 - `babysit`: watch a PR until it's green and approved, fixing and replying as needed (`/babysit <pr> merge` or "and merge when green" to merge; `--merge` also works)
 - `html-plan`: write an implementation plan as one interactive HTML page
+- `pr-writing`: reply to reviewers, write PR descriptions and post PR comments that read like a person wrote them: the answer first, short, no "good catch" or "you're absolutely right", and the same plain, polite answer to a rude comment as to a polite one (`/pr-writing 14`, `/pr-writing 14 description`, or "draft a reply to dave" to post nothing)
 - `remove-comments`: delete comment noise from a change and check that no code changed
 - `review`: read-only multi-lens code review of a PR, branch or path
+
+`babysit` and `autonomous-merge` word their replies with `pr-writing`'s rules.
 
 `babysit` and `autonomous-merge` work alongside other fixers (people, Copilot, Codex, Claude): they act only once the PR is settled, never touch an item someone else claimed, and merge only with nothing claimed.
 
@@ -92,7 +95,7 @@ Skills are discovered from the extension (check with `gemini skills list`) and a
 ## Docs
 
 - [Contributing and layout](docs/contributing.md)
-- [review](docs/review.md), [remove-comments](docs/remove-comments.md) and [autonomous-merge](docs/autonomous-merge.md): what's tested, and known limits
+- [review](docs/review.md), [remove-comments](docs/remove-comments.md), [autonomous-merge](docs/autonomous-merge.md) and [pr-writing](docs/pr-writing.md): what's tested, and known limits
 
 ## License
 
