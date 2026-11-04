@@ -33,11 +33,13 @@ class CheckVersion(unittest.TestCase):
         git(self.root, "add", "-A")
         git(self.root, "commit", "-qm", "base")
 
-    def write(self, codex, gemini, claude=None):
+    def write(self, codex, gemini, claude=None, antigravity=None):
         (self.root / ".codex-plugin").mkdir(exist_ok=True)
         (self.root / ".claude-plugin").mkdir(exist_ok=True)
         (self.root / ".codex-plugin/plugin.json").write_text(json.dumps({"name": "x", "version": codex}))
         (self.root / "gemini-extension.json").write_text(json.dumps({"name": "x", "version": gemini}))
+        agy = codex if antigravity is None else antigravity
+        (self.root / "plugin.json").write_text(json.dumps({"name": "x", **({"version": agy} if agy != "" else {})}))
         doc = {"name": "x", **({"version": claude} if claude else {})}
         (self.root / ".claude-plugin/plugin.json").write_text(json.dumps(doc))
 
@@ -63,6 +65,14 @@ class CheckVersion(unittest.TestCase):
         self.write(codex="1.2.4", gemini="1.2.3")
         [p] = self.problems()
         self.assertIn("versions differ", p)
+
+    def test_antigravity_manifest_is_versioned_too(self):
+        self.write(codex="1.2.4", gemini="1.2.4", antigravity="1.2.3")
+        [p] = self.problems()
+        self.assertIn("versions differ", p)
+        self.assertIn("plugin.json 1.2.3", p)
+        self.write(codex="1.2.4", gemini="1.2.4", antigravity="")
+        self.assertTrue(any(p.startswith("plugin.json: version None") for p in self.problems()))
 
     def test_bad_version_fails(self):
         for v in ("1.2", "v1.2.4", "01.2.4", "1.2.4-rc1", 124):

@@ -3,7 +3,8 @@
 Writes docs/evals-light.svg and docs/evals-dark.svg (one dumbbell per skill: the mean score without
 vstack, then with it) and rewrites the README between the evals markers with the chart and a table.
 A case's score is the mean over its runs; a skill's score is the mean over its cases; "All skills"
-is the mean over every case.
+is the mean over every case. A skill with eval cases but no scored case in the run is named under
+the table, so the README never drops a skill silently.
 
 Usage: python3 evals/_harness/chart.py evals/results/<timestamp>/aggregate-result.json
 """
@@ -58,6 +59,21 @@ def summarize(result):
     return [("All skills", len(every["with"]), mean(every["without"]), mean(every["with"]))] + rows
 
 
+def case_counts():
+    """{skill: number of eval cases} from skills/*/evals/evals.json."""
+    out = {}
+    for f in sorted((ROOT / "skills").glob("*/evals/evals.json")):
+        data = json.loads(f.read_text())
+        out[data["skill_name"]] = len(data["evals"])
+    return out
+
+
+def unscored(rows, counts=None):
+    """Skills that have eval cases but no row in this run, with their case counts."""
+    shown = {label for label, *_ in rows[1:]}
+    return [(s, n) for s, n in sorted((counts or case_counts()).items()) if n and s not in shown]
+
+
 def pts(x):
     return f"{round(x * 100):d}"
 
@@ -106,7 +122,7 @@ def svg(rows, note, t):
     return "\n".join(out) + "\n"
 
 
-def section(rows, note):
+def section(rows, note, missing=()):
     lines = [START,
              "<picture>",
              '  <source media="(prefers-color-scheme: dark)" srcset="docs/evals-dark.svg">',
@@ -120,6 +136,10 @@ def section(rows, note):
         name = label if i == 0 else f"`{label}`"
         lines.append(f"| {cell(name)} | {cases} | {pts(without)}% | {cell(pts(with_) + '%')} "
                      f"| {cell(delta(without, with_))} |")
+    if missing:
+        names = ", ".join(f"`{s}` ({n} case{'s' if n != 1 else ''})" for s, n in missing)
+        lines += ["", f"Not in this run yet: {names}. Run them and regenerate this section (see "
+                      "[Evals](docs/contributing.md#evals))."]
     lines += ["", f"<sub>{note}</sub>", END]
     return "\n".join(lines)
 
@@ -143,10 +163,13 @@ def main():
     text = README.read_text()
     if START not in text or END not in text:
         sys.exit(f"chart.py: README.md has no {START} ... {END} section to fill")
-    README.write_text(re.sub(re.escape(START) + ".*?" + re.escape(END), lambda _: section(rows, note),
+    missing = unscored(rows)
+    README.write_text(re.sub(re.escape(START) + ".*?" + re.escape(END), lambda _: section(rows, note, missing),
                              text, flags=re.S))
     for label, cases, without, with_ in rows:
         print(f"{label:18} {cases:3} cases  {pts(without):>3}% -> {pts(with_):>3}%  {delta(without, with_)}")
+    for skill, n in missing:
+        print(f"{skill:18} {n:3} cases  not in this run")
 
 
 if __name__ == "__main__":

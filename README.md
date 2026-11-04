@@ -19,7 +19,7 @@ Personal agent skills, packaged as one plugin (`vstack`) for Claude Code, Codex,
 
 ## Does it help?
 
-Each skill has eval cases that run the same prompt twice, once with vstack installed and once without, against a fake GitHub that logs every push, reply and merge. Graders check that log and the transcript: did it fix the failing check, reply to the question, merge only when asked, leave unrelated code alone. The chart shows the share of graders passed in each arm, on the smoke set (15 of the 87 cases, including ones where the skill should stay out of the way). See [Evals](docs/contributing.md#evals) to run them yourself.
+Each skill has eval cases that run the same prompt twice, once with vstack installed and once without, against a fake GitHub that logs every push, reply and merge. Graders check that log, the text it posted and the transcript: did it fix the failing check, reply to the question, merge only when asked, leave unrelated code alone. The chart shows the share of graders passed in each arm, on the smoke set (15 cases, including ones where the skill should stay out of the way). See [Evals](docs/contributing.md#evals) to run them yourself.
 
 <!-- evals:start -->
 <picture>
@@ -35,6 +35,8 @@ Each skill has eval cases that run the same prompt twice, once with vstack insta
 | `babysit` | 6 | 78% | 98% | +20 pts |
 | `review` | 3 | 54% | 67% | +13 pts |
 | `remove-comments` | 2 | 89% | 96% | +7 pts |
+
+Not in this run yet: `pr-writing` (11 cases). Run them and regenerate this section (see [Evals](docs/contributing.md#evals)).
 
 <sub>15 eval cases, 1 run per arm, Claude Code 2.1.312, 2026-10-29. Score: share of a case's graders passed.</sub>
 <!-- evals:end -->

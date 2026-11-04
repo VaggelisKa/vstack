@@ -1,10 +1,10 @@
-"""Checks the plugin version that Codex and Gemini CLI read to decide whether an install is out of date.
+"""Checks the plugin version that Codex, Gemini CLI and Antigravity read to decide whether an install is out of date.
 
-- .codex-plugin/plugin.json and gemini-extension.json carry the same X.Y.Z version.
+- .codex-plugin/plugin.json, gemini-extension.json and plugin.json (Antigravity) carry the same X.Y.Z version.
 - .claude-plugin/plugin.json and the marketplace entries carry none, so Claude Code versions the
   plugin by git commit.
 - With --base <rev> (pull requests), the version is higher than the one at <rev>: every change
-  bumps it, or Codex and Gemini users never see it.
+  bumps it, or Codex, Gemini and Antigravity users never see it.
 
 Usage: python3 .github/scripts/check-version.py [--base <rev>] [--root <repo>]
 Exits 0 when every check passes, 1 with one line per problem on stderr otherwise.
@@ -16,7 +16,7 @@ import re
 import subprocess
 import sys
 
-VERSIONED = (".codex-plugin/plugin.json", "gemini-extension.json")
+VERSIONED = (".codex-plugin/plugin.json", "gemini-extension.json", "plugin.json")
 UNVERSIONED = (".claude-plugin/plugin.json", ".claude-plugin/marketplace.json", ".agents/plugins/marketplace.json")
 SEMVER = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 
@@ -53,12 +53,12 @@ def check(root, base=None):
     for path in UNVERSIONED:
         f = root / path
         if f.exists() and has_version(json.loads(f.read_text())):
-            problems.append(f"{path}: remove 'version'; the plugin is versioned in {VERSIONED[0]} only")
+            problems.append(f"{path}: remove 'version'; the plugin is versioned in {', '.join(VERSIONED)} only")
     if base and not problems:
         old, new = base_version(root, base), versions[VERSIONED[0]]
         if parse(old) is not None and parse(new) <= parse(old):
             problems.append(f"version {new} is not higher than {old} on {base}: bump it in "
-                            + " and ".join(VERSIONED) + " (see docs/contributing.md, Releasing)")
+                            + ", ".join(VERSIONED) + " (see docs/contributing.md, Releasing)")
     return problems
 
 

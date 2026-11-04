@@ -320,6 +320,40 @@ class Chart(unittest.TestCase):
         self.assertEqual(chart.delta(0.25, 0.875), "+63 pts")
         self.assertIn("| `babysit` | 2 | 25% | 88% | +63 pts |", chart.section(rows, "note"))
 
+    def test_skills_missing_from_a_run_are_named_under_the_table(self):
+        rows = [("All skills", 3, 0.5, 0.9), ("babysit", 2, 0.25, 0.875)]
+        missing = chart.unscored(rows, {"babysit": 40, "pr-writing": 11, "html-plan": 1})
+        self.assertEqual(missing, [("html-plan", 1), ("pr-writing", 11)])
+        text = chart.section(rows, "note", missing)
+        self.assertIn("Not in this run yet: `html-plan` (1 case), `pr-writing` (11 cases).", text)
+        self.assertNotIn("Not in this run yet", chart.section(rows, "note"))
+
+
+class Readme(unittest.TestCase):
+    """The README has to keep up with the skills and their evals (see AGENTS.md)."""
+
+    def setUp(self):
+        self.text = (ROOT / "README.md").read_text()
+        self.skills = sorted(p.name for p in (ROOT / "skills").iterdir() if (p / "SKILL.md").exists())
+
+    def test_lists_every_skill(self):
+        for s in self.skills:
+            with self.subTest(skill=s):
+                self.assertRegex(self.text, rf"(?m)^- `{re.escape(s)}`:")
+
+    def test_eval_section_covers_every_skill_with_cases(self):
+        section = self.text.split(chart.START, 1)[1].split(chart.END, 1)[0]
+        rows = re.findall(r"(?m)^\| `([\w-]+)` \|", section)
+        missing = re.search(r"(?m)^Not in this run yet: (.*)$", section)
+        named = set(rows) | set(re.findall(r"`([\w-]+)`", missing.group(1) if missing else ""))
+        for s, n in chart.case_counts().items():
+            with self.subTest(skill=s):
+                self.assertIn(s, named, f"{s} has {n} eval cases but isn't in the README's eval section: run its "
+                                        "evals and regenerate it with chart.py")
+        if missing:
+            for s, n in re.findall(r"`([\w-]+)` \((\d+) cases?\)", missing.group(1)):
+                self.assertEqual(int(n), chart.case_counts().get(s), f"stale case count for {s} in the README")
+
 
 if __name__ == "__main__":
     unittest.main()
