@@ -11,7 +11,7 @@ common dir. Use this structure:
 ## Decision: <Ship | Ship with fixes | Rethink | Incomplete>[, based on <n> [confirmed and <m>] unverified <blockers|majors>]
 <one or two sentences on why; Incomplete names the K=3 area and the gap>
 Score: <weighted mean>/10 (min <x> from <reviewer>), advisory.
-Consistency: <weighted mean of consistency reviewers>/10, compared against <conventions, one line> | not graded (<why>).
+Consistency: <weighted mean of consistency reviewers>/10, compared against <conventions and pinned versions, one line> | not graded (<why>).
 
 ## Findings
 <ranked: severity (blocker > major > minor > nit), then number of agreeing reviewers, then confidence>

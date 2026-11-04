@@ -78,6 +78,7 @@
 > gemini's stdin prompt (help only), agy's stream-json stdin (not used),
 > the gitleaks and trufflehog invocations (neither was installed),
 > the sequential-personas fallback, the retry and UNREVIEWED flow in a live run, the `ui-live` lens (Playwright and simctl),
-> budget trimming on large diffs, and running the skill inside Codex or
-> Antigravity sessions.
+> budget trimming on large diffs, running the skill inside Codex or
+> Antigravity sessions, and the consistency lens's deprecated-API check
+> (eval case 11, `review-11-consistency-flags-deprecated-apis`, hasn't been run yet).
 

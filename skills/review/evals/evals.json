@@ -678,6 +678,85 @@
           }
         ]
       }
+    },
+    {
+      "id": 11,
+      "prompt": "review PR 16. It adds a reports service, src/reports.js, with fetchReport (fetches a report and decodes its base64 CSV) and a test for it.",
+      "expected_output": "The consistency reviewer checks the new service for deprecated APIs as well as fit: it reads the version pins (engines and .nvmrc say Node 20) and the codebase's own deprecation markers, then reports that fetchReport calls legacyGet, which src/util/http.js marks @deprecated in favour of ApiClient#get (as src/invoices.js already uses), and decodes with new Buffer(), deprecated in Node in favour of Buffer.from (which src/invoices.js uses). Because they are in a new service, they are rated major and the decision is not plain Ship.",
+      "files": [],
+      "expectations": [
+        "Plans a consistency reviewer for the src area and pastes the consistency lens text, including its 'Versions in use' survey step and its 'Deprecated APIs' check, into that reviewer's prompt",
+        "Reports that src/reports.js calls legacyGet, which src/util/http.js marks @deprecated, and names ApiClient#get (client.get) as the replacement",
+        "Reports that new Buffer(...) in src/reports.js is deprecated in Node, checked against the pinned Node 20, and names Buffer.from as the replacement",
+        "Rates at least one of the deprecated-API findings in the new service as major, so the decision is Ship with fixes (or worse), not Ship",
+        "Does not edit files, commit, push or post PR comments"
+      ],
+      "eval": {
+        "slug": "consistency-flags-deprecated-apis",
+        "prompt": "/vstack:review 16",
+        "fixture": "pr-green",
+        "patch": {
+          "repo": {
+            "files": {
+              "package.json": "{\n  \"name\": \"acme-api-client\",\n  \"version\": \"1.4.0\",\n  \"type\": \"module\",\n  \"private\": true,\n  \"engines\": {\n    \"node\": \">=20\"\n  },\n  \"scripts\": {\n    \"test\": \"node --test\",\n    \"lint\": \"node scripts/lint.mjs\"\n  }\n}\n",
+              ".nvmrc": "20\n",
+              "src/util/http.js": "/**\n * @deprecated Since 1.3.0. Use ApiClient#get from src/client.js, which\n * checks the status and parses JSON for you. Will be removed in 2.0.\n */\nexport async function legacyGet(baseUrl, path) {\n  const res = await fetch(baseUrl + path);\n  return res.json();\n}\n",
+              "src/invoices.js": "// Invoices come back with the PDF as a base64 string.\nexport async function fetchInvoice(client, id) {\n  const body = await client.get(`/invoices/${id}`);\n  return { ...body, pdf: Buffer.from(body.pdfBase64, \"base64\") };\n}\n",
+              "test/invoices.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { fetchInvoice } from \"../src/invoices.js\";\n\ntest(\"fetchInvoice decodes the PDF\", async () => {\n  const client = { get: async () => ({ id: 3, pdfBase64: Buffer.from(\"%PDF\").toString(\"base64\") }) };\n  const inv = await fetchInvoice(client, 3);\n  assert.equal(inv.pdf.toString(), \"%PDF\");\n});\n"
+            },
+            "commits": [
+              {
+                "message": "Add reports service",
+                "files": {
+                  "src/reports.js": "import { legacyGet } from \"./util/http.js\";\n\n// Reports come back with the CSV as a base64 string.\nexport async function fetchReport(client, id) {\n  const body = await legacyGet(client.baseUrl, `/reports/${id}`);\n  return { ...body, csv: new Buffer(body.csvBase64, \"base64\").toString(\"utf8\") };\n}\n",
+                  "test/reports.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { fetchReport } from \"../src/reports.js\";\n\ntest(\"fetchReport decodes the CSV\", async (t) => {\n  const csvBase64 = Buffer.from(\"a,b\\n1,2\\n\").toString(\"base64\");\n  t.mock.method(globalThis, \"fetch\", async () => ({ ok: true, status: 200, json: async () => ({ id: 9, csvBase64 }) }));\n  const report = await fetchReport({ baseUrl: \"https://x\" }, 9);\n  assert.equal(report.csv, \"a,b\\n1,2\\n\");\n});\n"
+                }
+              }
+            ]
+          },
+          "github": {
+            "pr": {
+              "number": 16,
+              "title": "Add reports service",
+              "headRefName": "feature/reports",
+              "body": "Adds fetchReport, which fetches a report and decodes its base64 CSV, with a test."
+            }
+          }
+        },
+        "graders": [
+          {
+            "name": "deprecation-check-in-prompt",
+            "trace": "Versions in use",
+            "covers": [
+              0
+            ]
+          },
+          {
+            "name": "finds-legacy-get",
+            "reply": "legacyGet"
+          },
+          {
+            "name": "finds-new-buffer",
+            "reply": "new Buffer|Buffer\\.from"
+          },
+          {
+            "name": "no-pr-comments",
+            "gh": "^# (comment|reply|review|resolve)",
+            "absent": true
+          },
+          {
+            "name": "no-push",
+            "gh": "^# push",
+            "absent": true
+          },
+          {
+            "name": "no-commit",
+            "tool": "Bash",
+            "input": "git (commit|push|stash|reset|checkout)\\b",
+            "max": 0
+          }
+        ]
+      }
     }
   ]
 }

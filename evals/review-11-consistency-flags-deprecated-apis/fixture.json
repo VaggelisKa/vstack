@@ -1,0 +1,105 @@
+{
+  "repo": {
+    "files": {
+      "package.json": "{\n  \"name\": \"acme-api-client\",\n  \"version\": \"1.4.0\",\n  \"type\": \"module\",\n  \"private\": true,\n  \"engines\": {\n    \"node\": \">=20\"\n  },\n  \"scripts\": {\n    \"test\": \"node --test\",\n    \"lint\": \"node scripts/lint.mjs\"\n  }\n}\n",
+      "README.md": "# acme api client\n\nA small HTTP client for the Acme API.\n",
+      "CONTRIBUTING.md": "# Contributing\n\nBefore you push, run `npm run lint` and `npm test` (Node 20 or newer, no install step).\n",
+      "src/client.js": "export class ApiClient {\n  constructor(baseUrl, fetchImpl = fetch) {\n    this.baseUrl = baseUrl;\n    this.fetchImpl = fetchImpl;\n  }\n\n  async get(path) {\n    const res = await this.fetchImpl(this.baseUrl + path);\n    if (!res.ok) throw new Error(`GET ${path} failed: ${res.status}`);\n    return res.json();\n  }\n}\n",
+      "test/client.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { ApiClient } from \"../src/client.js\";\n\nconst reply = (status, body = {}) => ({ ok: status < 400, status, json: async () => body });\n\ntest(\"get returns the body\", async () => {\n  const c = new ApiClient(\"https://x\", async () => reply(200, { a: 1 }));\n  assert.deepEqual(await c.get(\"/a\"), { a: 1 });\n});\n",
+      "scripts/lint.mjs": "// Fails on named imports that the file never uses.\nimport { readFileSync, readdirSync, statSync } from \"node:fs\";\nimport { join } from \"node:path\";\n\nconst files = (d) => readdirSync(d).flatMap((f) => {\n  const p = join(d, f);\n  return statSync(p).isDirectory() ? files(p) : p.endsWith(\".js\") ? [p] : [];\n});\nlet bad = 0;\nfor (const f of [...files(\"src\"), ...files(\"test\")]) {\n  const text = readFileSync(f, \"utf8\");\n  for (const m of text.matchAll(/^import \\{([^}]*)\\} from/gm)) {\n    for (const name of m[1].split(\",\").map((s) => s.trim().split(/\\s+as\\s+/).pop()).filter(Boolean)) {\n      const uses = text.split(new RegExp(`\\\\b${name}\\\\b`)).length - 1;\n      if (uses < 2) { console.error(`${f}: '${name}' is imported but never used`); bad++; }\n    }\n  }\n}\nprocess.exit(bad ? 1 : 0);\n",
+      ".github/workflows/ci.yml": "name: CI\non: [pull_request, push]\njobs:\n  lint:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm run lint\n  unit-tests:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm test\n",
+      ".nvmrc": "20\n",
+      "src/util/http.js": "/**\n * @deprecated Since 1.3.0. Use ApiClient#get from src/client.js, which\n * checks the status and parses JSON for you. Will be removed in 2.0.\n */\nexport async function legacyGet(baseUrl, path) {\n  const res = await fetch(baseUrl + path);\n  return res.json();\n}\n",
+      "src/invoices.js": "// Invoices come back with the PDF as a base64 string.\nexport async function fetchInvoice(client, id) {\n  const body = await client.get(`/invoices/${id}`);\n  return { ...body, pdf: Buffer.from(body.pdfBase64, \"base64\") };\n}\n",
+      "test/invoices.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { fetchInvoice } from \"../src/invoices.js\";\n\ntest(\"fetchInvoice decodes the PDF\", async () => {\n  const client = { get: async () => ({ id: 3, pdfBase64: Buffer.from(\"%PDF\").toString(\"base64\") }) };\n  const inv = await fetchInvoice(client, 3);\n  assert.equal(inv.pdf.toString(), \"%PDF\");\n});\n"
+    },
+    "commits": [
+      {
+        "message": "Add reports service",
+        "files": {
+          "src/reports.js": "import { legacyGet } from \"./util/http.js\";\n\n// Reports come back with the CSV as a base64 string.\nexport async function fetchReport(client, id) {\n  const body = await legacyGet(client.baseUrl, `/reports/${id}`);\n  return { ...body, csv: new Buffer(body.csvBase64, \"base64\").toString(\"utf8\") };\n}\n",
+          "test/reports.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { fetchReport } from \"../src/reports.js\";\n\ntest(\"fetchReport decodes the CSV\", async (t) => {\n  const csvBase64 = Buffer.from(\"a,b\\n1,2\\n\").toString(\"base64\");\n  t.mock.method(globalThis, \"fetch\", async () => ({ ok: true, status: 200, json: async () => ({ id: 9, csvBase64 }) }));\n  const report = await fetchReport({ baseUrl: \"https://x\" }, 9);\n  assert.equal(report.csv, \"a,b\\n1,2\\n\");\n});\n"
+        }
+      }
+    ]
+  },
+  "github": {
+    "owner": "acme",
+    "repo": "api",
+    "repo_settings": {
+      "default_branch": "main",
+      "allow_merge_commit": true,
+      "allow_squash_merge": true,
+      "allow_rebase_merge": false
+    },
+    "permission": "WRITE",
+    "pr": {
+      "number": 16,
+      "title": "Add reports service",
+      "body": "Adds fetchReport, which fetches a report and decodes its base64 CSV, with a test.",
+      "author": "alice",
+      "headRefName": "feature/reports",
+      "baseRefName": "main",
+      "labels": []
+    },
+    "checks": [
+      {
+        "name": "lint",
+        "workflow": "CI",
+        "conclusion": "SUCCESS",
+        "run_id": 101,
+        "log": ""
+      },
+      {
+        "name": "unit-tests",
+        "workflow": "CI",
+        "conclusion": "SUCCESS",
+        "run_id": 102,
+        "log": ""
+      }
+    ],
+    "required_checks": [
+      "lint",
+      "unit-tests"
+    ],
+    "branch_protection": {
+      "required_status_checks": [
+        "lint",
+        "unit-tests"
+      ],
+      "required_approvals": 1
+    },
+    "rulesets": [
+      {
+        "type": "pull_request",
+        "parameters": {
+          "required_approving_review_count": 1
+        }
+      }
+    ],
+    "reviews": [
+      {
+        "id": 501,
+        "user": "bob",
+        "state": "APPROVED",
+        "commit_id": "@HEAD",
+        "body": "Looks good.",
+        "submitted_at": "2026-10-29T10:00:00Z"
+      }
+    ],
+    "threads": [],
+    "issue_comments": [],
+    "runs": [
+      {
+        "id": 90,
+        "workflow": "CI",
+        "branch": "main",
+        "conclusion": "SUCCESS",
+        "sha": "@BASE"
+      }
+    ],
+    "merge": {
+      "when_armed": "merge"
+    }
+  }
+}
