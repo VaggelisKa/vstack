@@ -172,7 +172,8 @@ together (a module, a feature slice, a migration and its model). Put each
 changed file in exactly one area. Keep tests with the code they test. Aim for at
 most about 400 changed lines per area and split bigger ones. Lockfiles,
 generated and vendored files go in a single `generated` area. Review it only for
-surprises (an unexpected dependency, a hand edit), at C=0.
+surprises (an unexpected dependency, a package the lockfile marks deprecated,
+a hand edit), at C=0.
 
 ### Score each area
 
@@ -185,10 +186,13 @@ state, prod infra or deploy config, or anything irreversible. `bug-hunt` runs
 on every area. `consistency` runs on every area except `generated` and C=0
 areas: it is the reviewer that reads beyond the diff. It starts with a quick
 survey of the codebase (layout, convention docs, shared helpers, prior art for
-what the diff adds, the closest existing analogue), then compares the change
-with how the rest of the codebase already does the same things (naming,
-idioms, error handling, reuse of existing helpers, structure, test style) and
-grades how well it fits.
+what the diff adds, the closest existing analogue, the dependency and runtime
+versions in use), then compares the change with how the rest of the codebase
+already does the same things (naming, idioms, error handling, reuse of
+existing helpers, structure, test style) and grades how well it fits. It also
+checks the change uses no API that the codebase, a dependency, the language
+or the platform has deprecated in the pinned version, most closely in new
+files, components, services and dependencies.
 
 ### Count, tier, budget
 
@@ -401,9 +405,10 @@ when C+K = 0), plus the **minimum** score and which reviewer gave it. Reviewers
 without a verdict are left out of both.
 
 **Consistency grade** (advisory too): the same weighted mean over the
-`consistency` reviewers only, with the conventions they compared against. It
-is reported next to the overall score, not instead of it, so a change that
-works but reads like a foreign codebase is visible at a glance. If no
+`consistency` reviewers only, with the conventions and versions they
+compared against. It is reported next to the overall score, not instead of
+it, so a change that works but reads like a foreign codebase is visible at a
+glance. If no
 consistency reviewer produced a verdict, say "not graded" and why.
 
 ## 6. Report
