@@ -295,6 +295,16 @@ One round = one push. **At most 3 rounds.**
 4. Commit once and push once (`git push`, never `--force`), then
    `coordination.py pushed --pr <number> --sha <new head>`. `fix_rounds += 1`.
 5. Reply on each handled comment with the commit link.
+6. **Keep the description true.** If the round changed what the PR does (new
+   behaviour, a changed approach, something dropped; not a lint, typo or test
+   fix), reread the PR body. If it now says something false or leaves out
+   what a reviewer needs, update it the way
+   [pr-writing's descriptions guide](../pr-writing/references/descriptions.md)
+   says (same plugin): keep the author's words, fix only what's stale, no
+   "Update:" log. Check it with
+   `python3 -I "${CLAUDE_SKILL_DIR}/../pr-writing/scripts/check-text.py" --kind description <file>`,
+   then `gh pr edit <pr> --body-file <file>`, and say so in the report. Never
+   touch the title or body otherwise; a fork PR's body is the author's.
 
 ### Updating the branch from base
 

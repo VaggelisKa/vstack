@@ -77,10 +77,20 @@ def deep_merge(base, patch):
     return out
 
 
+INLINE_FLAGS = re.compile(r"^\(\?([ims]+)\)")
+
+
 def matcher(g, key, target, flags=""):
-    out = {"name": g["name"], "type": "regex", "target": target, "pattern": g[key]}
-    if flags or g.get("flags"):
-        out["flags"] = g.get("flags", flags)
+    # `claude plugin eval` runs patterns as JavaScript regexes, which reject a Python-style leading
+    # `(?i)`; move it into the grader's flags instead.
+    pattern, flags = g[key], g.get("flags", flags)
+    m = INLINE_FLAGS.match(pattern)
+    if m:
+        pattern = pattern[m.end():]
+        flags = "".join(sorted(set(flags) | set(m.group(1))))
+    out = {"name": g["name"], "type": "regex", "target": target, "pattern": pattern}
+    if flags:
+        out["flags"] = flags
     if g.get("absent"):
         out["match"] = "not_contains"
     elif "count" in g:

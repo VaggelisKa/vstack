@@ -16,6 +16,10 @@ is flagged.
 Code (fenced blocks and `inline`), quoted lines ("> ...") and link URLs are ignored, so
 quoting a reviewer or a line of code never trips a rule.
 
+For descriptions it also flags a file-by-file changelog (fix), scaffolding headings on a short
+description, spec-level detail (many code identifiers) and a Mermaid diagram over 15 lines
+(checks).
+
 Exit 0: no `fix` findings. Exit 1: at least one. Exit 2: bad arguments or unreadable input.
 A clean result doesn't make a reply good; it only means none of the known tells are in it.
 """
@@ -25,7 +29,7 @@ import re
 import sys
 
 # Word caps per kind. Over the cap is a `fix`: say less, or split the point out.
-CAPS = {"reply": 120, "comment": 200, "review": 120, "description": 400}
+CAPS = {"reply": 120, "comment": 200, "review": 120, "description": 300}
 
 I = re.IGNORECASE
 RULES = [
@@ -102,6 +106,18 @@ RULES = [
      None, "Claims a test run. Only if it ran in this session or the check is green."),
 ]
 EXCLAIM = re.compile(r"!(?![=\[(])")
+# Descriptions: a list of changed files, scaffolding headings, spec-level detail, an oversized diagram.
+FENCE = re.compile(r"^(```|~~~)\s*(\w*)[^\n]*\n(.*?)^\1\s*$", re.S | re.M)
+FILE_ITEM = re.compile(
+    r"^\s*(?:[-*+]|\d+[.)])\s+(?:(?:updated?|add(?:ed|s)?|modif(?:ied|y)|chang(?:ed|es?)|remov(?:ed|es?)|"
+    r"creat(?:ed|es?)|new|edit(?:ed|s)?|renamed?|delet(?:ed|es?))\b[\s:]*)?`?[\w.-]*[/\\][\w./\\-]*\.\w{1,8}`?"
+    r"|^\s*(?:[-*+]|\d+[.)])\s+`[\w./-]+\.\w{1,8}`\s*[:(-]", I | re.M)
+SCAFFOLD = re.compile(r"^#{1,6}\s*\W*\s*(summary|changes|what changed|changes made|test plan|testing|overview|"
+                      r"motivation|description|key changes|details)\b", I | re.M)
+INLINE_CODE = re.compile(r"`[^`\n]+`")
+DIAGRAM_NODES = 15
+SPEC_CODE_SPANS = 8
+SHORT_WORDS = 150
 FIXED = re.compile(r"^\W*(fixed|done|addressed|updated|changed|resolved)\b", I)
 SHA = re.compile(r"\b[0-9a-f]{7,40}\b|/commit/|/pull/\d+/commits/")
 
@@ -137,6 +153,35 @@ def line_of(text, pos):
     return text.count("\n", 0, pos) + 1
 
 
+def describe(text, words):
+    """Description-only rules: the diff already lists files and holds the detail."""
+    out = []
+    unfenced = FENCE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+    items = list(FILE_ITEM.finditer(unfenced))
+    if len(items) >= 3:
+        out.append({"rule": "file-list", "severity": "fix", "match": f"{len(items)} file items",
+                    "line": line_of(unfenced, items[0].start()),
+                    "why": "A file-by-file changelog. The diff shows the files; say what the change does and why."})
+    heads = list(SCAFFOLD.finditer(unfenced))
+    if heads and words < SHORT_WORDS:
+        out.append({"rule": "scaffold-headings", "severity": "check", "match": heads[0].group(0).strip(),
+                    "line": line_of(unfenced, heads[0].start()),
+                    "why": "Section headings on a short description. Drop them unless the repo's PR template asks for them."})
+    spans = INLINE_CODE.findall(unfenced)
+    if len(spans) > SPEC_CODE_SPANS:
+        out.append({"rule": "too-technical", "severity": "check", "match": f"{len(spans)} code identifiers", "line": 1,
+                    "why": "Reads like a spec. Describe the behaviour and intent; leave names, values and signatures to the diff."})
+    for m in FENCE.finditer(text):
+        if m.group(2).lower() != "mermaid":
+            continue
+        body = [l for l in m.group(3).splitlines()[1:] if l.strip() and not l.strip().startswith("%%")]
+        if len(body) > DIAGRAM_NODES:
+            out.append({"rule": "diagram-size", "severity": "check", "match": f"{len(body)} diagram lines",
+                        "line": line_of(text, m.start()),
+                        "why": f"Over {DIAGRAM_NODES} lines of Mermaid. Keep it a sketch of the main pieces, not every function."})
+    return out
+
+
 def check(text, kind="reply", against=()):
     prose = visible(text)
     out = []
@@ -154,6 +199,8 @@ def check(text, kind="reply", against=()):
     if cap and words > cap:
         out.append({"rule": "long", "severity": "fix", "match": f"{words} words", "line": 1,
                     "why": f"Over {cap} words for a {kind}. Cut to the answer and its evidence."})
+    if kind == "description":
+        out += describe(text, words)
     if kind in ("reply", "comment") and FIXED.search(prose) and not SHA.search(text):
         out.append({"rule": "fixed-without-commit", "severity": "check", "match": FIXED.search(prose).group(0).strip(), "line": 1,
                     "why": "Says it's fixed without linking the commit. Add the short SHA, or don't say fixed."})

@@ -28,9 +28,10 @@ If the line above is empty or still reads as a literal `$ARGUMENTS` (harnesses o
 - `--cross`: send reviewers to other installed agent CLIs too (codex, claude,
   gemini, agy). Only turn this on if the message contains `--cross` or plainly asks
   for other models or providers ("get Codex and Gemini to look too").
-- `--budget N`: the maximum number of reviewers (default **8**). Skeptics don't
-  count toward it. Protected reviewers can exceed it, but never past 2× without
-  the user's confirmation.
+- `--budget N`: a hard cap on the reviewer agents this run starts (default
+  **8**), retries included, on every harness. Nothing exceeds it: not a
+  protected reviewer, not a retry, not an area noticed after the plan. Skeptics
+  are not reviewers and are counted separately (see "Cost estimate").
 - `--out PATH`: where to write the report. The default is
   `<git common dir>/vstack/reports/review-<scope>-<YYYYMMDD-HHMM>.md`
   (`git rev-parse --git-common-dir`, next to the result file), outside the
@@ -221,36 +222,53 @@ area's most serious flag (`bug-hunt` if there are no flags) at the tier its C+K
 gives. A one-line change to an auth check is still trivial in size, but its K
 makes it a mid-tier security reviewer.
 
-**Budget** (default 8). While there are more reviewers than the budget, remove
-one from the area with the lowest C+K (ties go to the lower K). Within that
-area, remove extra copies first, then `consistency`, then the `bug-hunt` base
-reviewer, then the other lenses (a risk flag triggered those, so they're worth
-more than the generalist). Never remove `security` or `data-integrity`
-reviewers on a K=3 area, or the last reviewer of a K=3 area. Keep the
-review's last `consistency` reviewer (the one on the highest C+K area) until
-every other removable reviewer is gone, so the change still gets a
-consistency grade. If the protected reviewers alone
-exceed the budget, run them anyway and say so. List areas that lose all their
-reviewers as "not reviewed (budget)".
+**Budget: a hard cap on reviewers started.** The budget (default 8) is the
+most reviewer agents this run may start, counting every retry, every harness
+(`--cross` CLIs and sequential personas too) and every area, `generated`
+included. It is what the user agreed to spend, so it holds even when the
+change looks like it deserves more: then you choose what to drop and say what
+went unreviewed, you don't overspend. Plan every reviewer, every area
+included, before any starts; nothing is added after the plan is printed.
+Retries come out of the same budget, so with a K=3 area in the plan and a
+budget of 4 or more, leave one launch unplanned: a K=3 reviewer that fails
+with no slot left to re-run it leaves that area UNREVIEWED.
 
-**Hard cap: 2× budget.** If the protected reviewers would still leave the plan
-above twice the budget, print the plan and ask the user to confirm before
-starting anything. In a non-interactive run, stop after the plan and report
-that it needs confirmation. A plan that big usually means the diff should be
-split, and spending over twice the agreed budget is the user's call, not yours.
+**Which reviewers fill the budget is your call.** The counts, lenses and
+tiers above are a starting point, not quotas. Fit the mix to this project and
+this change: a lens whose flag barely applies can go, a project whose real
+risk sits somewhere the flags don't name (a hand-rolled parser, a
+migration-heavy codebase, a UI with no tests) can get its slots there. When
+the starting plan is over budget, trim where the evidence is cheapest: extra
+copies on low C+K areas first, then every reviewer of the K≤1 areas
+(`generated`, docs, helpers, copy changes: list them as "not reviewed
+(budget)"), then `consistency` and extra copies elsewhere. A slot spent on a
+lockfile or a README while a K=3 area is missing its `bug-hunt` is the wrong
+trade. Keep `security` and `data-integrity` on K=3 areas, at least one
+reviewer per K=3 area, and one `consistency` reviewer (on the highest C+K
+area) as long as you can. If even those don't fit, keep the ones on the
+riskiest areas and list the rest as "not reviewed (budget)". A K=3 area left
+without its security or data-integrity reviewer makes the decision
+Incomplete (step 5), and the report suggests rerunning with a larger
+`--budget` or splitting the diff. Print what you trimmed and why under the
+plan table.
 
-**Cost estimate.** Skeptics don't count toward the budget, but they cost the
-same as reviewers, so the plan counts them. Expect at most one per blocker or
-major cluster, and give a range: low = the number of K=3 areas (they rarely
-come back clean), high = the number of (area, lens) pairs on K≥2 areas. With
-`--no-skeptic` it's 0. Add that a reviewer or skeptic whose result fails its
-check is re-run once, outside the budget.
+**Record the plan before starting anything.** Pipe it to
+`python3 -I "${CLAUDE_SKILL_DIR}/scripts/budget.py" plan "$SESSION" --budget N`
+as `{"reviewers": [{"id": "R1", "area": "api/auth", "lens": "security"}, ...]}`.
+It refuses (exit 1) a plan with more reviewers than the budget: trim it and
+pipe it again. It's the ledger for the run's launches (step 3).
+
+**Cost estimate.** Skeptics aren't reviewers and don't come out of the
+budget, but they cost the same, so the plan counts them. Expect at most one
+per blocker or major cluster, and give a range: low = the number of K=3 areas
+(they rarely come back clean), high = the number of (area, lens) pairs on K≥2
+areas. With `--no-skeptic` it's 0.
 
 ### Print the plan before starting anything
 
 Print the plan table and its totals line as under "Plan table" in
-[references/report.md](references/report.md#plan-table), then go straight on
-(unless the hard cap applies); the user can interrupt.
+[references/report.md](references/report.md#plan-table), then go straight on;
+the user can interrupt.
 
 ## 3. Run the reviewers
 
@@ -269,6 +287,17 @@ scratch file: one that can't open it reviews nothing and may still answer.
 Only `--cross` CLIs read a prompt file, `$SESSION/<id>.prompt` on stdin. Give
 a reviewer `$SESSION` only if it must use something there (ui-live screenshots).
 
+**Every launch goes through the ledger.** Right before starting a reviewer
+(subagent, `--cross` CLI call or sequential persona), run
+`python3 -I "${CLAUDE_SKILL_DIR}/scripts/budget.py" start "$SESSION" <id>`,
+and `start "$SESSION" <id> --retry` before its one re-run. Start it only on
+exit 0. Exit 1 means the launch would break the budget or isn't in the plan:
+don't start it, and record that reviewer as no verdict ("budget spent"). Never
+work around a refusal (a new id, a new plan, a reviewer started without the
+script): the refusal is the budget doing its job. If the session is
+interrupted and reviewers you already started never came back, relaunching
+them is a retry (`--retry`), not a fresh start.
+
 Start **all reviewers at once** and wait for them together. Each one has the
 timeout of its tier. Write each area's file list, one path per line, to
 `$SESSION/<area>.files` and check every result with
@@ -285,10 +314,15 @@ counts as `retry`.
   partial.
 - `retry` (exit 3): no parseable result, a schema or range failure, a wrong
   id or sentinel, inputs it couldn't read, or a "complete" claim missing
-  files. Re-run that reviewer **once** with a fresh inline prompt (same lens,
-  persona and model) that says plainly all inputs are in the prompt text and
-  nothing outside the repo needs reading. Retries don't count toward the
-  budget. If the retry isn't `ok` or `partial`, the reviewer has **no verdict**.
+  files. If the reviewer finished but its JSON is malformed (a missing field,
+  a wrong type), and the host can continue a finished agent (Claude Code's
+  SendMessage), send it the check's reasons and ask for the corrected JSON
+  only: that isn't a new launch. Otherwise re-run it **once** with a fresh
+  inline prompt (same lens, persona and model) that says plainly all inputs
+  are in the prompt text and nothing outside the repo needs reading; that
+  re-run is a launch (`budget.py start --retry`) and is refused when the
+  budget is spent. If the corrected or re-run result isn't `ok` or `partial`,
+  or the re-run was refused, the reviewer has **no verdict**.
 - Any other exit (2 usage, 4 internal error, anything else, or the script
   didn't run) is a coordinator error. Treat it as `retry`, never as covered,
   and list it under "Failed and partial reviewers" as "check failed (exit N)".
@@ -395,8 +429,9 @@ very differently.
 
 **Incomplete** replaces Ship and Ship with fixes (not Rethink) when any **K=3
 area** (a) is UNREVIEWED, or has (b) a reviewer that reported `partial`
-coverage, or (c) a planned `security` or `data-integrity` reviewer that ended
-without a verdict. Say which area triggered it and why. If the decision is
+coverage, (c) a planned `security` or `data-integrity` reviewer that ended
+without a verdict, or (d) its `security` or `data-integrity` reviewer trimmed
+for budget. Say which area triggered it and why. If the decision is
 Rethink and a K=3 area is also incomplete, keep Rethink and add the gap.
 
 **Overall score** (advisory only; the decision above is what counts): the mean

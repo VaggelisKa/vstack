@@ -49,7 +49,8 @@ graders:
     target:
       source: file
       path: src/client.js
-    pattern: "(?i)redis"
+    pattern: redis
+    flags: i
     match: not_contains
   - name: thread-not-resolved
     type: regex
