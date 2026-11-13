@@ -387,6 +387,9 @@ def check_repo(s, opts):
 def check_pr(s, sel):
     """The PR selected by a number, URL or branch name (or the current branch)."""
     p = pr(s)
+    if p.get("state") == "NONE":  # the fixture's PR isn't opened yet; `gh pr create` opens it
+        cur = sel or subprocess.run([GIT, "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
+        fail(f'no pull requests found for branch "{cur}"')
     if sel is None:
         cur = subprocess.run([GIT, "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
         if cur != p["headRefName"]:
@@ -449,9 +452,11 @@ def cmd_repo(s, pos, opts):
 def cmd_pr(s, pos, opts, fields):
     sub, rest = pos[0], pos[1:]
     check_repo(s, opts)
+    if sub == "create":
+        return pr_create(s, opts)
     if sub == "list":
         p = pr(s)
-        hit = (opts.get("head") in (None, p["headRefName"]) and opts.get("state", "open").upper() in (p.get("state", "OPEN"), "ALL")
+        hit = p.get("state") != "NONE" and (opts.get("head") in (None, p["headRefName"]) and opts.get("state", "open").upper() in (p.get("state", "OPEN"), "ALL")
                and opts.get("base") in (None, p["baseRefName"]))
         data = [view(s, opts.get("json") or "number,title,headRefName,url")] if hit else []
         if "json" in opts:
@@ -522,6 +527,35 @@ def cmd_pr(s, pos, opts, fields):
                     posted(f"edit {k}", opts[k])
         raise Exit(0, pr_url(s) + "\n")
     fail(f"fake gh: `gh pr {sub}` is not available in this evaluation")
+
+
+def pr_create(s, opts):
+    """Opens the fixture's PR when its state is NONE: from the current branch (or --head) into base."""
+    p = pr(s)
+    cur = subprocess.run([GIT, "branch", "--show-current"], capture_output=True, text=True).stdout.strip()
+    head_name = opts.get("head") or cur
+    if p.get("state") != "NONE":
+        if head_name == p["headRefName"]:
+            fail(f'a pull request for branch "{head_name}" into branch "{p["baseRefName"]}" already exists:\n{pr_url(s)}')
+        fail(f"fake gh: only a PR for {p['headRefName']} can be opened in this evaluation")
+    if head_name != p["headRefName"]:
+        fail(f"fake gh: only a PR for {p['headRefName']} can be opened in this evaluation")
+    if not ref(head_name):
+        fail(f"pull request create failed: GraphQL: Head sha can't be blank, Base sha can't be blank, "
+             f"No commits between {p['baseRefName']} and {head_name}, Head ref must be a branch (createPullRequest)")
+    if "fill" in opts and "title" not in opts:
+        refused("create --fill")
+    title, body = opts.get("title", ""), body_of(opts)
+    if not title.strip():
+        fail("must provide `--title` and `--body` (or `--fill`) when not running interactively")
+    p.update({"title": title, "body": body, "state": "OPEN", "isDraft": "draft" in opts})
+    if opts.get("base"):
+        p["baseRefName"] = opts["base"]
+    s.dirty = True
+    event("create", title=title, draft="draft" in opts)
+    posted("create title", title)
+    posted("create body", body)
+    raise Exit(0, pr_url(s) + "\n")
 
 
 def pr_checks(s, opts):

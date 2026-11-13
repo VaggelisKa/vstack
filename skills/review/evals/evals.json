@@ -160,7 +160,7 @@
         "Applies the exclusion list from harnesses.md and secret-scans the hunks (gitleaks, trufflehog or the regex fallback) before sending, listing held-back hunks by file and hunk header only",
         "Runs codex with exec -s read-only --ephemeral --output-schema and gemini with --approval-mode plan -o json, each wrapped in timeout, with the prompt on stdin (codex '-', gemini -p \"\") rather than as an argument",
         "Does not try to run agy",
-        "Trims starting from the lowest C+K area (the Table.tsx rename), never removes data-integrity reviewers on K=3 ledger areas, and either fits within 4 or states that protected reviewers exceed the budget",
+        "Trims starting from the lowest C+K area (the Table.tsx rename), keeps data-integrity reviewers on the K=3 ledger areas, and starts at most 4 reviewers in total (subagents and CLI calls, retries included), never going over the budget for protected reviewers",
         "Places copies of the same (area, lens) on different harnesses",
         "Validates each CLI's JSON and counts malformed or timed-out output as no verdict"
       ],
@@ -754,6 +754,166 @@
             "tool": "Bash",
             "input": "git (commit|push|stash|reset|checkout)\\b",
             "max": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "prompt": "/vstack:review 150 --budget 4 --no-skeptic. The PR adds API token auth, partial refunds that write to orders and the ledger, a migration, a refund button, formatting helpers, a lockfile change and a README line.",
+      "expected_output": "Plans every area, trims to 4 reviewers keeping security and data-integrity on the K=3 areas, records the plan and every launch with scripts/budget.py, starts no more than 4 reviewer agents, and lists what the budget left unreviewed.",
+      "files": [],
+      "expectations": [
+        "Starts at most 4 reviewer subagents in total, retries included",
+        "Records the plan with scripts/budget.py plan --budget 4 and runs scripts/budget.py start before each reviewer it starts",
+        "The printed plan has at most 4 reviewers, puts a security reviewer on the token auth area and a data-integrity reviewer on the refunds and migration changes, and gives the lockfile and README no reviewer",
+        "The plan or report names what was trimmed to fit the budget and suggests a larger --budget to cover it, and nowhere says the budget was exceeded or that protected reviewers may run over it",
+        "Does not edit files, commit, push or post PR comments"
+      ],
+      "eval": {
+        "slug": "budget-hard-cap",
+        "tags": [
+          "smoke",
+          "budget"
+        ],
+        "prompt": "/vstack:review 150 --budget 4 --no-skeptic",
+        "fixture": "pr-green",
+        "patch": {
+          "repo": {
+            "commits": [
+              {
+                "message": "Add refunds and API tokens",
+                "files": {
+                  "src/auth/token.js": "import crypto from \"node:crypto\";\nimport { db } from \"../db.js\";\n\nexport async function verifyToken(header) {\n  const token = (header || \"\").replace(\"Bearer \", \"\");\n  const row = await db.oneOrNone(\"SELECT user_id, expires_at FROM api_tokens WHERE token = $1\", [token]);\n  if (!row) return null;\n  return row.user_id;\n}\n",
+                  "src/payments/refund.js": "import { db } from \"../db.js\";\n\nexport async function refund(orderId, cents) {\n  const order = await db.one(\"SELECT id, paid_cents, refunded_cents FROM orders WHERE id = $1\", [orderId]);\n  if (order.refunded_cents + cents > order.paid_cents) throw new Error(\"refund exceeds payment\");\n  await db.none(\"UPDATE orders SET refunded_cents = refunded_cents + $1 WHERE id = $2\", [cents, orderId]);\n  await db.none(\"INSERT INTO ledger (order_id, cents, kind) VALUES ($1, $2, 'refund')\", [orderId, -cents]);\n}\n",
+                  "migrations/20261110_refunds_tokens.sql": "ALTER TABLE orders ADD COLUMN refunded_cents integer NOT NULL DEFAULT 0;\nCREATE TABLE api_tokens (token text PRIMARY KEY, user_id integer NOT NULL, expires_at timestamptz NOT NULL);\n",
+                  "web/RefundButton.js": "export function RefundButton({ order, onRefund }) {\n  const left = order.paidCents - order.refundedCents;\n  return `<button ${left <= 0 ? \"disabled\" : \"\"} data-order=\"${order.id}\">Refund ${(left / 100).toFixed(2)}</button>`;\n}\n",
+                  "src/format.js": "export const cents = (n) => (n / 100).toFixed(2);\nexport const plural = (n, word) => `${n} ${word}${n === 1 ? \"\" : \"s\"}`;\n",
+                  "package-lock.json": "{\n  \"name\": \"acme-api-client\",\n  \"version\": \"1.5.0\",\n  \"lockfileVersion\": 3,\n  \"requires\": true,\n  \"packages\": {\n    \"\": {\n      \"name\": \"acme-api-client\",\n      \"version\": \"1.5.0\"\n    },\n    \"node_modules/left-pad\": {\n      \"version\": \"1.3.0\",\n      \"resolved\": \"https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz\",\n      \"deprecated\": \"use String.prototype.padStart()\"\n    }\n  }\n}\n",
+                  "README.md": "# acme api client\n\nA small HTTP client for the Acme API. Supports refunds and API tokens.\n"
+                }
+              }
+            ]
+          },
+          "github": {
+            "pr": {
+              "number": 150,
+              "title": "Add refunds and API tokens",
+              "headRefName": "feature/refunds",
+              "body": "Adds partial refunds, API token auth, and the migration for both."
+            }
+          }
+        },
+        "graders": [
+          {
+            "name": "at-most-4-agents",
+            "tool": "Agent",
+            "max": 4,
+            "covers": [
+              0
+            ]
+          },
+          {
+            "name": "plan-recorded",
+            "trace": "budget\\.py\\S{0,3}\\s+plan\\b",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "launches-recorded",
+            "trace": "budget\\.py\\S{0,3}\\s+start\\b",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "no-pr-comments",
+            "gh": "^# (comment|reply|review|resolve)",
+            "absent": true,
+            "covers": [
+              4
+            ]
+          },
+          {
+            "name": "no-push",
+            "gh": "^# push",
+            "absent": true,
+            "covers": [
+              4
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 13,
+      "prompt": "/vstack:review 151 --no-skeptic. Same kind of wide PR: token auth, refunds, a migration, UI, helpers, a lockfile and the README.",
+      "expected_output": "Plans the generated lockfile area up front with the rest, keeps the whole run within the default budget of 8 reviewers, and adds no reviewer after the plan is printed.",
+      "files": [],
+      "expectations": [
+        "Starts at most 8 reviewer subagents in total, retries included",
+        "The plan printed before any reviewer starts already accounts for every area, including the lockfile as a generated area (reviewed, or listed as not reviewed for the budget)",
+        "Starts no reviewer that wasn't in the printed plan, for example no extra reviewer for an area noticed after the others finished",
+        "Does not edit files, commit, push or post PR comments"
+      ],
+      "eval": {
+        "slug": "budget-default-plans-every-area",
+        "tags": [
+          "budget"
+        ],
+        "prompt": "/vstack:review 151 --no-skeptic",
+        "fixture": "pr-green",
+        "patch": {
+          "repo": {
+            "commits": [
+              {
+                "message": "Add refunds and API tokens",
+                "files": {
+                  "src/auth/token.js": "import crypto from \"node:crypto\";\nimport { db } from \"../db.js\";\n\nexport async function verifyToken(header) {\n  const token = (header || \"\").replace(\"Bearer \", \"\");\n  const row = await db.oneOrNone(\"SELECT user_id, expires_at FROM api_tokens WHERE token = $1\", [token]);\n  if (!row) return null;\n  return row.user_id;\n}\n",
+                  "src/payments/refund.js": "import { db } from \"../db.js\";\n\nexport async function refund(orderId, cents) {\n  const order = await db.one(\"SELECT id, paid_cents, refunded_cents FROM orders WHERE id = $1\", [orderId]);\n  if (order.refunded_cents + cents > order.paid_cents) throw new Error(\"refund exceeds payment\");\n  await db.none(\"UPDATE orders SET refunded_cents = refunded_cents + $1 WHERE id = $2\", [cents, orderId]);\n  await db.none(\"INSERT INTO ledger (order_id, cents, kind) VALUES ($1, $2, 'refund')\", [orderId, -cents]);\n}\n",
+                  "migrations/20261110_refunds_tokens.sql": "ALTER TABLE orders ADD COLUMN refunded_cents integer NOT NULL DEFAULT 0;\nCREATE TABLE api_tokens (token text PRIMARY KEY, user_id integer NOT NULL, expires_at timestamptz NOT NULL);\n",
+                  "web/RefundButton.js": "export function RefundButton({ order, onRefund }) {\n  const left = order.paidCents - order.refundedCents;\n  return `<button ${left <= 0 ? \"disabled\" : \"\"} data-order=\"${order.id}\">Refund ${(left / 100).toFixed(2)}</button>`;\n}\n",
+                  "src/format.js": "export const cents = (n) => (n / 100).toFixed(2);\nexport const plural = (n, word) => `${n} ${word}${n === 1 ? \"\" : \"s\"}`;\n",
+                  "package-lock.json": "{\n  \"name\": \"acme-api-client\",\n  \"version\": \"1.5.0\",\n  \"lockfileVersion\": 3,\n  \"requires\": true,\n  \"packages\": {\n    \"\": {\n      \"name\": \"acme-api-client\",\n      \"version\": \"1.5.0\"\n    },\n    \"node_modules/left-pad\": {\n      \"version\": \"1.3.0\",\n      \"resolved\": \"https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz\",\n      \"deprecated\": \"use String.prototype.padStart()\"\n    }\n  }\n}\n",
+                  "README.md": "# acme api client\n\nA small HTTP client for the Acme API. Supports refunds and API tokens.\n"
+                }
+              }
+            ]
+          },
+          "github": {
+            "pr": {
+              "number": 151,
+              "title": "Add refunds and API tokens",
+              "headRefName": "feature/refunds",
+              "body": "Adds partial refunds, API token auth, and the migration for both."
+            }
+          }
+        },
+        "graders": [
+          {
+            "name": "at-most-8-agents",
+            "tool": "Agent",
+            "max": 8,
+            "covers": [
+              0
+            ]
+          },
+          {
+            "name": "no-pr-comments",
+            "gh": "^# (comment|reply|review|resolve)",
+            "absent": true,
+            "covers": [
+              3
+            ]
+          },
+          {
+            "name": "no-push",
+            "gh": "^# push",
+            "absent": true,
+            "covers": [
+              3
+            ]
           }
         ]
       }

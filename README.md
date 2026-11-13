@@ -7,11 +7,11 @@ Personal agent skills, packaged as one plugin (`vstack`) for Claude Code, Codex,
 - `autonomous-merge`: run `review` and `babysit` in a capped loop, then merge through a live gate without asking (`/autonomous-merge <pr> no-merge` to stop at ready; Bitbucket PRs are handed back for you to merge), hands back anything that needs you
 - `babysit`: watch a PR until it's green and approved, fixing and replying as needed (`/babysit <pr> merge` or "and merge when green" to merge; `--merge` also works)
 - `html-plan`: write an implementation plan as one interactive HTML page
-- `pr-writing`: reply to reviewers, write PR descriptions and post PR comments that read like a person wrote them: the answer first, short, no "good catch" or "you're absolutely right", and the same plain, polite answer to a rude comment as to a polite one (`/pr-writing 14`, `/pr-writing 14 description`, or "draft a reply to dave" to post nothing)
+- `pr-writing`: open PRs, write their descriptions, reply to reviewers and post PR comments in text that reads like a person wrote it. Descriptions summarise what changed and why without spec-level detail, with a small Mermaid sketch only when a complex change's shape matters. Replies give the answer first, short, no "good catch" or "you're absolutely right", and the same plain, polite answer to a rude comment as to a polite one (`/pr-writing 14`, `/pr-writing 14 description`, or "draft a reply to dave" to post nothing)
 - `remove-comments`: delete comment noise from a change and check that no code changed
 - `review`: read-only multi-lens code review of a PR, branch or path
 
-`babysit` and `autonomous-merge` word their replies with `pr-writing`'s rules.
+`babysit` and `autonomous-merge` word their replies with `pr-writing`'s rules, and refresh a PR description their fixes made stale.
 
 `babysit` and `autonomous-merge` work alongside other fixers (people, Copilot, Codex, Claude): they act only once the PR is settled, never touch an item someone else claimed, and merge only with nothing claimed.
 
@@ -19,7 +19,7 @@ Personal agent skills, packaged as one plugin (`vstack`) for Claude Code, Codex,
 
 ## Does it help?
 
-Each skill has eval cases that run the same prompt twice, once with vstack installed and once without, against a fake GitHub that logs every push, reply and merge. Graders check that log, the text it posted and the transcript: did it fix the failing check, reply to the question, merge only when asked, leave unrelated code alone. The chart shows the share of graders passed in each arm, on the smoke set (15 cases, including ones where the skill should stay out of the way). See [Evals](docs/contributing.md#evals) to run them yourself.
+Each skill has eval cases that run the same prompt twice, once with vstack installed and once without, against a fake GitHub that logs every push, reply and merge. Graders check that log, the text it posted and the transcript: did it fix the failing check, reply to the question, merge only when asked, leave unrelated code alone. The chart shows the share of graders passed in each arm, on the smoke set (26 cases, including ones where the skill should stay out of the way). See [Evals](docs/contributing.md#evals) to run them yourself.
 
 <!-- evals:start -->
 <picture>
@@ -29,16 +29,15 @@ Each skill has eval cases that run the same prompt twice, once with vstack insta
 
 | Skill | Cases | Without vstack | With vstack | Change |
 |---|--:|--:|--:|--:|
-| **All skills** | 15 | 71% | **90%** | **+19 pts** |
-| `autonomous-merge` | 2 | 65% | 100% | +35 pts |
-| `html-plan` | 2 | 64% | 86% | +22 pts |
-| `babysit` | 6 | 78% | 98% | +20 pts |
-| `review` | 3 | 54% | 67% | +13 pts |
-| `remove-comments` | 2 | 89% | 96% | +7 pts |
+| **All skills** | 26 | 68% | **93%** | **+25 pts** |
+| `html-plan` | 2 | 57% | 93% | +36 pts |
+| `autonomous-merge` | 5 | 65% | 100% | +35 pts |
+| `pr-writing` | 6 | 73% | 97% | +24 pts |
+| `babysit` | 7 | 73% | 96% | +23 pts |
+| `review` | 4 | 51% | 71% | +20 pts |
+| `remove-comments` | 2 | 89% | 93% | +4 pts |
 
-Not in this run yet: `pr-writing` (11 cases). Run them and regenerate this section (see [Evals](docs/contributing.md#evals)).
-
-<sub>15 eval cases, 1 run per arm, Claude Code 2.1.312, 2026-10-29. Score: share of a case's graders passed.</sub>
+<sub>26 eval cases, 1 run per arm, Claude Code 2.1.322, 2026-11-13. Score: share of a case's graders passed.</sub>
 <!-- evals:end -->
 
 ## Install

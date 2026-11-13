@@ -1,7 +1,7 @@
 ---
 name: pr-writing
 argument-hint: "<pr> [what to write] [draft]"
-description: Writes and posts pull request text that reads like a considerate engineer wrote it - replies to review comments, PR comments, review comments, and PR titles and descriptions. Replies lead with the answer, cite the commit, line or test, stay short, and stay polite and plain with rude reviewers, never opening with praise or agreement ("good catch", "you're absolutely right"). Use when the user asks to reply to or answer review comments or a reviewer, write or update a PR description or title, or post a comment on a PR. Posts only what the request covers; "draft" shows the text instead. Not for reviewing code (review) or fixing it (babysit).
+description: Writes and posts pull request text that reads like a considerate engineer wrote it: PR titles and descriptions, replies to review comments, and PR comments. Descriptions summarise what the change does and why without spec-level detail, with a small Mermaid or text sketch only when the shape of a complex change matters. Replies lead with the answer, cite the commit or line, and stay plain with rude reviewers. Use when opening a pull request (gh pr create) or shipping work as a PR, writing or updating a PR title or description, or replying to reviewers. "draft" shows the text instead of posting. Not for reviewing code (review).
 ---
 
 # pr-writing
@@ -16,6 +16,7 @@ polite one would.
 ```
 /pr-writing 14                        # reply to the open review comments on PR 14
 /pr-writing 14 description            # write the title and description, and update the PR
+open a PR for this branch             # write the title and description, then gh pr create
 reply to dave on PR 14, draft only    # show the reply, post nothing
 ```
 
@@ -42,7 +43,10 @@ If the line above is empty or still reads as a literal `$ARGUMENTS` (harnesses o
 ## What this skill touches
 
 It reads the PR and the code, and posts text: thread replies, PR comments,
-review comments, and the PR's title and body. Nothing else. It never edits
+review comments, and the PR's title and body. Nothing else, with one
+exception: when the user asked to open a PR and the branch isn't on the
+remote yet, push it (`git push -u origin HEAD`) so `gh pr create` has
+something to open. It never edits
 code, commits, pushes, resolves a human's thread, approves, requests changes,
 merges or closes. A reply never says something was done that wasn't: no
 "fixed" without a commit on the PR that fixes it, no "tested" without a run.
@@ -152,15 +156,32 @@ no reply.
 
 ## PR titles and descriptions
 
-Read [references/descriptions.md](references/descriptions.md). In short: the
-title says what the change does, in the imperative, under about 70
-characters, in the repo's commit style. The body starts with what changes
-and why (the why from commits, issues, code or the user, never invented),
-then only what a reviewer needs: surprises in the approach, risk, how to try
-it, what's deliberately left out. Use the repo's PR template headings when
-there is one; leave its checkboxes unticked unless you verified them. Never
-claim tests ran unless they did. Keep an existing description's own content
-and fix what's stale.
+This covers every PR you open, not only when the user asks for "a
+description": when a task ends with "open a PR", "ship it" or a
+`gh pr create`, the title and body come from here. Read
+[references/descriptions.md](references/descriptions.md). In short:
+
+- **Title**: what the change does, in the imperative, under about 70
+  characters, in the repo's commit style.
+- **Body**: a precise summary of the work, not a tour of it. Open with what
+  changes and why in a sentence or three (the why from commits, issues, code
+  or the user, never invented), then only what a reviewer needs: surprises in
+  the approach, risk, how to try it, what's deliberately left out. Stay at the
+  level of behaviour: no file lists, signatures, option names, default values
+  (attempts, delays, timeouts) or step-by-step walkthroughs; the diff has
+  those. "Retries server errors a few times, waiting longer each time", not
+  "3 attempts by default, starting at 100 ms and doubling".
+- **A sketch for complex changes only**: when the change reshapes how
+  components, services or states fit together, add one small diagram (about
+  3 to 10 nodes): a `mermaid` block on GitHub, GitLab or Azure DevOps, a
+  plain-text sketch in a `text` block on Bitbucket or an unknown host.
+- **Scale**: a one-line fix gets one sentence; headings only for a large or
+  risky change, or when the repo's PR template has them. Use the template's
+  headings when there is one; leave its checkboxes unticked unless you
+  verified them. Never claim tests ran unless they did.
+- **Updating**: keep an existing description's own content and fix what's
+  stale. After new commits change what the PR does, the description is
+  stale: refresh it rather than appending an "Update:" log.
 
 ## Before posting
 

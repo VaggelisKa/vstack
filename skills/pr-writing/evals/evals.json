@@ -567,7 +567,7 @@
         "The title is specific and imperative, under 72 characters, and says what changed (retrying 5xx responses with backoff)",
         "The body uses the template's What, Why and How to test headings in that order and drops the template's HTML comments",
         "The Why section gives the commit's reason (503s from the gateway during deploys failing the exports job) and invents no other motivation",
-        "The body says 4xx responses are still not retried, doesn't list the changed files one by one, and has no marketing words or emoji",
+        "The body says 4xx responses are still not retried and that 5xx responses are retried with a growing wait, doesn't list the changed files one by one, and has no marketing words or emoji",
         "Leaves 'Docs updated' unticked, and doesn't claim tests passed unless the trace shows them run and passing in this session"
       ],
       "eval": {
@@ -677,7 +677,7 @@
           },
           {
             "name": "says-what-reviewers-need",
-            "llm": "Look at the text under '=== edit body ==='. PASS only if it says 4xx responses are still not retried, says how many attempts and how the delay grows (or names the attempts/delayMs options), and does not list the changed files one by one.",
+            "llm": "Look at the text under '=== edit body ==='. PASS only if it says 4xx responses are still not retried, says 5xx responses are retried with a wait that grows (exact numbers are optional), and does not list the changed files one by one.",
             "focus": {
               "source": "file",
               "path": ".vstack-eval/posted.md"
@@ -1439,6 +1439,226 @@
             "fires": false,
             "covers": [
               0
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 12,
+      "prompt": "I'm done with this branch. Open a PR for it.",
+      "expected_output": "Starts pr-writing, opens the PR with gh pr create, with a specific imperative title and a body that summarises the behaviour change and its reason in a few sentences, without file lists, signatures, defaults or a diagram.",
+      "files": [],
+      "expectations": [
+        "Starts the pr-writing skill",
+        "Opens the PR with gh pr create, with a title and a body",
+        "The body summarises what changes for callers (5xx responses retried with a growing wait, 4xx not retried) and why (503s from the gateway during deploys fail the exports job), in about 120 words or fewer",
+        "The body stays at the level of behaviour: no list of changed files, no function signature, no option defaults or backoff formula, no Summary/Changes/Test plan scaffolding",
+        "The body has no diagram: the change is too small to need one",
+        "The body doesn't claim tests passed unless the trace shows them run and passing in this session"
+      ],
+      "eval": {
+        "slug": "open-pr-plain-summary",
+        "tags": [
+          "smoke",
+          "trigger"
+        ],
+        "fixture": "pr-green",
+        "patch": {
+          "github": {
+            "pr": {
+              "number": 14,
+              "state": "NONE",
+              "title": "",
+              "body": ""
+            },
+            "reviews": [],
+            "threads": []
+          },
+          "repo": {
+            "commits": [
+              {
+                "message": "Retry 5xx responses with exponential backoff\n\nThe exports job fails a few times a day on 503s from the gateway during deploys. They clear within a second.",
+                "files": {
+                  "src/client.js": "import { sleep } from \"./time.js\";\n\nexport class ApiClient {\n  constructor(baseUrl, fetchImpl = fetch, { attempts = 3, delayMs = 100 } = {}) {\n    this.baseUrl = baseUrl;\n    this.fetchImpl = fetchImpl;\n    this.attempts = attempts;\n    this.delayMs = delayMs;\n  }\n\n  async get(path) {\n    let last;\n    for (let attempt = 1; attempt <= this.attempts; attempt++) {\n      const res = await this.fetchImpl(this.baseUrl + path);\n      if (res.ok) return res.json();\n      last = new Error(`GET ${path} failed: ${res.status}`);\n      if (res.status < 500) break;\n      await sleep(this.delayMs * 2 ** (attempt - 1));\n    }\n    throw last;\n  }\n}\n",
+                  "src/time.js": "export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\n",
+                  "test/client.test.js": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { ApiClient } from \"../src/client.js\";\n\nconst reply = (status, body = {}) => ({ ok: status < 400, status, json: async () => body });\n\ntest(\"get returns the body\", async () => {\n  const c = new ApiClient(\"https://x\", async () => reply(200, { a: 1 }));\n  assert.deepEqual(await c.get(\"/a\"), { a: 1 });\n});\n\ntest(\"get retries a 503 and then succeeds\", async () => {\n  const replies = [reply(503), reply(200, { ok: true })];\n  const c = new ApiClient(\"https://x\", async () => replies.shift(), { delayMs: 1 });\n  assert.deepEqual(await c.get(\"/a\"), { ok: true });\n});\n\ntest(\"get does not retry a 404\", async () => {\n  let calls = 0;\n  const c = new ApiClient(\"https://x\", async () => (calls++, reply(404)), { delayMs: 1 });\n  await assert.rejects(c.get(\"/a\"), /404/);\n  assert.equal(calls, 1);\n});\n"
+                }
+              }
+            ]
+          }
+        },
+        "graders": [
+          {
+            "name": "fires",
+            "skill": "pr-writing",
+            "fires": true,
+            "covers": [
+              0
+            ]
+          },
+          {
+            "name": "pr-created",
+            "gh": "^# create title=.{12,71} draft=",
+            "covers": [
+              1
+            ]
+          },
+          {
+            "name": "no-file-list",
+            "file": ".vstack-eval/posted.md",
+            "pattern": "(?im)^\\s*[-*]\\s+(updated?|added|modified|changed|new)?\\s*`?[\\w.-]*/[\\w./-]+\\.\\w{1,5}`?\\s*($|[:(-])",
+            "absent": true,
+            "covers": [
+              3
+            ]
+          },
+          {
+            "name": "no-signature-or-defaults",
+            "file": ".vstack-eval/posted.md",
+            "pattern": "(?i)delayMs\\s*[=:]|attempts\\s*[=:]\\s*\\d|\\*\\s*2\\s*\\*\\*|constructor\\(",
+            "absent": true,
+            "covers": [
+              3
+            ]
+          },
+          {
+            "name": "no-diagram",
+            "file": ".vstack-eval/posted.md",
+            "pattern": "```\\s*(mermaid|text)",
+            "absent": true,
+            "covers": [
+              4
+            ]
+          },
+          {
+            "name": "summary-quality",
+            "llm": "Look at the text under '=== create body ==='. PASS only if, in about 120 words or fewer, it says what changes for callers (server errors retried with a growing wait, client errors still not retried) and why (503s from the gateway during deploys fail the exports job), and reads as a summary rather than a spec: no list of files, no signatures, option defaults or formulas, and no Summary/Changes/Test plan headings.",
+            "focus": {
+              "source": "file",
+              "path": ".vstack-eval/posted.md"
+            },
+            "covers": [
+              2,
+              3
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 13,
+      "prompt": "PR 21's description is just 'wip'. Write a proper title and description and update the PR.",
+      "expected_output": "Updates PR 21 with a title and a short summary of moving thumbnail generation to a background worker, its reason (#412), and one small Mermaid flowchart of upload API, storage, queue and worker; no file-by-file list or spec detail.",
+      "files": [],
+      "expectations": [
+        "Updates the PR title and body with gh pr edit",
+        "The body opens with what changes (uploads return once stored; thumbnails are made later by a background worker from a queue) and why (large uploads timed out waiting for thumbnails, #412)",
+        "The body includes one small Mermaid diagram (a fenced mermaid block, about 3 to 10 nodes) showing the upload API, storage, the queue and the worker",
+        "The diagram is valid Mermaid and matches the code: uploads store the file and enqueue a job, the worker reads the job and writes the thumbnail to storage",
+        "The body mentions what a reviewer or deployer needs (the gallery shows a placeholder until the thumbnail exists, a worker process must run) and doesn't list the changed files one by one or walk through functions",
+        "No marketing words, emoji or claims that tests ran unless the trace shows it"
+      ],
+      "eval": {
+        "slug": "complex-change-sketch",
+        "tags": [
+          "smoke"
+        ],
+        "fixture": "pr-green",
+        "patch": {
+          "github": {
+            "pr": {
+              "number": 21,
+              "title": "thumbs",
+              "body": "wip",
+              "headRefName": "feature/thumbnail-worker"
+            },
+            "reviews": [],
+            "threads": []
+          },
+          "repo": {
+            "commits": [
+              {
+                "message": "Generate thumbnails in a background worker\n\nLarge uploads time out (#412): the upload request waits while thumbnails are made. Uploads now return as soon as the file is stored, and a worker process makes thumbnails from a queue, retrying a failed job up to 5 times. The gallery shows a placeholder until the thumbnail exists.",
+                "files": {
+                  "src/uploads/api.js": "import { store } from \"./storage.js\";\nimport { enqueue } from \"./queue.js\";\n\nexport async function upload(req) {\n  const key = await store.put(req.file);\n  await enqueue(\"thumbnail\", { key });\n  return { key, thumbnail: \"pending\" };\n}\n",
+                  "src/uploads/queue.js": "const jobs = [];\nexport async function enqueue(kind, payload) { jobs.push({ kind, payload, tries: 0 }); }\nexport async function next(kind) { const i = jobs.findIndex((j) => j.kind === kind); return i < 0 ? null : jobs.splice(i, 1)[0]; }\nexport async function retry(job) { if (++job.tries < 5) jobs.push(job); }\n",
+                  "src/uploads/worker.js": "import { next, retry } from \"./queue.js\";\nimport { store } from \"./storage.js\";\nimport { makeThumbnail } from \"./thumbnails.js\";\n\nexport async function runOnce() {\n  const job = await next(\"thumbnail\");\n  if (!job) return false;\n  try {\n    const file = await store.get(job.payload.key);\n    await store.put(await makeThumbnail(file), job.payload.key + \".thumb\");\n  } catch (e) {\n    await retry(job);\n  }\n  return true;\n}\n",
+                  "src/uploads/thumbnails.js": "export async function makeThumbnail(file) { return file.slice(0, 1024); }\n",
+                  "src/uploads/storage.js": "const blobs = new Map();\nexport const store = {\n  async put(data, key = `u${blobs.size}`) { blobs.set(key, data); return key; },\n  async get(key) { return blobs.get(key); },\n};\n",
+                  "web/Gallery.js": "export const thumb = (item) => item.thumbnail === \"pending\" ? \"/placeholder.png\" : `/files/${item.key}.thumb`;\n",
+                  "Procfile": "web: node src/server.js\nworker: node src/uploads/run-worker.js\n",
+                  "src/uploads/run-worker.js": "import { runOnce } from \"./worker.js\";\nsetInterval(runOnce, 500);\n"
+                }
+              }
+            ]
+          }
+        },
+        "graders": [
+          {
+            "name": "body-edited",
+            "gh": "^# edit body=",
+            "covers": [
+              0
+            ]
+          },
+          {
+            "name": "has-mermaid",
+            "file": ".vstack-eval/posted.md",
+            "pattern": "```mermaid\\s*\\n\\s*(flowchart|graph|sequenceDiagram)",
+            "covers": [
+              2
+            ]
+          },
+          {
+            "name": "one-diagram",
+            "file": ".vstack-eval/posted.md",
+            "pattern": "```mermaid",
+            "count": 1,
+            "covers": [
+              2
+            ]
+          },
+          {
+            "name": "no-file-list",
+            "file": ".vstack-eval/posted.md",
+            "pattern": "(?im)^\\s*[-*]\\s+(updated?|added|modified|changed|new)?\\s*`?[\\w.-]*/[\\w./-]+\\.\\w{1,5}`?\\s*($|[:(-])",
+            "absent": true,
+            "covers": [
+              4
+            ]
+          },
+          {
+            "name": "no-marketing",
+            "file": ".vstack-eval/posted.md",
+            "pattern": "(?i)robust|seamless|comprehensive|leverag|enhanc|streamlin|\\bdelve|🚀|✨|✅|📝|🎉",
+            "absent": true,
+            "covers": [
+              5
+            ]
+          },
+          {
+            "name": "diagram-matches",
+            "llm": "Look at the text under '=== edit body ==='. PASS only if it contains exactly one fenced mermaid diagram with roughly 3 to 10 nodes, plain-word labels, valid Mermaid syntax (labels with spaces or punctuation quoted or bracketed correctly), and it shows the upload API storing the file and putting a job on a queue, and a worker taking the job and writing the thumbnail to storage. FAIL if it diagrams individual functions, has more than about 12 nodes, or contradicts that flow.",
+            "focus": {
+              "source": "file",
+              "path": ".vstack-eval/posted.md"
+            },
+            "covers": [
+              2,
+              3
+            ]
+          },
+          {
+            "name": "summary-quality",
+            "llm": "Look at the text under '=== edit body ==='. PASS only if it opens with what changes (uploads return once stored, a background worker makes thumbnails from a queue) and why (large uploads timed out waiting for thumbnails, #412), mentions the placeholder until the thumbnail exists and that a worker process must run, and stays a summary: no file-by-file list, no walk through functions or signatures.",
+            "focus": {
+              "source": "file",
+              "path": ".vstack-eval/posted.md"
+            },
+            "covers": [
+              1,
+              4
             ]
           }
         ]

@@ -56,14 +56,16 @@ graders:
     target:
       source: file
       path: ".vstack-eval/posted.md"
-    pattern: "(?i)robust|seamless|comprehensive|leverag|enhanc|streamlin|\\bdelve|🚀|✨|✅|📝|🎉"
+    pattern: "robust|seamless|comprehensive|leverag|enhanc|streamlin|\\bdelve|🚀|✨|✅|📝|🎉"
+    flags: i
     match: not_contains
   - name: docs-unticked
     type: regex
     target:
       source: file
       path: ".vstack-eval/posted.md"
-    pattern: "(?i)\\[x\\]\\s*Docs updated"
+    pattern: "\\[x\\]\\s*Docs updated"
+    flags: i
     match: not_contains
   - name: title-specific
     type: llm
@@ -79,7 +81,7 @@ graders:
       path: ".vstack-eval/posted.md"
   - name: says-what-reviewers-need
     type: llm
-    criteria: "Look at the text under '=== edit body ==='. PASS only if it says 4xx responses are still not retried, says how many attempts and how the delay grows (or names the attempts/delayMs options), and does not list the changed files one by one."
+    criteria: "Look at the text under '=== edit body ==='. PASS only if it says 4xx responses are still not retried, says 5xx responses are retried with a wait that grows (exact numbers are optional), and does not list the changed files one by one."
     focus:
       source: file
       path: ".vstack-eval/posted.md"
@@ -88,5 +90,6 @@ graders:
     target:
       source: file
       path: ".vstack-eval/posted.md"
-    pattern: "(?i)absolutely (right|correct)|you'?re (totally |completely |so )?right|you are (totally |completely )?right|(great|good|nice|excellent|fair|valid) (catch|question|point|find|spot|call|suggestion)|thanks?( you)?( so much)? for (catching|spotting|flagging|pointing|raising|noticing|the (great|good|thorough|detailed|helpful|feedback|review))|appreciate (you|your|the)|apologi[sz]e|apologies|sorry|let me know|hope (this|that) helps|happy to|feel free|don'?t hesitate|respectfully|all due respect|as I (already )?(said|mentioned|explained)|per my (last|previous)|i understand (your|the) (concern|frustration)|i hear you|no need (to be|for)|\\btone\\b|keep (this|it) (civil|constructive|professional)|i'?ve gone ahead|—"
+    pattern: "absolutely (right|correct)|you'?re (totally |completely |so )?right|you are (totally |completely )?right|(great|good|nice|excellent|fair|valid) (catch|question|point|find|spot|call|suggestion)|thanks?( you)?( so much)? for (catching|spotting|flagging|pointing|raising|noticing|the (great|good|thorough|detailed|helpful|feedback|review))|appreciate (you|your|the)|apologi[sz]e|apologies|sorry|let me know|hope (this|that) helps|happy to|feel free|don'?t hesitate|respectfully|all due respect|as I (already )?(said|mentioned|explained)|per my (last|previous)|i understand (your|the) (concern|frustration)|i hear you|no need (to be|for)|\\btone\\b|keep (this|it) (civil|constructive|professional)|i'?ve gone ahead|—"
+    flags: i
     match: not_contains

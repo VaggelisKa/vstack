@@ -144,6 +144,20 @@ class Scenarios(unittest.TestCase):
         v = json.loads(sh(cwd, env, "gh", "pr", "view", "14", "--json", "title,body").stdout)
         self.assertEqual(v, {"title": "Retry 5xx responses", "body": "## What\nRetries 5xx.\n"})
 
+    def test_pr_create_opens_a_pr_that_does_not_exist_yet(self):
+        cwd, env = workspace(self, fixture(pr={"state": "NONE"}))
+        self.assertNotEqual(sh(cwd, env, "gh", "pr", "view", "--json", "number").returncode, 0)
+        self.assertEqual(json.loads(sh(cwd, env, "gh", "pr", "list", "--json", "number").stdout), [])
+        self.assertNotEqual(sh(cwd, env, "gh", "pr", "edit", "14", "--body", "x").returncode, 0)
+        r = sh(cwd, env, "gh", "pr", "create", "--title", "Retry 5xx responses", "--body-file", "-", stdin="Retries 5xx.\n")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(log(cwd), r"(?m)^# create title=Retry 5xx responses draft=False$")
+        posted = (cwd / ".vstack-eval" / "posted.md").read_text()
+        self.assertEqual(posted, "=== create title ===\nRetry 5xx responses\n\n=== create body ===\nRetries 5xx.\n\n")
+        v = json.loads(sh(cwd, env, "gh", "pr", "view", "--json", "title,body,state").stdout)
+        self.assertEqual(v, {"title": "Retry 5xx responses", "body": "Retries 5xx.\n", "state": "OPEN"})
+        self.assertNotEqual(sh(cwd, env, "gh", "pr", "create", "--title", "again", "--body", "x").returncode, 0)
+
     def test_rerun_and_base_runs(self):
         cwd, env = workspace(self, fixture(
             checks=[{"name": "e2e", "workflow": "CI", "conclusion": "FAILURE", "run_id": 103, "log": "runner lost",
@@ -204,6 +218,13 @@ class Sync(unittest.TestCase):
                     if fx and fx.get("github"):
                         self.assertIn("pr", fx["github"])
 
+    def test_regex_graders_have_no_inline_flags(self):
+        # claude plugin eval compiles patterns as JavaScript regexes, which throw on a leading "(?i)".
+        for d in sorted(EVALS.glob("*-*/case.yaml")):
+            for line in d.read_text().splitlines():
+                with self.subTest(case=d.parent.name):
+                    self.assertNotRegex(line, r"pattern: ['\"]?\(\?[a-z]+\)")
+
     def test_every_fixture_scaffolds(self):
         for d in sorted(p for p in EVALS.iterdir() if (p / "fixture.json").exists()):
             with self.subTest(case=d.name):
@@ -222,9 +243,8 @@ def regex_verdicts(doc, cwd):
     for g in doc["graders"]:
         if g["type"] != "regex":
             continue
-        pat, flags = g["pattern"], re.M if "m" in g.get("flags", "") else 0
-        if pat.startswith("(?i)"):
-            pat, flags = pat[4:], flags | re.I
+        f = g.get("flags", "")
+        pat, flags = g["pattern"], (re.M if "m" in f else 0) | (re.I if "i" in f else 0) | (re.S if "s" in f else 0)
         path = cwd / g["target"]["path"]
         n = len(re.findall(pat, path.read_text(), flags)) if path.exists() else None
         match = g.get("match", "contains")
@@ -245,7 +265,7 @@ class PrWritingGraders(unittest.TestCase):
 
     def test_tells_pattern(self):
         _, doc, _ = pr_writing_case(1)
-        tells = re.compile(next(g["pattern"] for g in doc["graders"] if g["name"] == "no-tells")[4:], re.I)
+        tells = re.compile(next(g["pattern"] for g in doc["graders"] if g["name"] == "no-tells"), re.I)
         for bad in ["You're absolutely right, it retries.", "Good catch!", "Great question: keys are paths.",
                     "Thanks for catching this.", "Sorry about that, fixed.", "I apologize for the confusion.",
                     "Let me know if you have questions.", "Hope this helps.", "Happy to change it.",

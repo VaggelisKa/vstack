@@ -24,8 +24,10 @@ Evidence: … · Fix: … · Skeptic (<model>): …
 <the plan table, with trimmed and skipped reviewers and why>
 
 ## Reviewers
+Budget: <launches used> of <budget> reviewer launches (<retries> retries).
+
 | ID | Lens | Area | Harness | Model | Verdict | Score (raw→final) | Conf | Coverage | B/M/m/n | Notes |
-<Notes: "retried" when the first try failed, "no verdict: <reason>", "recomputed: <why>">
+<Notes: "retried" when the first try failed, "corrected" when it fixed its JSON on request, "no verdict: <reason>" (including "budget spent"), "recomputed: <why>">
 
 ## Failed and partial reviewers
 <every reviewer or skeptic that wasn't `ok` on the first try, or "none"; a skeptic's lens is `skeptic`, its area the cluster>
@@ -60,5 +62,6 @@ repeat it under "Plan" in the report:
 |------|-------|-----|---|---|-------|----------------------------|
 | api/auth | 3 | +120/-40 | 2 | 3 | tokens, input | security×3 strong, bug-hunt×3 strong, consistency×1 strong |
 | docs | 2 | +15/-3 | 0 | 0 | - | bug-hunt×1 cheap |
-Total reviewers: 8 / budget 8. Skeptics: est. 1-2. Agent runs: est. 9-10, plus one retry per failed result. Mode: parallel subagents.
+Reviewers: 8 / budget 8 (hard cap, retries included). Skeptics: est. 1-2, outside the budget. Mode: parallel subagents.
+Trimmed: <reviewers dropped to fit the budget, and why> | none.
 ```

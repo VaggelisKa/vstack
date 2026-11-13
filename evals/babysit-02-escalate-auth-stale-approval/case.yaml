@@ -29,7 +29,8 @@ graders:
     target:
       source: file
       path: src/exports.js
-    pattern: "(?i)admin|token"
+    pattern: "admin|token"
+    flags: i
     match: not_contains
   - name: thread-not-resolved
     type: regex

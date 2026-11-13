@@ -1,6 +1,6 @@
 ---
 name: autonomous-merge
-argument-hint: "<pr> [no-merge]"
+argument-hint: "<pr> [no-merge] [--budget N]"
 description: Takes one GitHub pull request all the way to merged with no human driving each step. Checks forge access, runs the review skill and fixes its blockers and majors until it says Ship, runs the babysit skill until CI, reviews and threads are green, then merges through a live gate without asking for confirmation. Caps of 3 review rounds, 6 fix rounds and 2 hours, and a state file to resume. Use when the user says "autonomous-merge <pr>", "auto-merge this PR", "take PR 42 all the way", "review, fix and land this" or "take this PR to merge". Stops at ready only if told not to merge.
 ---
 
@@ -21,7 +21,9 @@ take PR 14 all the way                       # the same as the first, in plain w
 Request: $ARGUMENTS
 
 If the line above is empty or still reads as a literal `$ARGUMENTS` (harnesses other than Claude Code), read the arguments from the user's message instead.
-Read `<pr>` (a number or a PR URL) from them.
+Read `<pr>` (a number or a PR URL) from them. A `--budget N` in the request is
+review's reviewer cap: pass it to every review round unchanged (each round is
+one review run, held to that cap by review's ledger).
 
 **This skill merges. That is its job, and starting it is the go-ahead.**
 Whether the user typed `/autonomous-merge 14` or the skill was picked up from
@@ -88,7 +90,7 @@ result for the PR already exists; only the user decides to start fresh.)
    [references/state-schema.md](references/state-schema.md).
 3. **Review loop.** Repeat:
    1. `state.py check --pr N --before review`.
-   2. Run the `review` skill on PR N, by name. If your harness doesn't load it,
+   2. Run the `review` skill on PR N, by name (with `--budget N` if the user gave one). If your harness doesn't load it,
       read `${CLAUDE_SKILL_DIR}/../review/SKILL.md` and follow it. It writes `review.json`.
    3. `state.py record-review --pr N --head-sha <headRefOid> --base-sha <baseRefOid>`
       (`git fetch origin <base>` first if needed). `clean: true` ends the loop.
@@ -139,7 +141,11 @@ result for the PR already exists; only the user decides to start fresh.)
    go back to step 3. That includes `gh pr update-branch`: its merge from base
    is a new head, so the review and then the gate run again on it (the gate
    hands back `needs_review` and `not_settled` until they have).
-5. **Gate.** `gate.py <pr>`. It re-reads live forge state, and needs a clean
+5. **Gate.** Before the gate, if this run pushed commits that changed what
+   the PR does, make sure the PR body still describes it: refresh what's
+   stale the way [pr-writing's descriptions guide](../pr-writing/references/descriptions.md)
+   says (keep the author's words, check with pr-writing's `check-text.py
+   --kind description`, `gh pr edit <pr> --body-file`). Then `gate.py <pr>`. It re-reads live forge state, and needs a clean
    `review.json` for the current head and base. On `ready`, run
    `gate.py <pr> --merge` right away, without asking the user (allow it 10
    minutes). Only if the user opted out of merging:

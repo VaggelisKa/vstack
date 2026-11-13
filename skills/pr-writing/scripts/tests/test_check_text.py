@@ -97,7 +97,34 @@ class Tells(unittest.TestCase):
         body = "## What\n**Retry** 5xx responses.\n\n## Why\nThe gateway returns 503s during deploys.\n"
         self.assertEqual(rules(body, "description"), set())
         self.assertIn("exclamation", rules(body + "Ship it!\n", "description"))
-        self.assertIn("long", rules(" ".join(["word"] * 401), "description"))
+        self.assertIn("long", rules(" ".join(["word"] * 301), "description"))
+
+    def test_description_file_by_file_changelog(self):
+        body = ("Retry 5xx responses with backoff.\n\n"
+                "- Updated `src/client.js` to add retry logic\n"
+                "- Added test/client.test.js\n"
+                "- `docs/retries.md`: document the defaults\n")
+        self.assertIn("file-list", rules(body, "description"))
+        prose = ("Retry 5xx responses with backoff.\n\n- 4xx responses still fail at once\n"
+                 "- The default is three attempts\n- Nothing changes for streaming calls\n")
+        self.assertNotIn("file-list", rules(prose, "description"))
+        fenced = "Moves the config.\n\n```text\n- src/a.js\n- src/b.js\n- src/c.js\n```\n"
+        self.assertNotIn("file-list", rules(fenced, "description"))
+
+    def test_description_scaffolding_and_spec_detail_are_checks(self):
+        short = "## Summary\nRetry 5xx responses.\n\n## Test plan\nRun the tests.\n"
+        self.assertIn("scaffold-headings", checks(short, "description"))
+        self.assertNotIn("scaffold-headings", rules(short, "description"))
+        spec = " ".join(f"`name{i}`" for i in range(9)) + " are all set."
+        self.assertIn("too-technical", checks(spec, "description"))
+        self.assertNotIn("too-technical", checks("Uses `retry` from `lib/http`.", "description"))
+
+    def test_description_diagram_size(self):
+        small = "Adds a queue.\n\n```mermaid\nflowchart LR\n  A[API] --> Q[Queue]\n  Q --> W[Worker]\n```\n"
+        self.assertEqual(checks(small, "description"), set())
+        self.assertEqual(rules(small, "description"), set())
+        big = "Adds a queue.\n\n```mermaid\nflowchart LR\n" + "".join(f"  N{i} --> N{i+1}\n" for i in range(16)) + "```\n"
+        self.assertIn("diagram-size", checks(big, "description"))
 
 
 class CleanText(unittest.TestCase):

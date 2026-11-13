@@ -73,7 +73,7 @@ graders:
   - name: states-method
     type: regex
     target: last_message
-    pattern: "(?i)\\b(squash|merge commit|method)\\b"
+    pattern: "\\b(squash|merge commit|method)\\b"
     flags: i
   - name: runs-babysit
     type: regex

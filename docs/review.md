@@ -72,13 +72,27 @@
   with the skill's folder; on other harnesses the coordinator uses that folder's
   absolute path. Not yet checked in a live run.
 - For a PR, `write-result.py` writes the outcome to `vstack/<pr>/review.json` in the git common dir and `read-result.py` reads it back, refusing it as stale unless head and base match; both are tested against real temp repos and worktrees.
+- `--budget N` is a hard cap on reviewer agents started, retries included.
+  Past sessions printed "Total reviewers: 8 / budget 8" and then started 11 or
+  12: a reviewer for an area noticed after the plan, retries "outside the
+  budget", and protected reviewers allowed up to 2x. Now the coordinator
+  records the plan with `budget.py plan` (refused when it has more reviewers
+  than N) and runs `budget.py start <id>` before every launch, which refuses an
+  id not in the plan, a second start without `--retry`, a second retry, and
+  any launch past N. Which lenses fill the budget is the coordinator's call for
+  the project; the scoring tables are a starting point. A malformed result is
+  fixed by asking the same agent for corrected JSON where the host can
+  continue it, which isn't a new launch. Skeptics stay outside the reviewer
+  budget and are estimated in the plan. `test_budget.py` covers each refusal
+  and the lock-protected ledger; eval cases `review-12-budget-hard-cap` and
+  `review-13-budget-default-plans-every-area` count the Agent calls.
 - The result's `partial` says some reviewer was partial; `partial_k3` says it happened on a K=3 area and is what rules out Ship and `merge_ok`, as step 5 says. Before, any partial reviewer blocked Ship, so a K=2 area whose bug-hunt reviewer skipped a snapshot PNG could only be written as Incomplete. Reviewers are now told that images count toward coverage and to open them or report partial.
 
 > Not yet verified: `--cross` (running reviewers through codex, gemini or agy),
 > gemini's stdin prompt (help only), agy's stream-json stdin (not used),
 > the gitleaks and trufflehog invocations (neither was installed),
 > the sequential-personas fallback, the retry and UNREVIEWED flow in a live run, the `ui-live` lens (Playwright and simctl),
-> budget trimming on large diffs, running the skill inside Codex or
+> running the skill inside Codex or
 > Antigravity sessions, and the consistency lens's deprecated-API check
 > (eval case 11, `review-11-consistency-flags-deprecated-apis`, hasn't been run yet).
 
