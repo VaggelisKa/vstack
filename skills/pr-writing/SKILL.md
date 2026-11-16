@@ -1,7 +1,7 @@
 ---
 name: pr-writing
 argument-hint: "<pr> [what to write] [draft]"
-description: Writes and posts pull request text that reads like a considerate engineer wrote it: PR titles and descriptions, replies to review comments, and PR comments. Descriptions summarise what the change does and why without spec-level detail, with a small Mermaid or text sketch only when the shape of a complex change matters. Replies lead with the answer, cite the commit or line, and stay plain with rude reviewers. Use when opening a pull request (gh pr create) or shipping work as a PR, writing or updating a PR title or description, or replying to reviewers. "draft" shows the text instead of posting. Not for reviewing code (review).
+description: Writes and posts pull request text that reads like a considerate engineer wrote it (PR titles and descriptions, replies to review comments, and PR comments). Descriptions summarise what the change does and why without spec-level detail, with a small Mermaid or text sketch only when the shape of a complex change matters. Replies lead with the answer, cite the commit or line, and stay plain with rude reviewers. Use when opening a pull request (gh pr create) or shipping work as a PR, writing or updating a PR title or description, or replying to reviewers. "draft" shows the text instead of posting. Not for reviewing code (review).
 ---
 
 # pr-writing
